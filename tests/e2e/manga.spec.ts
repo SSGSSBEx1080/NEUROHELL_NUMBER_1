@@ -203,3 +203,117 @@ test('translation script is local, places linked type once, survives PSD and dat
   await page.keyboard.press('Control+z')
   await expect(page.locator('.script-list > button')).toHaveCount(1)
 })
+
+async function beginRecording(page: Page, name = 'Манга — запись') {
+  await page.getByRole('button', { name: 'Фильтры', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Наборы операций…', exact: true }).click()
+  await page.getByLabel('Название новой записи').fill(name)
+  await page.getByRole('button', { name: 'Начать запись', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Запись операции' })).toBeVisible()
+}
+async function actions(page: Page) {
+  await page.getByRole('button', { name: 'Фильтры', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Наборы операций…', exact: true }).click()
+}
+
+test('real recording captures final property changes and duplicate; replay is one undo with editable validated steps', async ({
+  page,
+}) => {
+  await blank(page)
+  const initialX = Number(await page.getByLabel('X', { exact: true }).inputValue())
+  await beginRecording(page)
+  await page.getByLabel('X', { exact: true }).fill('25')
+  await page.getByLabel('X', { exact: true }).fill('30')
+  await expect(page.getByTestId('recorded-step-count')).toContainText('0 шагов')
+  await page.getByLabel('X', { exact: true }).blur()
+  await expect(page.getByTestId('recorded-step-count')).toContainText('1 шагов')
+  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  await page.keyboard.press('Control+i')
+  await page.keyboard.press('Control+j')
+  await expect(page.getByTestId('recorded-step-count')).toContainText('3 шагов')
+  await page.getByRole('button', { name: 'Сохранить запись', exact: true }).click()
+  await expect(page.getByLabel('Название операции', { exact: true })).toHaveValue('Манга — запись')
+  const saving = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Скачать набор', exact: true }).click()
+  const file = await saving
+  const library = JSON.parse(await readFile((await file.path())!, 'utf8'))
+  const recorded = library.actions.at(-1)
+  expect(library.version).toBe(2)
+  expect(recorded.steps.map((s: { command: { type: string } }) => s.command.type)).toEqual([
+    'transform',
+    'adjust',
+    'duplicate',
+  ])
+  await page.getByRole('button', { name: 'Параметры шага 1', exact: true }).click()
+  await page.getByLabel('Данные шага JSON').fill('{"type":"eval","code":"alert(1)"}')
+  await page.getByRole('button', { name: 'Применить параметры', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('не поддерживается')
+  await page.getByLabel('Данные шага JSON').fill(JSON.stringify(recorded.steps[0].command))
+  await page.getByRole('button', { name: 'Применить параметры', exact: true }).click()
+  await page.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
+  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Control+z')
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue(String(initialX))
+  await actions(page)
+  await page.getByRole('button', { name: 'Выполнить операцию', exact: true }).click()
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue('54')
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue(String(initialX))
+  await page.keyboard.press('Control+Shift+z')
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+})
+
+test('recording marks unsupported J instead of pretending to record pixels', async ({ page }) => {
+  await blank(page)
+  await beginRecording(page, 'Неподдерживаемый J')
+  await outline(page)
+  await page.getByRole('button', { name: 'Применить на новый слой', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Запись операции' })).toContainText(
+    '1 неподдерживаемых',
+  )
+  await page.getByRole('button', { name: 'Сохранить запись', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Выполнить операцию', exact: true })).toBeDisabled()
+  await expect(page.locator('.action-warning')).toContainText('ничего не будет молча пропущено')
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+})
+
+test('recording pause skips changes and an interrupted draft recovers as data, never auto-runs', async ({
+  page,
+}) => {
+  await blank(page)
+  await beginRecording(page, 'Восстановимая запись')
+  await page.getByRole('button', { name: 'Пауза', exact: true }).click()
+  await page.getByLabel('X', { exact: true }).fill('40')
+  await page.getByLabel('X', { exact: true }).blur()
+  await expect(page.getByTestId('recorded-step-count')).toContainText('0 шагов')
+  await page.getByRole('button', { name: 'Продолжить', exact: true }).click()
+  await page.getByLabel('X', { exact: true }).fill('50')
+  await page.getByLabel('X', { exact: true }).blur()
+  await expect(page.getByTestId('recorded-step-count')).toContainText('1 шагов')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem('fsh777-action-recording') || '{}').actions?.[0]?.steps
+            .length,
+      ),
+    )
+    .toBe(1)
+  await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена')
+  await page.reload()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByTestId('restore-project').click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.getByRole('region', { name: 'Запись операции' })).toHaveCount(0)
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue('50')
+  await actions(page)
+  await expect(page.locator('.actions-list')).toContainText('Восстановленная запись 777')
+  await expect(page.getByLabel('Название операции', { exact: true })).toHaveValue(
+    'Восстановимая запись',
+  )
+  await page.getByRole('button', { name: 'Выполнить операцию', exact: true }).click()
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue('60')
+})

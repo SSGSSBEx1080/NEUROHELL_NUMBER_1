@@ -1,3 +1,6 @@
+import { useActionRecorder } from './hooks/useActionRecorder'
+import { loadActionLibrary, storeActionLibrary } from './engine/actionStorage'
+import { RecordingBar } from './components/RecordingBar'
 import { TranslationPanel } from './components/TranslationPanel'
 import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
@@ -24,7 +27,7 @@ import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
 import { ActionsDialog } from './components/ActionsDialog'
-import { builtinActions, parseActionSet, runAction, type StudioAction } from './engine/actions'
+import { parseActionSet, runAction, type StudioAction } from './engine/actions'
 import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -158,14 +161,9 @@ export default function App() {
     | 'repair'
     | null
   >(null)
-  const [actions, setActions] = useState<StudioAction[]>(() => {
-    try {
-      const stored = localStorage.getItem('fsh777-actions')
-      return stored ? parseActionSet(JSON.parse(stored)) : builtinActions
-    } catch {
-      return builtinActions
-    }
-  })
+  const recorder = useActionRecorder(editor)
+  const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
+  const [actionsError, setActionsError] = useState('')
   const [clipboardLayer, setClipboardLayer] = useState<Layer | null>(null)
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
@@ -185,13 +183,42 @@ export default function App() {
   }, [])
   useEffect(() => {
     try {
-      localStorage.setItem('fsh777-actions', JSON.stringify({ version: 1, actions }))
+      storeActionLibrary(actions, !!recorder.recording)
+      setActionsError('')
     } catch {
-      /* Manual export remains available. */
+      setActionsError(
+        'Набор не сохранён в локальном хранилище. Экспортируй JSON, чтобы не потерять операции.',
+      )
     }
-  }, [actions])
+  }, [actions, !!recorder.recording])
+  const startActionRecording = (name: string) => {
+    try {
+      if (workspace.home) throw new Error('Сначала открой документ')
+      if (actions.length >= 100)
+        throw new Error('До 100 операций; удали ненужные или экспортируй набор')
+      recorder.start(name)
+      setModal(null)
+      toastMessage(
+        'Запись начата. Поддерживаются свойства, стиль, геометрия, дублирование и удаление. Пиксельные операции будут отмечены как неподдерживаемые.',
+      )
+    } catch (e) {
+      toastMessage(e instanceof Error ? e.message : 'Ошибка записи')
+    }
+  }
+  const stopActionRecording = () => {
+    try {
+      if (actions.length >= 100) throw new Error('Освободи место в наборе: предел 100 операций')
+      const action = recorder.stop()
+      setActions((a) => [...a, action])
+      setModal('actions')
+      toastMessage(`Запись сохранена: ${action.steps.length} шагов. Проверь их перед запуском.`)
+    } catch (e) {
+      toastMessage(e instanceof Error ? e.message : 'Ошибка записи')
+    }
+  }
   const executeAction = (action: StudioAction) => {
     try {
+      if (recorder.recording) throw new Error('Заверши запись перед запуском операции')
       const result = runAction(editor.documentRef.current, selectedId, action)
       editor.change(() => result.document, `Операция: ${action.name}`)
       setSelectedId(result.selectedId)
@@ -1004,6 +1031,12 @@ export default function App() {
         executeAction(action)
         return
       }
+      if (mod && e.altKey && e.code === 'KeyR') {
+        e.preventDefault()
+        if (recorder.recording) stopActionRecording()
+        else setModal('actions')
+        return
+      }
       if (mod) {
         switch (e.code) {
           case 'KeyZ':
@@ -1737,6 +1770,22 @@ export default function App() {
             />
           </div>
         </div>
+        {recorder.recording && (
+          <RecordingBar
+            recording={recorder.recording}
+            storageError={recorder.storageError}
+            onPause={recorder.pause}
+            onResume={() => {
+              try {
+                recorder.resume()
+              } catch (e) {
+                toastMessage(e instanceof Error ? e.message : 'Ошибка продолжения')
+              }
+            }}
+            onStop={stopActionRecording}
+            onCancel={recorder.cancel}
+          />
+        )}
         <div className="editor-body">
           <aside className="toolbar" aria-label="Инструменты">
             <ToolRail tool={tool} onSelect={setTool} />
@@ -2132,12 +2181,16 @@ export default function App() {
       {modal === 'actions' && (
         <ActionsDialog
           actions={actions}
+          storageError={actionsError}
+          recording={!!recorder.recording}
+          onRecord={startActionRecording}
+          onUpdate={(action) => setActions((a) => a.map((v) => (v.id === action.id ? action : v)))}
           onClose={closeModal}
           onImport={() => input.current?.click()}
           onRun={executeAction}
           onCapture={captureAction}
           onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
-          canRun={!!selected && !selected.locked}
+          canRun={!!selected && !selected.locked && !workspace.home}
         />
       )}
       {modal === 'styles' && selected && (

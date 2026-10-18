@@ -1,3 +1,4 @@
+import type { EditorEvent } from '../engine/editorEvents'
 import { loadPreferences } from '../engine/preferences'
 import { useCallback, useRef, useState } from 'react'
 import type { EditorDocument, HistoryEntry, Layer } from '../types'
@@ -12,6 +13,16 @@ export interface EditorSession {
   selectedId: string | null
 }
 export function useEditor(initial: EditorDocument) {
+  const listeners = useRef(new Set<(event: EditorEvent) => void>())
+  const emit = useCallback((event: EditorEvent) => {
+    for (const listener of listeners.current) listener(event)
+  }, [])
+  const subscribeEvents = useCallback((listener: (event: EditorEvent) => void) => {
+    listeners.current.add(listener)
+    return () => {
+      listeners.current.delete(listener)
+    }
+  }, [])
   const initialSelection =
     initial.layers.find((l) => l.kind === 'image')?.id || initial.layers.at(-1)?.id || null
   const [selectedId, setSelectionState] = useState<string | null>(initialSelection)
@@ -29,43 +40,54 @@ export function useEditor(initial: EditorDocument) {
   const entriesRef = useRef(entries)
   const [index, setIndex] = useState(0)
   const indexRef = useRef(0)
-  const setSelectedId = useCallback((id: string | null) => {
-    selectionRef.current = id
-    setSelectionState(id)
-    const current = entriesRef.current[indexRef.current]
-    if (current.document === documentRef.current) current.selectedId = id
-  }, [])
+  const setSelectedId = useCallback(
+    (id: string | null) => {
+      selectionRef.current = id
+      setSelectionState(id)
+      const current = entriesRef.current[indexRef.current]
+      if (current.document === documentRef.current) {
+        current.selectedId = id
+        emit({ type: 'selection', document: documentRef.current, selectedId: id })
+      }
+    },
+    [emit],
+  )
   const setCurrent = useCallback((next: EditorDocument) => {
     documentRef.current = next
     setDocument(next)
   }, [])
-  const record = useCallback((next: EditorDocument, label: string) => {
-    if (entriesRef.current[indexRef.current].document === next) return
-    const history = trimHistory(
-      [
-        ...entriesRef.current.slice(0, indexRef.current + 1),
-        {
-          document: next,
-          label,
-          time: Date.now(),
-          command: new ReplaceDocumentCommand(
-            entriesRef.current[indexRef.current].document,
-            next,
+  const record = useCallback(
+    (next: EditorDocument, label: string) => {
+      if (entriesRef.current[indexRef.current].document === next) return
+      const before = entriesRef.current[indexRef.current].document
+      const history = trimHistory(
+        [
+          ...entriesRef.current.slice(0, indexRef.current + 1),
+          {
+            document: next,
             label,
-          ),
-          selectedId: next.layers.some((l) => l.id === selectionRef.current)
-            ? selectionRef.current
-            : null,
-        },
-      ],
-      loadPreferences().history,
-    )
-    entriesRef.current = history
-    indexRef.current = history.length - 1
-    setEntries(history)
-    setIndex(history.length - 1)
-    pruneImageCache(history.map((e) => e.document))
-  }, [])
+            time: Date.now(),
+            command: new ReplaceDocumentCommand(
+              entriesRef.current[indexRef.current].document,
+              next,
+              label,
+            ),
+            selectedId: next.layers.some((l) => l.id === selectionRef.current)
+              ? selectionRef.current
+              : null,
+          },
+        ],
+        loadPreferences().history,
+      )
+      entriesRef.current = history
+      indexRef.current = history.length - 1
+      setEntries(history)
+      setIndex(history.length - 1)
+      pruneImageCache(history.map((e) => e.document))
+      emit({ type: 'commit', before, after: next, label, selectedId: selectionRef.current })
+    },
+    [emit],
+  )
   const change = useCallback(
     (fn: (doc: EditorDocument) => EditorDocument, label: string, temporary = false) => {
       const next = fn(documentRef.current)
@@ -128,6 +150,7 @@ export function useEditor(initial: EditorDocument) {
     (to: number) => {
       if (to < 0 || to >= entriesRef.current.length) return
       const current = indexRef.current
+      if (to === current) return
       const next =
         to === current - 1
           ? entriesRef.current[current].command?.undo()
@@ -139,8 +162,9 @@ export function useEditor(initial: EditorDocument) {
       setCurrent(next || entriesRef.current[to].document)
       selectionRef.current = entriesRef.current[to].selectedId
       setSelectionState(selectionRef.current)
+      emit({ type: 'history', document: documentRef.current, selectedId: selectionRef.current })
     },
-    [setCurrent],
+    [setCurrent, emit],
   )
   const undo = useCallback(() => travel(indexRef.current - 1), [travel])
   const redo = useCallback(() => travel(indexRef.current + 1), [travel])
@@ -159,8 +183,9 @@ export function useEditor(initial: EditorDocument) {
       setIndex(0)
       setCurrent(doc)
       pruneImageCache([doc])
+      emit({ type: 'document', document: doc, selectedId: selected })
     },
-    [setCurrent],
+    [setCurrent, emit],
   )
   const snapshot = useCallback(
     (): EditorSession => ({
@@ -181,12 +206,14 @@ export function useEditor(initial: EditorDocument) {
       setSelectionState(session.selectedId)
       setCurrent(session.document)
       pruneImageCache(session.entries.map((e) => e.document))
+      emit({ type: 'document', document: session.document, selectedId: session.selectedId })
     },
-    [setCurrent],
+    [setCurrent, emit],
   )
   return {
     document,
     documentRef,
+    subscribeEvents,
     snapshot,
     restore,
     selectedId,
