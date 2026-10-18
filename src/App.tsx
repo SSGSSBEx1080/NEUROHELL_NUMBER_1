@@ -1,3 +1,8 @@
+import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
+import { insertRepairLayer } from './engine/repairPlacement'
+import { ActionsPanel } from './components/ActionsPanel'
+import { PanelDock } from './components/PanelDock'
+import { loadPanelLayout, savePanelLayout, panelPreset, type DockTab } from './engine/panelLayout'
 import { useActionRecorder } from './hooks/useActionRecorder'
 import { loadActionLibrary, storeActionLibrary } from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
@@ -145,7 +150,10 @@ export default function App() {
   }, [preferences])
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
-  const [dockTab, setDockTab] = useState<'properties' | 'translation'>('properties')
+  const [panelLayout, setPanelLayout] = useState(loadPanelLayout)
+  const dockTab = panelLayout.tab
+  const setDockTab = (tab: DockTab) => setPanelLayout((p) => ({ ...p, tab }))
+  useEffect(() => savePanelLayout(panelLayout), [panelLayout])
   const [modal, setModal] = useState<
     | 'new'
     | 'export'
@@ -723,6 +731,25 @@ export default function App() {
         setActions((a) => [...a, ...imported])
         setModal('actions')
         toastMessage(`Импортировано операций: ${imported.length}. Проверь поддержку шагов.`)
+        return
+      }
+      const scriptFile = files.find((f) => /\.777script\.json$/i.test(f.name))
+      if (scriptFile) {
+        if (workspace.home) throw new Error('Открой страницу перед импортом сценария')
+        if (scriptFile.size > 8 * 1024 * 1024) throw new Error('Сценарий должен быть до 8 МиБ')
+        const id = editor.documentRef.current.id
+        const imported = parseScriptFile(JSON.parse(await scriptFile.text()))
+        if (editor.documentRef.current.id !== id)
+          throw new Error('Страница изменилась — импортируй сценарий ещё раз')
+        if ((editor.documentRef.current.script?.length || 0) + imported.length > MAX_SCRIPT_ENTRIES)
+          throw new Error('До 200 реплик в сценарии')
+        editor.change(
+          (d) => ({ ...d, script: [...(d.script || []), ...imported] }),
+          'Импорт сценария',
+        )
+        setInspector(true)
+        setDockTab('translation')
+        toastMessage(`Добавлено ${imported.length} реплик без чужих привязок`)
         return
       }
       const layered = files.find((f) => /\.(psd|psb)$/i.test(f.name))
@@ -1488,6 +1515,42 @@ export default function App() {
         setDockTab('translation')
       },
     },
+    {
+      label: 'Панель операций',
+      checked: inspector && dockTab === 'actions',
+      action: () => {
+        setInspector(true)
+        setDockTab('actions')
+      },
+    },
+    ...(
+      [
+        ['manga', 'Манга'],
+        ['type', 'Тайпсет'],
+        ['retouch', 'Ретушь'],
+      ] as const
+    ).map(([id, name]) => ({
+      label: `Рабочая среда: ${name}`,
+      checked: panelLayout.preset === id,
+      action: () => {
+        setPanelLayout(panelPreset(id))
+        setInspector(true)
+      },
+    })),
+    {
+      label: panelLayout.floating ? 'Закрепить панели' : 'Открепить панели',
+      action: () => {
+        setPanelLayout((p) => ({ ...p, floating: !p.floating, preset: 'custom' }))
+        setInspector(true)
+      },
+    },
+    {
+      label: 'Сбросить рабочую среду',
+      action: () => {
+        setPanelLayout(panelPreset('retouch'))
+        setInspector(true)
+      },
+    },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Настройки…', icon: SlidersHorizontal, action: () => setModal('settings') },
     ...workspace.tabs.map((t) => ({
@@ -1538,6 +1601,27 @@ export default function App() {
           onNew={() => setModal('new')}
           onOpen={() => input.current?.click()}
           onDemo={() => openDocument(demoDocument())}
+          onManga={() => {
+            if (workspace.tabs.length >= 6) {
+              toastMessage('Закрой ненужную вкладку: доступно до 6 документов')
+              return
+            }
+            setBusy('Готовим учебную страницу…')
+            void import('./engine/mangaDemo')
+              .then((module) => module.mangaDemoDocument())
+              .then((doc) => {
+                openDocument(doc)
+                setPanelLayout(panelPreset('manga'))
+                setInspector(true)
+                toastMessage(
+                  'Практика: обведи английский текст инструментом J, затем обнови связанный перевод. Скрытый слой хранит чистый эталон.',
+                )
+              })
+              .catch((e) =>
+                toastMessage(e instanceof Error ? e.message : 'Не удалось открыть практику'),
+              )
+              .finally(() => setBusy(null))
+          }}
           onResume={workspace.resume}
           onRecent={(r) => void workspace.openRecent(r)}
           onRestore={() => workspace.recovery && void workspace.openRecent(workspace.recovery)}
@@ -1726,19 +1810,21 @@ export default function App() {
               </Select>
             ) : (
               <span className="tool-instruction">
-                {tool === 'text-frame'
-                  ? 'Протяни рамку пузыря · текст и переносы в панели справа'
-                  : tool === 'text'
-                    ? 'Нажми на холст и напиши свою историю'
-                    : tool === 'crop'
-                      ? 'Выдели область, которую хочешь оставить'
-                      : tool === 'select'
-                        ? 'Выдели область для стирания или заливки'
-                        : tool === 'eyedropper'
-                          ? 'Выбери любой цвет на холсте'
-                          : tool === 'hand'
-                            ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
-                            : 'Потяни на холсте. Shift — ровные пропорции'}
+                {tool === 'repair' || tool === 'repair-box'
+                  ? 'Обведи надпись → предпросмотр → новый слой · Shift+J меняет подтип'
+                  : tool === 'text-frame'
+                    ? 'Протяни рамку пузыря · текст и переносы в панели справа'
+                    : tool === 'text'
+                      ? 'Нажми на холст и напиши свою историю'
+                      : tool === 'crop'
+                        ? 'Выдели область, которую хочешь оставить'
+                        : tool === 'select'
+                          ? 'Выдели область для стирания или заливки'
+                          : tool === 'eyedropper'
+                            ? 'Выбери любой цвет на холсте'
+                            : tool === 'hand'
+                              ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
+                              : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
             )}
             {['brush', 'rectangle', 'ellipse', 'text', 'bucket', 'gradient'].includes(tool) && (
@@ -1786,7 +1872,9 @@ export default function App() {
             onCancel={recorder.cancel}
           />
         )}
-        <div className="editor-body">
+        <div
+          className={`editor-body ${panelLayout.side === 'left' && !panelLayout.floating ? 'panels-on-left' : ''}`}
+        >
           <aside className="toolbar" aria-label="Инструменты">
             <ToolRail tool={tool} onSelect={setTool} />
             <div className="toolbar-colors">
@@ -1996,36 +2084,10 @@ export default function App() {
             </footer>
           </main>
           {inspector && (
-            <aside className="inspector" aria-label="Свойства и слои">
-              <div className="dock-tabs" role="tablist" aria-label="Панели редактора">
-                <button
-                  role="tab"
-                  aria-selected={dockTab === 'properties'}
-                  onClick={() => setDockTab('properties')}
-                >
-                  Слой
-                </button>
-                <button
-                  role="tab"
-                  aria-selected={dockTab === 'translation'}
-                  onClick={() => setDockTab('translation')}
-                >
-                  Перевод
-                </button>
-              </div>
-              {dockTab === 'translation' ? (
-                <TranslationPanel
-                  key={doc.id}
-                  editor={editor}
-                  selection={selection}
-                  busy={!!busy || !!modal}
-                  onToast={toastMessage}
-                  onDraw={() => {
-                    setTool('text-frame')
-                    toastMessage('Протяни рамку на холсте. Затем вставь перевод в выбранный текст.')
-                  }}
-                />
-              ) : (
+            <PanelDock
+              value={panelLayout}
+              onChange={setPanelLayout}
+              properties={
                 <PropertiesPanel
                   editor={editor}
                   layer={selected}
@@ -2053,29 +2115,63 @@ export default function App() {
                   setSettings={setSettings}
                   busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
                 />
-              )}
-              <LayersPanel
-                editor={editor}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onAdd={addEmpty}
-                onDuplicate={duplicate}
-                onDelete={deleteLayer}
-                onReorder={reorder}
-                onGroup={group}
-                onUngroup={ungroup}
-                onMask={(id) => void addMask(id)}
-                onSmart={() => void convertSmart()}
-                onOpenSmart={(id) => void workspace.openSmart(id)}
-                editingMask={!!settings.editMask}
-                onPixels={() => setSettings({ editMask: false })}
-              />
-              <div className="inspector-footer">
-                <ShieldCheck size={12} />
-                <span>Твои файлы остаются у тебя</span>
-                <span className="footer-777">777</span>
-              </div>
-            </aside>
+              }
+              translation={
+                <TranslationPanel
+                  key={doc.id}
+                  editor={editor}
+                  selection={selection}
+                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                  onToast={toastMessage}
+                  onDraw={() => {
+                    setTool('text-frame')
+                    toastMessage('Протяни рамку на холсте. Затем вставь перевод в выбранный текст.')
+                  }}
+                />
+              }
+              actions={
+                <ActionsPanel
+                  actions={actions}
+                  onRun={executeAction}
+                  onManage={() => setModal('actions')}
+                  onRecord={startActionRecording}
+                  canRun={
+                    !!selected &&
+                    !selected.locked &&
+                    !busy &&
+                    !modal &&
+                    !pendingDocument &&
+                    !workspace.closing
+                  }
+                  recording={!!recorder.recording}
+                />
+              }
+              layers={
+                <LayersPanel
+                  editor={editor}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onAdd={addEmpty}
+                  onDuplicate={duplicate}
+                  onDelete={deleteLayer}
+                  onReorder={reorder}
+                  onGroup={group}
+                  onUngroup={ungroup}
+                  onMask={(id) => void addMask(id)}
+                  onSmart={() => void convertSmart()}
+                  onOpenSmart={(id) => void workspace.openSmart(id)}
+                  editingMask={!!settings.editMask}
+                  onPixels={() => setSettings({ editMask: false })}
+                />
+              }
+              footer={
+                <div className="inspector-footer">
+                  <ShieldCheck size={12} />
+                  <span>Твои файлы остаются у тебя</span>
+                  <span className="footer-777">777</span>
+                </div>
+              }
+            />
           )}
         </div>
       </div>
@@ -2083,7 +2179,7 @@ export default function App() {
         ref={input}
         className="visually-hidden"
         type="file"
-        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json"
+        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json,.777script.json"
         multiple
         aria-label="Открыть изображение или проект"
         onChange={(e) => {
@@ -2120,11 +2216,11 @@ export default function App() {
           doc={doc}
           selection={selection}
           onClose={closeModal}
-          onApply={(layer) => {
+          onApply={(layer, belowText) => {
             if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
             validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
             editor.change(
-              (d) => ({ ...d, layers: [...d.layers, layer] }),
+              (d) => insertRepairLayer(d, layer, belowText),
               'Восстановление области · новый слой',
             )
             setSelectedId(layer.id)

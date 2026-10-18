@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { initializeCanvas, readPsd } from 'ag-psd'
 import { expect, test, type Page } from '@playwright/test'
 async function blank(page: Page) {
@@ -186,7 +186,7 @@ test('translation script is local, places linked type once, survives PSD and dat
   const exporting = page.waitForEvent('download')
   await page
     .getByRole('region', { name: 'Сценарий перевода' })
-    .getByRole('button', { name: 'Экспорт', exact: true })
+    .getByRole('button', { name: 'Скачать сценарий', exact: true })
     .click()
   const downloaded = await exporting
   const bytes = await readFile((await downloaded.path())!)
@@ -316,4 +316,126 @@ test('recording pause skips changes and an interrupted draft recovers as data, n
   )
   await page.getByRole('button', { name: 'Выполнить операцию', exact: true }).click()
   await expect(page.getByLabel('X', { exact: true })).toHaveValue('60')
+})
+
+test('panels resize, dock left, float, retain script cursor and restore safely on a smaller display', async ({
+  page,
+}) => {
+  await blank(page)
+  const inspector = page.getByRole('complementary', { name: 'Свойства и слои' }),
+    initial = (await inspector.boundingBox())!
+  const handle = (await page
+    .getByRole('separator', { name: 'Ширина панелей', exact: true })
+    .boundingBox())!
+  await page.mouse.move(handle.x + 3, handle.y + 120)
+  await page.mouse.down()
+  await page.mouse.move(handle.x - 57, handle.y + 120, { steps: 6 })
+  await page.mouse.up()
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBe(initial.width + 60)
+  const upper = page.locator('.dock-upper'),
+    height = (await upper.boundingBox())!.height,
+    divider = (await page.getByRole('separator', { name: 'Высота верхней панели' }).boundingBox())!
+  await page.mouse.move(divider.x + 40, divider.y + 3)
+  await page.mouse.down()
+  await page.mouse.move(divider.x + 40, divider.y + 73, { steps: 6 })
+  await page.mouse.up()
+  expect((await upper.boundingBox())!.height).toBeGreaterThan(height + 45)
+  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
+  await page.getByRole('button', { name: 'Первая реплика', exact: true }).click()
+  await page.getByRole('button', { name: 'Добавить реплику', exact: true }).click()
+  await page.getByLabel('Перевод реплики').fill('Вторая реплика')
+  await page.getByLabel('Перевод реплики').blur()
+  await page.getByRole('tab', { name: 'Слой', exact: true }).click()
+  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
+  await expect(page.getByLabel('Перевод реплики')).toHaveValue('Вторая реплика')
+  await page.getByRole('button', { name: 'Панели слева', exact: true }).click()
+  expect((await inspector.boundingBox())!.x).toBeLessThan(100)
+  await page.getByRole('button', { name: 'Открепить панели', exact: true }).click()
+  await expect(inspector).toHaveCSS('position', 'fixed')
+  const before = (await inspector.boundingBox())!,
+    grip = (await page
+      .getByRole('button', { name: 'Переместить панели', exact: true })
+      .boundingBox())!
+  await page.mouse.move(grip.x + 5, grip.y + 5)
+  await page.mouse.down()
+  await page.mouse.move(grip.x - 75, grip.y + 35, { steps: 7 })
+  await page.mouse.up()
+  expect((await inspector.boundingBox())!.x).toBeCloseTo(before.x - 80, 0)
+  await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена')
+  await page.reload()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByTestId('restore-project').click()
+  await expect(inspector).toHaveCSS('position', 'fixed')
+  await page.setViewportSize({ width: 980, height: 720 })
+  await expect
+    .poll(async () => {
+      const b = (await inspector.boundingBox())!
+      return b.x + b.width <= 980 && b.y + b.height <= 720
+    })
+    .toBe(true)
+  await page.getByRole('button', { name: 'Сбросить рабочую среду', exact: true }).click()
+  await expect(inspector).toHaveCSS('position', 'relative')
+  await expect(page.getByLabel('Рабочая среда')).toHaveValue('retouch')
+})
+
+test('manga practice completes J-to-typeset without covering translation and exports independent-check fixtures', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByTestId('open-manga-demo').click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.locator('.layer-row')).toHaveCount(4)
+  await expect(page.getByLabel('Рабочая среда')).toHaveValue('manga')
+  const dark = () =>
+    page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => {
+      const sx = c.width / 896,
+        sy = c.height / 1200,
+        data = c
+          .getContext('2d')!
+          .getImageData(
+            Math.floor(135 * sx),
+            Math.floor(175 * sy),
+            Math.floor(185 * sx),
+            Math.floor(105 * sy),
+          ).data
+      let n = 0
+      for (let p = 0; p < data.length; p += 4) if (data[p] < 120 && data[p + 3] > 200) n++
+      return n
+    })
+  await expect.poll(dark).toBeGreaterThan(50)
+  await page.keyboard.press('j')
+  const box = (await page.locator('.artboard').boundingBox())!,
+    scale = box.width / 896
+  await page.mouse.move(box.x + 125 * scale, box.y + 165 * scale)
+  await page.mouse.down()
+  for (const [x, y] of [
+    [330, 165],
+    [330, 280],
+    [125, 280],
+    [125, 165],
+  ])
+    await page.mouse.move(box.x + x * scale, box.y + y * scale, { steps: 6 })
+  await page.mouse.up()
+  await expect(page.getByLabel('Под верхними текстовыми слоями')).toBeChecked()
+  await page.getByRole('button', { name: 'Применить на новый слой', exact: true }).click()
+  await expect(page.locator('.layer-row')).toHaveCount(5)
+  await expect.poll(dark).toBe(0)
+  await page.getByRole('button', { name: 'Обновить связанный текст', exact: true }).click()
+  await expect.poll(dark).toBeGreaterThan(50)
+  await writeFile('test-results/manga-workflow.psd', await savePsd(page))
+  await page
+    .locator('.header-actions')
+    .getByRole('button', { name: 'Экспорт', exact: true })
+    .click()
+  await page
+    .locator('.format-options button')
+    .filter({ has: page.locator('strong', { hasText: /^PNG$/ }) })
+    .click()
+  const saving = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
+  const download = await saving
+  await writeFile('test-results/manga-workflow.png', await readFile((await download.path())!))
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await page.screenshot({ path: 'test-results/manga-workspace.png' })
 })

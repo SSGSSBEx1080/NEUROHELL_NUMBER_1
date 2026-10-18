@@ -38,7 +38,9 @@ export function TranslationPanel({
 }) {
   const doc = editor.document,
     entries = doc.script || []
-  const [activeId, setActiveId] = useState(entries[0]?.id),
+  const [activeId, setActiveId] = useState(
+      entries.find((e) => e.layerId === editor.selectedId)?.id || entries[0]?.id,
+    ),
     [query, setQuery] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const entry = entries.find((e) => e.id === activeId) || entries[0],
@@ -105,6 +107,7 @@ export function TranslationPanel({
           </button>
           <button
             className="compact-button"
+            aria-label="Скачать сценарий"
             disabled={!entries.length}
             onClick={() =>
               void downloadBlob(

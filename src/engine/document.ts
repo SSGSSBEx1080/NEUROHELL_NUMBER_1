@@ -225,7 +225,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       (typeof l.src !== 'string' ||
         !(
           /^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(l.src) ||
-          l.src === '/demo-landscape.webp'
+          ['/demo-landscape.webp', '/demo-manga.webp'].includes(l.src)
         ))
     )
       throw new Error('Разрешены только встроенные PNG, JPEG и WebP')

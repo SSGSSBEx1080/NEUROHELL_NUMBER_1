@@ -64,13 +64,27 @@ export function validateRasterBudget(doc: EditorDocument) {
   }
   return sources
 }
+const documentFonts = (doc: EditorDocument) =>
+  doc.layers
+    .filter((l) => l.kind === 'text')
+    .map((l) => ({ font: textFont(l, 32), sample: (l.text || 'AaБб').slice(0, 256) }))
 export async function prepareDocument(doc: EditorDocument) {
   await prepareSource(doc)
   const sources = validateRasterBudget(doc),
     composite = originalSource(doc)?.composite
   if (composite) sources.push(composite)
-  await Promise.all(sources.map(loadImage))
+  const needed = documentFonts(doc).filter(
+    ({ font, sample }) => !document.fonts.check(font, sample),
+  )
+  await Promise.all([
+    ...sources.map(loadImage),
+    ...needed.map(({ font, sample }) => document.fonts.load(font, sample)),
+  ])
   await document.fonts.ready
+  if (needed.length) {
+    clearRenderCaches()
+    window.dispatchEvent(new Event('fsh777-fonts-changed'))
+  }
 }
 export function pruneImageCache(documents: EditorDocument[]) {
   const keep = new Set(
@@ -210,6 +224,7 @@ export function renderLayer(
 export function isPrepared(doc: EditorDocument) {
   return (
     document.fonts.status === 'loaded' &&
+    documentFonts(doc).every(({ font, sample }) => document.fonts.check(font, sample)) &&
     (!doc.sourceId || !!originalSource(doc)) &&
     doc.layers.every((l) => (!l.src || images.has(l.src)) && (!l.mask || images.has(l.mask.src)))
   )

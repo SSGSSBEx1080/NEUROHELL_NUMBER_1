@@ -44,6 +44,7 @@ export function rasterDimensions(bytes: Uint8Array): { width: number; height: nu
 }
 export function sourceDimensions(src: string) {
   if (src === '/demo-landscape.webp') return { width: 1312, height: 816 }
+  if (src === '/demo-manga.webp') return { width: 896, height: 1200 }
   const comma = src.indexOf(',')
   if (comma < 0 || !/^data:image\/(png|jpeg|webp);base64,/i.test(src))
     throw new Error('Разрешены только локальные растровые изображения')

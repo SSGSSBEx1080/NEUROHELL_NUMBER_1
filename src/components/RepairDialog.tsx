@@ -1,3 +1,5 @@
+import { repairPlacement } from '../engine/repairPlacement'
+import { RepairPreview } from '../engine/repairPreview'
 import { useEffect, useRef, useState } from 'react'
 import { Bandage, LoaderCircle, Shield, SplitSquareHorizontal } from 'lucide-react'
 import type { EditorDocument, Layer, Rect, Selection } from '../types'
@@ -20,13 +22,14 @@ export function RepairDialog({
 }: {
   doc: EditorDocument
   selection: Selection
-  onApply: (layer: Layer) => void
+  onApply: (layer: Layer, belowText: boolean) => void
   onClose: () => void
 }) {
   const [source, setSource] = useState<Source | null>(null),
     [result, setResult] = useState<RepairResult | null>(null),
     [error, setError] = useState(''),
     [working, setWorking] = useState(true)
+  const [belowText, setBelowText] = useState(!!doc.script?.length)
   const [mode, setMode] = useState<RepairMode>('auto'),
     [radius, setRadius] = useState(4),
     [expand, setExpand] = useState(2),
@@ -39,8 +42,23 @@ export function RepairDialog({
   const canvas = useRef<HTMLCanvasElement>(null),
     controller = useRef<AbortController | null>(null),
     drawing = useRef(false)
+  const preview = useRef<RepairPreview | null>(null),
+    drawFrame = useRef(0),
+    lastDonor = useRef<{ x: number; y: number } | null>(null)
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(drawFrame.current)
+      preview.current?.dispose()
+      preview.current = null
+    },
+    [],
+  )
   useEffect(() => {
     let cancelled = false
+    setWorking(true)
+    setResult(null)
+    setSource(null)
+    controller.current?.abort()
     ;(async () => {
       try {
         if (selection.inverted)
@@ -57,7 +75,7 @@ export function RepairDialog({
         c.height = height
         const ctx = c.getContext('2d', { willReadFrequently: true })!
         ctx.translate(-x, -y)
-        renderDocument(ctx, doc)
+        renderDocument(ctx, repairPlacement(doc, belowText).source)
         const local = {
           ...selection,
           x: selection.x - x,
@@ -92,7 +110,7 @@ export function RepairDialog({
       cancelled = true
       controller.current?.abort()
     }
-  }, [doc, selection])
+  }, [doc, selection, belowText])
   useEffect(() => {
     if (!source) return
     const abort = new AbortController()
@@ -124,56 +142,48 @@ export function RepairDialog({
     }
   }, [source, mode, radius, expand, feather, search, revision])
   const draw = () => {
-    const c = canvas.current
-    if (!source || !c) return
-    if (c.width !== source.width || c.height !== source.height) {
-      c.width = source.width
-      c.height = source.height
+    if (!source || !canvas.current) return
+    if (preview.current?.source !== source) {
+      preview.current?.dispose()
+      preview.current = new RepairPreview(source)
     }
-    const data = new Uint8ClampedArray(source.pixels)
-    for (let p = 0; p < source.mask.length; p++) {
-      const x = p % source.width
-      if (result && x >= (source.width * split) / 100) {
-        const a = result.mask[p] / 255
-        for (let channel = 0; channel < 3; channel++)
-          data[p * 4 + channel] = Math.round(
-            data[p * 4 + channel] * (1 - a) + result.pixels[p * 4 + channel] * a,
-          )
-      }
-      if (protect) {
-        const tint = source.mask[p]
-          ? [196, 153, 255]
-          : source.donors[p]
-            ? [55, 199, 149]
-            : [255, 95, 105]
-        for (let channel = 0; channel < 3; channel++)
-          data[p * 4 + channel] = data[p * 4 + channel] * 0.7 + tint[channel] * 0.3
-      }
-    }
-    const ctx = c.getContext('2d')!
-    ctx.putImageData(new ImageData(data, source.width, source.height), 0, 0)
-    if (!protect) {
-      ctx.fillStyle = '#b7a2ff'
-      ctx.fillRect(
-        Math.round((source.width * split) / 100),
-        0,
-        Math.max(1, source.width / 500),
-        source.height,
-      )
-    }
+    preview.current.draw(canvas.current, result, split, protect)
   }
   useEffect(draw, [source, result, split, protect, revision])
   const paintDonor = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!source || !drawing.current || !protect) return
     const bounds = e.currentTarget.getBoundingClientRect(),
-      x = Math.round(((e.clientX - bounds.left) * source.width) / bounds.width),
-      y = Math.round(((e.clientY - bounds.top) * source.height) / bounds.height),
+      x = ((e.clientX - bounds.left) * source.width) / bounds.width,
+      y = ((e.clientY - bounds.top) * source.height) / bounds.height,
       r = Math.ceil((15 * source.width) / bounds.width)
-    for (let yy = Math.max(0, y - r); yy <= Math.min(source.height - 1, y + r); yy++)
-      for (let xx = Math.max(0, x - r); xx <= Math.min(source.width - 1, x + r); xx++)
-        if ((xx - x) ** 2 + (yy - y) ** 2 <= r * r)
-          source.donors[yy * source.width + xx] = e.shiftKey ? 255 : 0
-    draw()
+    const from = lastDonor.current || { x, y },
+      steps = Math.min(
+        512,
+        Math.max(1, Math.ceil(Math.hypot(x - from.x, y - from.y) / Math.max(1, r * 0.5))),
+      )
+    for (let i = 1; i <= steps; i++) {
+      const cx = from.x + ((x - from.x) * i) / steps,
+        cy = from.y + ((y - from.y) * i) / steps
+      for (
+        let yy = Math.max(0, Math.floor(cy - r));
+        yy <= Math.min(source.height - 1, Math.ceil(cy + r));
+        yy++
+      )
+        for (
+          let xx = Math.max(0, Math.floor(cx - r));
+          xx <= Math.min(source.width - 1, Math.ceil(cx + r));
+          xx++
+        )
+          if ((xx - cx) ** 2 + (yy - cy) ** 2 <= r * r)
+            source.donors[yy * source.width + xx] = e.shiftKey ? 255 : 0
+      preview.current?.invalidate(cx - r - 1, cy - r - 1, r * 2 + 3, r * 2 + 3)
+    }
+    lastDonor.current = { x, y }
+    if (!drawFrame.current)
+      drawFrame.current = requestAnimationFrame(() => {
+        drawFrame.current = 0
+        draw()
+      })
   }
   const apply = () => {
     if (!source || !result || working || drawing.current) return
@@ -195,7 +205,7 @@ export function RepairDialog({
         }),
         c,
       )
-      onApply(layer)
+      onApply(layer, belowText)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка применения')
     }
@@ -217,10 +227,12 @@ export function RepairDialog({
             <canvas
               ref={canvas}
               data-testid="repair-preview"
+              aria-label="Предпросмотр восстановления"
               onPointerDown={(e) => {
                 if (!protect || !source) return
                 e.currentTarget.setPointerCapture(e.pointerId)
                 drawing.current = true
+                lastDonor.current = null
                 controller.current?.abort()
                 setWorking(true)
                 setResult(null)
@@ -231,12 +243,14 @@ export function RepairDialog({
                 if (!drawing.current) return
                 paintDonor(e)
                 drawing.current = false
+                lastDonor.current = null
                 if (e.currentTarget.hasPointerCapture(e.pointerId))
                   e.currentTarget.releasePointerCapture(e.pointerId)
                 setRevision((n) => n + 1)
               }}
               onPointerCancel={() => {
                 drawing.current = false
+                lastDonor.current = null
                 setRevision((n) => n + 1)
               }}
             />
@@ -257,7 +271,7 @@ export function RepairDialog({
           {protect && (
             <p className="panel-note">
               Зелёный — разрешённые образцы. Закрась красным то, что нельзя копировать. Shift
-              возвращает образцы. Фиолетовый — цель.
+              возвращает образцы. Фиолетовый — исходная обводка.
             </p>
           )}
         </section>
@@ -318,11 +332,26 @@ export function RepairDialog({
             className="text-button"
             onClick={() => {
               source?.donors.fill(255)
+              preview.current?.invalidate()
               setRevision((n) => n + 1)
             }}
           >
             Сбросить запреты образцов
           </button>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={belowText}
+              onChange={(e) => setBelowText(e.target.checked)}
+            />
+            Под верхними текстовыми слоями
+          </label>
+          {belowText && (
+            <p className="panel-note">
+              Верхний стек редактируемого текста исключён из образцов и останется над клином. Группы
+              не разделяются.
+            </p>
+          )}
           <div className="repair-progress" role="status">
             {working ? (
               <>
@@ -341,8 +370,9 @@ export function RepairDialog({
             )}
           </div>
           <p className="panel-note">
-            Не генеративный ИИ. Чистая бумага и повторяющиеся фактуры восстанавливаются лучше
-            уникальных деталей рисунка. Всегда оцени результат.
+            Поиск задаёт локальный радиус; резервные образцы берутся из всего фрагмента, кроме
+            запрещённых зон. Не генеративный ИИ. Чистая бумага и повторяющиеся фактуры
+            восстанавливаются лучше уникальных деталей рисунка. Всегда оцени результат.
           </p>
         </aside>
       </div>

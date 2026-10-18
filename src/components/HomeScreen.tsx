@@ -23,6 +23,7 @@ export function HomeScreen({
   onNew,
   onOpen,
   onDemo,
+  onManga,
   onResume,
   onRecent,
   onRestore,
@@ -36,6 +37,7 @@ export function HomeScreen({
   onNew: () => void
   onOpen: () => void
   onDemo: () => void
+  onManga: () => void
   onResume: () => void
   onRecent: (r: RecentProject) => void
   onRestore: () => void
@@ -145,6 +147,23 @@ export function HomeScreen({
               <span className="hero-art-caption">MAKE SOMETHING / YOURS</span>
               <div className="hero-curve" />
             </div>
+          </section>
+        )}
+        {!recentOnly && (
+          <section className="home-manga-card">
+            <img src="/demo-manga.webp" alt="Учебная иллюстрация: курьер на ночной крыше" />
+            <div>
+              <span className="eyebrow">MANGA WORKSPACE</span>
+              <h2>От скана до готовой реплики.</h2>
+              <p>
+                J-клининг, перевод и текстовые пузыри — на одной учебной странице. Без установки
+                шрифтов и поиска исходников.
+              </p>
+            </div>
+            <button className="secondary-button" data-testid="open-manga-demo" onClick={onManga}>
+              Открыть практику
+              <ArrowUpRight size={15} />
+            </button>
           </section>
         )}
         {recovery && (

@@ -4492,3 +4492,275 @@ kbd {
     margin-right: auto;
   }
 }
+
+/* Docked/floating workbench: only panel geometry changes, never document/history. */
+.panel-dock {
+  position: relative;
+  min-width: 240px;
+}
+.panels-on-left > .toolbar {
+  order: 0;
+}
+.panels-on-left > .panel-dock {
+  order: 1;
+  border-left: 0;
+  border-right: 1px solid var(--line);
+}
+.panels-on-left > .workspace {
+  order: 2;
+}
+.dock-window-heading {
+  height: 33px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  background: #13111660;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.dock-window-heading .select-wrap {
+  flex: 1;
+  height: 23px;
+  background: transparent;
+  border: 0;
+}
+.dock-window-heading select {
+  font-size: 10px;
+  padding: 2px 21px 2px 5px;
+  color: #a9a0b4;
+}
+.dock-window-heading .icon-button {
+  width: 25px;
+  height: 23px;
+}
+.dock-window-heading .icon-button svg {
+  width: 13px;
+}
+.dock-grip {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  cursor: move;
+  touch-action: none;
+}
+.panel-dock .dock-tabs button {
+  flex: 1;
+  padding: 9px 10px;
+}
+.dock-upper,
+.dock-lower {
+  min-height: 140px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.dock-lower {
+  min-height: 130px;
+}
+.dock-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.dock-view[hidden] {
+  display: none !important;
+}
+.panel-dock .properties-panel,
+.panel-dock .translation-panel {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+.panel-dock .layers-panel {
+  flex: 1;
+  min-height: 0;
+}
+.dock-splitter {
+  height: 7px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #16131a;
+  border-top: 1px solid #ffffff06;
+  border-bottom: 1px solid #ffffff06;
+  cursor: row-resize;
+  touch-action: none;
+}
+.dock-splitter i {
+  width: 32px;
+  height: 1px;
+  background: #67616e;
+}
+.dock-splitter:hover {
+  background: #b8a8ff25;
+}
+.dock-width-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.dock-left .dock-width-handle,
+.floating-panels .dock-width-handle {
+  left: auto;
+  right: -3px;
+}
+.dock-width-handle:hover {
+  background: #b8a8ff35;
+}
+.panel-dock.floating-panels {
+  position: fixed;
+  z-index: 35;
+  border: 1px solid #817090;
+  border-radius: 9px;
+  box-shadow: 0 18px 65px #0008;
+  overflow: visible;
+}
+.floating-panels .dock-window-heading {
+  border-radius: 9px 9px 0 0;
+  background: #332a3d;
+}
+.floating-panels .inspector-footer {
+  border-radius: 0 0 9px 9px;
+}
+.dock-corner {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 18px;
+  height: 19px;
+  padding: 0;
+  color: #ac99bf;
+  font-size: 13px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.quick-actions-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.quick-actions-panel > header {
+  padding: 10px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.quick-action-list {
+  overflow: auto;
+  flex: 1;
+  min-height: 60px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.quick-action-list > button {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 11px;
+}
+.quick-action-list > button.selected {
+  background: #b8a8ff15;
+}
+.quick-action-list > button > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-action-list small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 4px;
+}
+.quick-action-footer {
+  padding: 12px;
+  display: grid;
+  gap: 9px;
+  max-height: 50%;
+  overflow: auto;
+}
+.quick-action-footer input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #0002;
+  border-radius: 5px;
+  padding: 8px;
+  font-size: 11px;
+}
+
+.home-manga-card {
+  display: flex;
+  align-items: center;
+  gap: 23px;
+  border: 1px solid #b8a8ff32;
+  border-radius: 12px;
+  background: linear-gradient(105deg, #27232e, #1a191f);
+  margin: 20px 0;
+  overflow: hidden;
+  padding-right: 23px;
+}
+.home-manga-card > img {
+  width: 132px;
+  height: 150px;
+  object-fit: cover;
+  object-position: 52% 35%;
+  opacity: 0.9;
+}
+.home-manga-card > div {
+  flex: 1;
+  padding: 15px 0;
+}
+.home-manga-card h2 {
+  font-size: clamp(15px, 1.5vw, 21px);
+  font-weight: 650;
+  margin: 6px 0 8px;
+  letter-spacing: -0.02em;
+}
+.home-manga-card p {
+  color: var(--muted);
+  font-size: 11px;
+  max-width: 490px;
+  line-height: 1.65;
+  margin: 0;
+}
+.home-manga-card .eyebrow {
+  color: #c2afe5;
+  font-size: 8px;
+  letter-spacing: 0.15em;
+}
+.home-manga-card button {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+@media (max-width: 1100px) {
+  .home-manga-card {
+    gap: 15px;
+    flex-wrap: wrap;
+    padding: 0 15px 15px;
+  }
+  .home-manga-card > img {
+    width: 95px;
+    height: 122px;
+    margin-left: -15px;
+  }
+  .home-manga-card > div {
+    flex-basis: calc(100% - 120px);
+  }
+  .home-manga-card > button {
+    margin-left: 95px;
+  }
+}
