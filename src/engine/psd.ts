@@ -1,3 +1,5 @@
+import { exportVectorShape, importVectorShape, translateNativeVector } from './psdVector'
+import { shapePadding } from './shapeGeometry'
 import { getTextLayout } from './textLayout'
 import { nativeFontStyle } from './fonts'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
@@ -293,7 +295,13 @@ export async function importPsd(
             )
           }
         }
-        if (src.mask?.imageData) {
+        const editableShape = !group ? importVectorShape(src) : undefined
+        if (editableShape) Object.assign(layer, editableShape)
+        else if (src.vectorFill && src.vectorMask)
+          warnings.add(
+            'Часть векторных фигур использует неподдерживаемую заливку или логические операции контуров: исходная структура сохраняется, предпросмотр растровый.',
+          )
+        if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
           const m = src.mask,
             data = m.imageData!
           layer.mask = {
@@ -323,7 +331,11 @@ export async function importPsd(
           warnings.add(
             'Исходные смарт-объекты и вложенные данные сохраняются при неизменённом содержимом. Поддерживаемый вложенный PSD можно открыть отдельно.',
           )
-        if (src.vectorMask || src.realMask || !toCanvas[src.blendMode || 'normal'])
+        if (
+          (src.vectorMask && !editableShape) ||
+          src.realMask ||
+          !toCanvas[src.blendMode || 'normal']
+        )
           warnings.add(
             'Сложные маски или режимы смешивания не полностью воспроизводятся после редактирования; не перезаписывай единственный оригинал.',
           )
@@ -445,6 +457,7 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           dy = Math.round(layer.y - before!.y)
         for (const key of ['left', 'right'] as const) if (out[key] !== undefined) out[key] += dx
         for (const key of ['top', 'bottom'] as const) if (out[key] !== undefined) out[key] += dy
+        if (dx || dy) Object.assign(out, translateNativeVector(out, dx, dy))
         if (out.text && (dx || dy)) {
           const transform = [...(out.text.transform || [1, 0, 0, 1, 0, 0])]
           transform[4] += dx
@@ -458,7 +471,7 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           }
       } else if (layer.kind !== 'group') {
         const angle = (layer.rotation * Math.PI) / 180
-        const padding = Math.ceil(layer.adjustments.blur * 3 + (layer.strokeWidth || 0) + 2)
+        const padding = Math.ceil(layer.adjustments.blur * 3 + shapePadding(layer) + 2)
         const corners = (
           layer.warp || [
             { x: 0, y: 0 },
@@ -490,6 +503,7 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           mask: undefined,
         })
         out = { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
+        if (layer.kind === 'shape') Object.assign(out, exportVectorShape(layer, doc.dpi || 72))
         if (
           layer.kind === 'text' &&
           !layer.warp &&

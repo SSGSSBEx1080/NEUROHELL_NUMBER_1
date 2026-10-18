@@ -1,3 +1,5 @@
+import { parseShapePaths, shapeNames } from './shapeGeometry'
+import { hitShape } from './shapeRenderer'
 import { parseScript } from './scriptFormat'
 import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
@@ -158,13 +160,10 @@ export function localPoint(layer: Layer, point: Point, undoWarp = true): Point {
 export function hitTest(layer: Layer, point: Point): boolean {
   if (!layer.visible || layer.locked) return false
   const p = localPoint(layer, point)
+  if (layer.flipX) p.x = layer.width - p.x
+  if (layer.flipY) p.y = layer.height - p.y
+  if (layer.kind === 'shape') return hitShape(layer, p.x, p.y)
   if (p.x < 0 || p.y < 0 || p.x > layer.width || p.y > layer.height) return false
-  if (layer.shape === 'ellipse')
-    return (
-      ((p.x - layer.width / 2) / (layer.width / 2)) ** 2 +
-        ((p.y - layer.height / 2) / (layer.height / 2)) ** 2 <=
-      1
-    )
   return true
 }
 
@@ -261,7 +260,30 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : 'left',
       lineHeight: finite(l.lineHeight, 0.5, 4, 1.2),
       letterSpacing: finite(l.letterSpacing, -30, 100, 0),
-      shape: l.shape === 'ellipse' ? 'ellipse' : 'rectangle',
+      shape: Object.hasOwn(shapeNames, String(l.shape)) ? (l.shape as Layer['shape']) : 'rectangle',
+      shapeFill: l.shapeFill !== false,
+      cornerRadii:
+        Array.isArray(l.cornerRadii) && l.cornerRadii.length === 4
+          ? (l.cornerRadii.map((v) => finite(v, 0, 2000, 0)) as Layer['cornerRadii'])
+          : undefined,
+      sides: Math.round(finite(l.sides, 3, 64, 5)),
+      starRatio: finite(l.starRatio, 0.02, 0.98, 0.45),
+      shapePaths: parseShapePaths(l.shapePaths),
+      strokeAlign: ['inside', 'center', 'outside'].includes(String(l.strokeAlign))
+        ? (l.strokeAlign as Layer['strokeAlign'])
+        : 'center',
+      strokeCap: ['butt', 'round', 'square'].includes(String(l.strokeCap))
+        ? (l.strokeCap as Layer['strokeCap'])
+        : 'butt',
+      strokeJoin: ['miter', 'round', 'bevel'].includes(String(l.strokeJoin))
+        ? (l.strokeJoin as Layer['strokeJoin'])
+        : 'miter',
+      strokeMiterLimit: finite(l.strokeMiterLimit, 1, 20, 4),
+      strokeDash:
+        Array.isArray(l.strokeDash) && l.strokeDash.length <= 16
+          ? l.strokeDash.map((v) => finite(v, 0, 2000, 0))
+          : [],
+      strokeDashOffset: finite(l.strokeDashOffset, -2000, 2000, 0),
       radius: finite(l.radius, 0, 2000, 0),
       strokeColor: isColor(l.strokeColor) ? l.strokeColor : undefined,
       strokeWidth: finite(l.strokeWidth, 0, 200, 0),

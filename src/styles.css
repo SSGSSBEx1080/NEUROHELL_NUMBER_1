@@ -4764,3 +4764,31 @@ kbd {
     margin-left: 95px;
   }
 }
+
+/* Editable vector controls: compact, keyboard-accessible and distinct from raster effects. */
+.shape-properties > .select-wrap {
+  width: 100%;
+}
+.shape-controls {
+  margin-block: 10px;
+}
+.shape-controls .select-wrap {
+  min-width: 0;
+}
+.corner-fields .number-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+}
+.corner-fields .number-field > span:first-child {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  white-space: normal;
+}
+.corner-fields .number-field input {
+  min-width: 0;
+  width: 100%;
+}
+.shape-properties .panel-note {
+  margin-top: 8px;
+}

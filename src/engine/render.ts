@@ -1,3 +1,4 @@
+import { renderShape } from './shapeRenderer'
 import { clearTextLayoutCache, getTextLayout, textFont } from './textLayout'
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
 import { clearWarpCache, renderWarped } from './warpRenderer'
@@ -158,32 +159,7 @@ export function renderLayer(
     const image = images.get(layer.src)
     if (image) ctx.drawImage(image, 0, 0, layer.width, layer.height)
   } else if (layer.kind === 'shape') {
-    ctx.fillStyle = layer.color
-    ctx.beginPath()
-    if (layer.shape === 'ellipse')
-      ctx.ellipse(
-        layer.width / 2,
-        layer.height / 2,
-        layer.width / 2,
-        layer.height / 2,
-        0,
-        0,
-        Math.PI * 2,
-      )
-    else
-      ctx.roundRect(
-        0,
-        0,
-        layer.width,
-        layer.height,
-        Math.min(layer.radius || 0, layer.width / 2, layer.height / 2),
-      )
-    ctx.fill()
-    if (layer.strokeWidth && layer.strokeColor) {
-      ctx.strokeStyle = layer.strokeColor
-      ctx.lineWidth = layer.strokeWidth
-      ctx.stroke()
-    }
+    renderShape(ctx, layer)
   } else if (layer.kind === 'text') {
     const textScale = layer.textScaleX || 1
     const layout = layer.textFrame ? getTextLayout(layer) : undefined

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Pentagon,
+  Star,
+  Minus,
   Bandage,
   Circle,
   Crop,
@@ -56,6 +59,9 @@ const groups = [
   [
     { id: 'rectangle', name: 'Прямоугольник', icon: Square, key: 'U' },
     { id: 'ellipse', name: 'Эллипс', icon: Circle, key: 'U' },
+    { id: 'polygon', name: 'Многоугольник', icon: Pentagon, key: 'U' },
+    { id: 'star', name: 'Звезда', icon: Star, key: 'U' },
+    { id: 'line', name: 'Линия', icon: Minus, key: 'U' },
   ],
   [{ id: 'eyedropper', name: 'Пипетка', icon: Pipette, key: 'I' }],
   [{ id: 'hand', name: 'Рука', icon: Hand, key: 'H' }],

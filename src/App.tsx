@@ -1862,7 +1862,17 @@ export default function App() {
                               : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
             )}
-            {['brush', 'rectangle', 'ellipse', 'text', 'bucket', 'gradient'].includes(tool) && (
+            {[
+              'brush',
+              'rectangle',
+              'ellipse',
+              'polygon',
+              'star',
+              'line',
+              'text',
+              'bucket',
+              'gradient',
+            ].includes(tool) && (
               <label className="option-color" title="Основной цвет">
                 <input
                   type="color"

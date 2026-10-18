@@ -215,7 +215,22 @@ export function runAction(
           throw new Error('Шаг типографики требует текстовый слой')
         if (
           selected.kind !== 'shape' &&
-          ['radius', 'strokeColor', 'strokeWidth'].some((k) => k in c.values)
+          [
+            'shape',
+            'shapeFill',
+            'cornerRadii',
+            'sides',
+            'starRatio',
+            'strokeAlign',
+            'strokeCap',
+            'strokeJoin',
+            'strokeMiterLimit',
+            'strokeDash',
+            'strokeDashOffset',
+            'radius',
+            'strokeColor',
+            'strokeWidth',
+          ].some((k) => k in c.values)
         )
           throw new Error('Шаг фигуры требует векторный слой')
         const { styles, textFrame, ...values } = c.values

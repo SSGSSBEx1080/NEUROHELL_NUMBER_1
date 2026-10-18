@@ -28,7 +28,7 @@
 npm run build
 npm run preview -- --host 0.0.0.0 --port 4173 --strictPort
 # второй терминал, тот же репозиторий:
-node scripts/benchmark-layout.mjs
+node scripts/benchmark-composition.mjs
 ```
 
 Скрипт использует реальный production UI, пять раз обводит область, применяет последнюю, размещает перевод и двигает его 30 раз. Пишет условия/результат в игнорируемый `test-results/performance-0.4.json`; исходники не меняет. Перед сравнением код/сборка/оборудование должны совпадать. Сам preview server нужно остановить перед `npm run test:e2e`, поскольку тесты поднимают свой сервер на том же порту.

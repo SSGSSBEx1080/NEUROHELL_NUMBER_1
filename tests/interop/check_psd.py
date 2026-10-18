@@ -53,3 +53,22 @@ for source, image in [("merged", document.topil()), ("native layers", document.c
     print(f"PASS layout J → typeset, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
 
 print("Scope: RGB/8, these nine fixtures only. No XnConvert/Photoshop execution, ICC conversion, or arbitrary Adobe FX validation.")
+
+# Native fill/path/stroke structure, read and redrawn by a completely independent library.
+# aggdraw and Canvas2D use different edge AA/cap rasterizers: do not reuse the 2/255
+# pixel-cache threshold for genuinely redrawn cubic paths.
+document = PSDImage.open(RESULTS / "native-vectors.psd")
+reference = premultiplied(Image.open(RESULTS / "native-vectors.png"))
+shapes = [layer for layer in document.descendants() if layer.kind == "shape"]
+assert len(shapes) == 5
+assert all(layer.vector_mask is not None for layer in shapes)
+assert len(document[1]) == 2 and document[1].is_group()
+assert np.array_equal(premultiplied(document.topil()), reference)
+redrawn = premultiplied(document.composite(ignore_preview=True, force=True, apply_icc=False))
+delta = np.abs(redrawn - reference)
+assert float(delta.mean()) < .35, float(delta.mean())
+assert float((delta.max(axis=2) > 2).mean()) < .015
+# Broad interior samples catch orientation, missing fill and group compositing failures.
+for x, y in [(100, 80), (360, 80), (120, 290), (370, 290), (20, 20)]:
+    assert np.max(np.abs(redrawn[y, x] - reference[y, x])) <= 2, (x, y)
+print(f"PASS native vectors: five actual ShapeLayers, groups, merged exact; independent path redraw mean {delta.mean():.6f}/255. Edge/cap rasterizers differ; not an Adobe visual-fidelity claim.")

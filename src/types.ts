@@ -9,6 +9,9 @@ export type Tool =
   | 'text-frame'
   | 'rectangle'
   | 'ellipse'
+  | 'polygon'
+  | 'star'
+  | 'line'
   | 'eyedropper'
   | 'hand'
   | 'lasso'
@@ -56,6 +59,13 @@ export interface TextFrame {
   autoFit: boolean
   minFontSize: number
 }
+export type ShapeKind = 'rectangle' | 'ellipse' | 'polygon' | 'star' | 'line' | 'path'
+export interface ShapePath {
+  open: boolean
+  operation?: 'combine' | 'subtract' | 'intersect' | 'exclude'
+  fillRule: 'non-zero' | 'even-odd'
+  knots: { linked: boolean; points: number[] }[]
+}
 export interface Layer {
   id: string
   name: string
@@ -80,7 +90,18 @@ export interface Layer {
   lineHeight?: number
   letterSpacing?: number
   color: string
-  shape?: 'rectangle' | 'ellipse'
+  shape?: ShapeKind
+  shapeFill?: boolean
+  cornerRadii?: [number, number, number, number]
+  sides?: number
+  starRatio?: number
+  shapePaths?: ShapePath[]
+  strokeAlign?: 'inside' | 'center' | 'outside'
+  strokeCap?: 'butt' | 'round' | 'square'
+  strokeJoin?: 'miter' | 'round' | 'bevel'
+  strokeMiterLimit?: number
+  strokeDash?: number[]
+  strokeDashOffset?: number
   radius?: number
   strokeColor?: string
   strokeWidth?: number

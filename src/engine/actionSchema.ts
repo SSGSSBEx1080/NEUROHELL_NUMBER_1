@@ -18,6 +18,17 @@ export type ActionProperties = Partial<
     | 'lineHeight'
     | 'letterSpacing'
     | 'textScaleX'
+    | 'shape'
+    | 'shapeFill'
+    | 'cornerRadii'
+    | 'sides'
+    | 'starRatio'
+    | 'strokeAlign'
+    | 'strokeCap'
+    | 'strokeJoin'
+    | 'strokeMiterLimit'
+    | 'strokeDash'
+    | 'strokeDashOffset'
     | 'radius'
     | 'strokeColor'
     | 'strokeWidth'
@@ -50,10 +61,18 @@ const numeric: Record<string, [number, number]> = {
   lineHeight: [0.5, 4],
   letterSpacing: [-30, 100],
   textScaleX: [0.01, 100],
+  sides: [3, 64],
+  starRatio: [0.02, 0.98],
+  strokeMiterLimit: [1, 20],
+  strokeDashOffset: [-2000, 2000],
   radius: [0, 2000],
   strokeWidth: [0, 200],
 }
 const enums: Record<string, readonly string[]> = {
+  shape: ['rectangle', 'ellipse', 'polygon', 'star', 'line'],
+  strokeAlign: ['inside', 'center', 'outside'],
+  strokeCap: ['butt', 'round', 'square'],
+  strokeJoin: ['miter', 'round', 'bevel'],
   textAlign: ['left', 'center', 'right'],
   blendMode: [
     'source-over',
@@ -83,14 +102,17 @@ const finite = (v: unknown, min: number, max: number): number => {
   return v
 }
 export function parseActionProperties(input: unknown): ActionProperties {
-  if (!object(input) || Object.keys(input).length > 30)
+  if (!object(input) || Object.keys(input).length > 50)
     throw new Error('Некорректные свойства операции')
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
     if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
-    else if (['visible', 'italic', 'flipX', 'flipY'].includes(key) && typeof value === 'boolean')
+    else if (
+      ['visible', 'italic', 'flipX', 'flipY', 'shapeFill'].includes(key) &&
+      typeof value === 'boolean'
+    )
       out[key] = value
     else if (
       ['color', 'strokeColor'].includes(key) &&
@@ -98,6 +120,10 @@ export function parseActionProperties(input: unknown): ActionProperties {
       /^#[\da-f]{6}$/i.test(value)
     )
       out[key] = value
+    else if (key === 'cornerRadii' && Array.isArray(value) && value.length === 4)
+      out[key] = value.map((v) => finite(v, 0, 2000))
+    else if (key === 'strokeDash' && Array.isArray(value) && value.length <= 16)
+      out[key] = value.map((v) => finite(v, 0, 2000))
     else if (key === 'text' && typeof value === 'string' && value.length <= 20000) out[key] = value
     else if (key === 'name' && typeof value === 'string' && value.length <= 100) out[key] = value
     else if (

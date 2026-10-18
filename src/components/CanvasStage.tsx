@@ -1,3 +1,4 @@
+import { shapeNames, shapeTools } from '../engine/shapeGeometry'
 import { defaultTextFrame } from '../engine/textLayout'
 import { duplicateLayers, subtree } from '../engine/layerOperations'
 import { FrameScheduler, SceneRenderer } from '../engine/scene'
@@ -517,14 +518,17 @@ export function CanvasStage({
       })
       editor.change((d) => ({ ...d, layers: [...d.layers, layer] }), 'Добавление текста')
       beginText(layer)
-    } else if (tool === 'rectangle' || tool === 'ellipse') {
+    } else if (shapeTools.some((s) => s === tool)) {
       if (doc.layers.length >= MAX_LAYERS) {
         onToast('В одном проекте доступно до 100 слоёв')
         return
       }
       const layer = makeLayer({
-        name: tool === 'rectangle' ? 'Прямоугольник' : 'Эллипс',
-        shape: tool,
+        name: shapeNames[tool as keyof typeof shapeNames],
+        shape: tool as Layer['shape'],
+        shapeFill: tool !== 'line' && settings.shapeFill,
+        strokeColor: tool === 'line' || !settings.shapeFill ? settings.color : undefined,
+        strokeWidth: tool === 'line' || !settings.shapeFill ? 2 : 0,
         x: p.x,
         y: p.y,
         width: 1,
@@ -723,6 +727,24 @@ export function CanvasStage({
       return
     }
     if (d.type === 'shape') {
+      if (tool === 'line') {
+        const length = Math.max(1, Math.hypot(p.x - d.start.x, p.y - d.start.y))
+        let angle = Math.atan2(p.y - d.start.y, p.x - d.start.x)
+        if (e.shiftKey) angle = (Math.round(angle / (Math.PI / 4)) * Math.PI) / 4
+        editor.patchLayer(
+          d.id,
+          {
+            x: d.start.x + (Math.cos(angle) * length) / 2 - length / 2,
+            y: d.start.y + (Math.sin(angle) * length) / 2 - 0.5,
+            width: length,
+            height: 1,
+            rotation: (angle * 180) / Math.PI,
+          },
+          '',
+          true,
+        )
+        return
+      }
       let end = p
       if (e.shiftKey) {
         const m = Math.max(Math.abs(p.x - d.start.x), Math.abs(p.y - d.start.y))

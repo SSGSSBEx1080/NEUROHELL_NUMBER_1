@@ -1,3 +1,4 @@
+import { ShapeProperties } from './ShapeProperties'
 import { TextFrameSettings } from './TextFrameSettings'
 import { descendants } from '../engine/document'
 import { useFonts } from '../hooks/useFonts'
@@ -17,7 +18,6 @@ import {
   Link2,
   LockKeyhole,
   Maximize,
-  Palette,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
@@ -611,54 +611,7 @@ export function PropertiesPanel({
                     </div>
                   )}
                   {layer.kind === 'shape' && (
-                    <div className="property-section">
-                      <div className="section-heading">
-                        Заливка
-                        <Palette size={13} />
-                      </div>
-                      <ColorField
-                        label="Цвет фигуры"
-                        value={layer.color}
-                        onChange={(color) => patch({ color }, '', true)}
-                        onCommit={finish}
-                      />
-                      {layer.shape !== 'ellipse' && (
-                        <Field
-                          label="Радиус"
-                          value={layer.radius || 0}
-                          min={0}
-                          max={2000}
-                          suffix="px"
-                          onChange={(radius) => patch({ radius }, '', true)}
-                          onCommit={finish}
-                        />
-                      )}
-                      <div className="section-heading subheading">Обводка</div>
-                      <div className="field-grid">
-                        <ColorField
-                          label="Цвет обводки"
-                          value={layer.strokeColor || '#ffffff'}
-                          onChange={(strokeColor) =>
-                            patch({ strokeColor, strokeWidth: layer.strokeWidth || 2 }, '', true)
-                          }
-                          onCommit={finish}
-                        />
-                        <Field
-                          label="Толщ."
-                          value={layer.strokeWidth || 0}
-                          min={0}
-                          max={200}
-                          onChange={(strokeWidth) =>
-                            patch(
-                              { strokeWidth, strokeColor: layer.strokeColor || '#ffffff' },
-                              '',
-                              true,
-                            )
-                          }
-                          onCommit={finish}
-                        />
-                      </div>
-                    </div>
+                    <ShapeProperties key={layer.id} layer={layer} patch={patch} finish={finish} />
                   )}
                   {layer.kind === 'image' && !layer.smart && (
                     <div className="property-section quick-actions">

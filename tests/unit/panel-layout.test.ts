@@ -18,6 +18,7 @@ describe('Workspace geometry and explicit layout layer placement', () => {
         tab: 'eval',
       }),
     ).toMatchObject({ width: 300, split: 0.25, height: 1600, side: 'right', tab: 'properties' })
+    expect(normalizePanelLayout({ preset: 'manga' }).preset).toBe('layout')
     expect(panelPreset('layout')).toMatchObject({ tab: 'translation', width: 360, split: 0.66 })
     expect(panelPreset('type').split).toBeGreaterThan(panelPreset('retouch').split)
     const small = visiblePanelLayout(
