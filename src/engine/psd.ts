@@ -511,6 +511,14 @@ export async function exportPsd(
       const before = source?.baseline.layers.find((l) => l.id === layer.id),
         raw = layerAt(original, layer.sourcePath)
       const preserved = raw && unchangedContent(layer, before)
+      // The working renderer transforms local effects together with the source. Native
+      // outer FX would instead redraw them in document space. Keep those effects AND
+      // their source mask inside the editable placed contents, not flattened or doubled.
+      const embeddedAppearance =
+        !preserved &&
+        (layer.kind === 'text' || layer.kind === 'shape') &&
+        !!layer.warp &&
+        hasStyles(layer.styles)
       let out: PsdLayer = {}
       if (preserved) {
         out = { ...raw }
@@ -531,7 +539,7 @@ export async function exportPsd(
             transform: out.placedLayer.transform.map((n, i) => n + (i % 2 ? dy : dx)),
           }
       } else if (layer.kind !== 'group') {
-        const bounds = worldBounds(layer, true)
+        const bounds = worldBounds(layer, true, embeddedAppearance)
         const left = Math.floor(bounds.x),
           top = Math.floor(bounds.y)
         const right = Math.ceil(bounds.x + bounds.width),
@@ -544,8 +552,8 @@ export async function exportPsd(
           visible: true,
           opacity: 1,
           blendMode: 'source-over',
-          styles: undefined,
-          mask: undefined,
+          styles: embeddedAppearance ? layer.styles : undefined,
+          mask: embeddedAppearance ? layer.mask : undefined,
         })
         out = { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
         if (layer.kind === 'shape' || layer.kind === 'text') {
@@ -554,12 +562,30 @@ export async function exportPsd(
             notes.push(
               'Цветокоррекции текста и однотонных фигур пересчитаны в цвет редактируемой заливки/обводки. Исходные ползунки ФШ777 дополнительно хранятся в XMP.',
             )
-          const embedded = !!layer.adjustments.blur || (layer.kind === 'text' && !affineText(layer))
+          const warpedStroke =
+            layer.kind === 'shape' && !!layer.warp && !!layer.strokeColor && !!layer.strokeWidth
+          const embedded =
+            embeddedAppearance ||
+            warpedStroke ||
+            !!layer.adjustments.blur ||
+            (layer.kind === 'text' && !affineText(layer))
           if (!embedded) {
             if (layer.kind === 'shape') Object.assign(out, exportVectorShape(native, doc.dpi || 72))
             else out.text = exportNativeText(native)
           } else {
-            const bounds = rasterBounds({ ...native, flipX: false, flipY: false }, false)
+            const contents = {
+              ...native,
+              // Blur stays at the same stage relative to local FX. The nested export
+              // supplies another editable smart filter instead of blurring the FX too.
+              adjustments: {
+                ...native.adjustments,
+                blur: embeddedAppearance ? layer.adjustments.blur : 0,
+              },
+            }
+            const bounds = rasterBounds(
+              { ...contents, flipX: false, flipY: false },
+              embeddedAppearance,
+            )
             const inner = newDocument(
               Math.ceil(bounds.width),
               Math.ceil(bounds.height),
@@ -573,7 +599,7 @@ export async function exportPsd(
             inner.dpi = doc.dpi || 72
             inner.layers = [
               {
-                ...native,
+                ...contents,
                 id: uid(),
                 x: -bounds.x,
                 y: -bounds.y,
@@ -587,8 +613,15 @@ export async function exportPsd(
                 blendMode: 'source-over',
                 clipping: false,
                 parentId: undefined,
-                styles: undefined,
-                mask: undefined,
+                styles: embeddedAppearance ? native.styles : undefined,
+                mask:
+                  embeddedAppearance && layer.mask
+                    ? {
+                        ...layer.mask,
+                        x: layer.mask.x - layer.x - bounds.x,
+                        y: layer.mask.y - layer.y - bounds.y,
+                      }
+                    : undefined,
                 sourcePath: undefined,
                 src: undefined,
                 smart: undefined,
@@ -619,7 +652,7 @@ export async function exportPsd(
               transform: corners,
               nonAffineTransform: corners,
               resolution: { units: 'Density', value: inner.dpi },
-              ...(layer.adjustments.blur
+              ...(!embeddedAppearance && layer.adjustments.blur
                 ? {
                     filter: {
                       enabled: true,
@@ -646,7 +679,7 @@ export async function exportPsd(
             }
             editableContents++
             notes.push(
-              'Размытие или проективный текст сохранены в стандартном смарт-объекте с вложенным редактируемым PSD, а не сведены в единственную картинку. Открой содержимое смарт-объекта для правки текста/контуров; перерасчёт фильтра в другом редакторе может отличаться.',
+              'Размытие, проективный текст или деформированная обводка/эффекты сохранены в стандартном смарт-объекте с вложенным редактируемым PSD, а не сведены в единственную картинку. Локальные эффекты и их маски находятся внутри, если это необходимо для порядка преобразований. Открой содержимое для правки текста/контуров; перерасчёт фильтра в другом редакторе может отличаться.',
             )
           }
         }
@@ -666,10 +699,10 @@ export async function exportPsd(
       out.clipping = layer.clipping
       out.protected = { ...out.protected, composite: layer.locked, position: layer.locked }
       if (!preserved || !sameVisual(layer.styles, before?.styles)) {
-        out.effects = layer.styles ? exportStyles(layer.styles) : undefined
-        out.fillOpacity = layer.styles?.fillOpacity ?? 1
+        out.effects = !embeddedAppearance && layer.styles ? exportStyles(layer.styles) : undefined
+        out.fillOpacity = embeddedAppearance ? 1 : (layer.styles?.fillOpacity ?? 1)
       }
-      if (layer.mask) {
+      if (layer.mask && !embeddedAppearance) {
         const m = layer.mask,
           old = before?.mask
         const unchangedMask =

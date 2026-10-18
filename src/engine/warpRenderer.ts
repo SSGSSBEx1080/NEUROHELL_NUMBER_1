@@ -1,6 +1,7 @@
 import type { Layer, Point } from '../types'
 import { homography, project } from './projection'
 import { rasterBounds } from './layerGeometry'
+import { hasStyles } from './styles'
 const cache = new Map<
   string,
   {
@@ -123,7 +124,7 @@ export function renderWarped(
     if (
       layer.kind === 'shape' &&
       !layer.strokeWidth &&
-      !layer.styles &&
+      !hasStyles(layer.styles) &&
       Object.entries(layer.adjustments).every(([key, value]) => key === 'blur' || value === 0)
     ) {
       // Multiple clipped image draws can accumulate unpremultiplication rounding in a

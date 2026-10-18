@@ -119,4 +119,20 @@ for fixture in ["native-point", "native-text-transforms"]:
         assert float(delta.max()) <= 2.0, (fixture, source, float(delta.max()))
         print(f"PASS {fixture}, {source}: max premultiplied RGBA error {delta.max():.4f}/255; native type and editable embedded PSD verified")
 
-print("Scope: RGB/8, these seventeen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+document = PSDImage.open(RESULTS / "native-warped-paint.psd")
+reference = premultiplied(Image.open(RESULTS / "native-warped-paint.png"))
+assert len(document) == 3 and all(layer.kind == "smartobject" for layer in document)
+contents = {layer.name: PSDImage.open(BytesIO(layer.smart_object.data)) for layer in document}
+assert contents["Warped stroke"][0].kind == "shape"
+assert contents["Warped effects"][0].kind == "shape" and contents["Warped effects"][0].has_mask()
+assert not document[1].has_mask(), "Local mask must not be applied again outside the transformed effects"
+blur = contents["Warped type FX"][0]
+assert blur.kind == "smartobject"
+type_contents = PSDImage.open(BytesIO(blur.smart_object.data))
+assert type_contents[0].kind == "type" and type_contents[0].text == "Эффекты"
+for source, image in [("merged", document.topil()), ("native layers", document.composite(ignore_preview=True, force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2.0, ("warped editable paint", source, float(delta.max()))
+    print(f"PASS warped editable paint, {source}: max premultiplied RGBA error {delta.max():.4f}/255; nested shapes/type/mask retained, no duplicate outer effects")
+
+print("Scope: RGB/8, these eighteen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")

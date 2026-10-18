@@ -52,9 +52,11 @@ export function selectionQuad(layer: Layer): Quad {
     return { x: q.x * layer.width, y: q.y * layer.height }
   }) as Quad
 }
-export const worldBounds = (layer: Layer, raster = false) =>
+export const worldBounds = (layer: Layer, raster = false, effects = false) =>
   pointBounds(
-    rectPoints(raster ? rasterBounds(layer) : localBounds(layer)).map((p) => layerPoint(layer, p)),
+    rectPoints(raster ? rasterBounds(layer, effects) : localBounds(layer)).map((p) =>
+      layerPoint(layer, p),
+    ),
   )
 export function visualCenter(layer: Layer) {
   const b = localBounds(layer, true)

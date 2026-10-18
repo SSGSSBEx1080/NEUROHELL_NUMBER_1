@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 import { initializeCanvas, readPsd, writePsd, type Layer as PsdLayer } from 'ag-psd'
 import { makeLayer, newDocument } from '../../src/engine/document'
+import { defaultStyles } from '../../src/engine/styles'
 initializeCanvas(
   () => {
     throw new Error('No DOM in PSD structural verifier')
@@ -592,4 +593,125 @@ test('opaque projective fills keep their alpha and color across shallow mesh edg
       }),
     )
     .toEqual({ badAlpha: 0, maxColorError: 0 })
+})
+
+test('warped strokes, local effects and masks stay editable inside placed PSD contents', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const mask = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 140
+    c.height = 70
+    const x = c.getContext('2d')!
+    x.fillStyle = '#ffffff'
+    x.fillRect(0, 0, c.width, c.height)
+    x.fillStyle = '#000000'
+    x.beginPath()
+    x.arc(100, 35, 16, 0, Math.PI * 2)
+    x.fill()
+    return c.toDataURL()
+  })
+  const doc = newDocument(500, 330, 'Warped editable paint', 'transparent')
+  const warp = [
+    { x: -0.08, y: 0.02 },
+    { x: 0.9, y: -0.13 },
+    { x: 1.08, y: 1.08 },
+    { x: 0.12, y: 1.03 },
+  ] as const
+  const styles = defaultStyles()
+  styles.shadow = { enabled: true, color: '#263549', blur: 6, x: 9, y: 7, opacity: 0.7 }
+  styles.fillOpacity = 0.8
+  doc.layers = [
+    makeLayer({
+      name: 'Warped stroke',
+      x: 35,
+      y: 40,
+      width: 140,
+      height: 70,
+      radius: 12,
+      color: '#e98743',
+      strokeColor: '#2d4166',
+      strokeWidth: 10,
+      strokeAlign: 'inside',
+      warp: [...warp],
+    }),
+    makeLayer({
+      name: 'Warped effects',
+      x: 285,
+      y: 40,
+      width: 140,
+      height: 70,
+      radius: 12,
+      color: '#5e89d4',
+      warp: [...warp],
+      styles,
+      mask: {
+        src: mask,
+        x: 285,
+        y: 40,
+        width: 140,
+        height: 70,
+        enabled: true,
+        linked: true,
+        density: 1,
+        feather: 0,
+        defaultColor: 255,
+      },
+    }),
+    makeLayer({
+      name: 'Warped type FX',
+      kind: 'text',
+      text: 'Эффекты',
+      fontFamily: 'Manrope',
+      fontSize: 48,
+      x: 40,
+      y: 220,
+      width: 250,
+      height: 60,
+      color: '#7454be',
+      warp: [...warp],
+      styles,
+      adjustments: {
+        brightness: 0,
+        contrast: 0,
+        saturation: 0,
+        hue: 0,
+        blur: 2,
+        grayscale: 0,
+        sepia: 0,
+        invert: 0,
+      },
+    }),
+  ]
+  await open(page, 'warped-paint.777', Buffer.from(JSON.stringify(doc)))
+  const bytes = await save(page),
+    psd = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const nested = (document: typeof psd, name: string) => {
+    const placed = document.children!.find((l) => l.name === name)!
+    expect(placed.placedLayer).toBeTruthy()
+    const linked = document.linkedFiles!.find((l) => l.id === placed.placedLayer!.id)!
+    return readPsd(linked.data!, { useImageData: true, skipThumbnail: true })
+  }
+  const stroke = nested(psd, 'Warped stroke').children![0]
+  expect(stroke.vectorMask!.paths).toHaveLength(1)
+  expect(stroke.vectorStroke!.lineWidth!.value).toBe(10)
+  expect(stroke.vectorStroke!.lineAlignment).toBe('inside')
+  const fxRoot = psd.children!.find((l) => l.name === 'Warped effects')!
+  expect(fxRoot.effects).toBeUndefined()
+  expect(fxRoot.mask).toBeUndefined()
+  expect(fxRoot.fillOpacity).toBe(1)
+  const fx = nested(psd, 'Warped effects').children![0]
+  expect(fx.vectorMask!.paths).toHaveLength(1)
+  expect(fx.mask!.imageData!.width).toBe(140)
+  expect(fx.effects!.dropShadow![0].enabled).toBe(true)
+  expect(fx.fillOpacity).toBeCloseTo(0.8, 2)
+  const typeContents = nested(psd, 'Warped type FX'),
+    blur = typeContents.children![0]
+  expect(blur.effects!.dropShadow![0].enabled).toBe(true)
+  expect(blur.placedLayer!.filter!.list[0].type).toBe('gaussian blur')
+  expect(nested(typeContents, 'Warped type FX').children![0].text!.text).toBe('Эффекты')
+  await writeFile('test-results/native-warped-paint.psd', bytes)
+  await writeFile('test-results/native-warped-paint.png', await png(page))
 })
