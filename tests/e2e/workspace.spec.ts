@@ -261,58 +261,67 @@ test('clipping shares the base opacity and does not paint outside its alpha', as
   await expect.poll(async () => (await pixel(page, 220, 100))[3]).toBe(0)
 })
 
-for (const transform of ['rotated', 'flipped', 'perspective', 'rotated-disabled', 'rotated-soft'])
-  test(`${transform} painted mask keeps native pixels and a real merged image for an independent reader`, async ({
-    page,
-  }) => {
-    await start(page)
-    await create(page, 'Native mask')
-    await page.keyboard.press('u')
-    await drag(page, [80, 50], [220, 150])
-    await page.getByRole('button', { name: 'Добавить маску слоя', exact: true }).click()
-    await expect(page.locator('.busy-overlay')).toBeHidden()
-    await drag(page, [95, 60], [95, 140])
-    await page.keyboard.press('v')
-    if (transform.startsWith('rotated')) {
-      await page.getByRole('spinbutton', { name: '∠', exact: true }).fill('30')
-      await page.getByRole('spinbutton', { name: '∠', exact: true }).press('Enter')
-    } else if (transform === 'flipped')
-      await page.getByRole('button', { name: 'Отразить по горизонтали', exact: true }).click()
-    else {
-      const handle = (await page.locator('[data-handle=ne]').boundingBox())!
-      await page.keyboard.down('Control')
-      await page.mouse.move(handle.x + 3, handle.y + 3)
-      await page.mouse.down()
-      await page.mouse.move(handle.x - 15, handle.y + 25, { steps: 5 })
-      await page.mouse.up()
-      await page.keyboard.up('Control')
-    }
-    if (transform === 'rotated-disabled')
-      await page.getByRole('checkbox', { name: 'Маска включена', exact: true }).uncheck()
-    if (transform === 'rotated-soft') {
-      const density = page.getByRole('slider', { name: 'Плотность маски', exact: true }),
-        feather = page.getByRole('slider', { name: 'Растушёвка маски', exact: true })
-      await density.focus()
-      await density.press('Home')
-      for (let i = 0; i < 6; i++) await density.press('PageUp')
-      for (let i = 0; i < 5; i++) await density.press('ArrowRight')
-      await expect(density).toHaveValue('65')
-      await feather.focus()
-      for (let i = 0; i < 8; i++) await feather.press('ArrowRight')
-      await expect(feather).toHaveValue('8')
-      await feather.blur()
-    }
-    const bytes = await psd(page)
-    await writeFile(`test-results/native-mask-${transform}.psd`, bytes)
-    await page.getByRole('button', { name: 'Экспорт', exact: true }).click()
-    const promise = page.waitForEvent('download')
-    await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
-    const png = await promise
-    await writeFile(
-      `test-results/native-mask-${transform}.png`,
-      await readFile((await png.path())!),
-    )
-    const native = readPsd(bytes, { useImageData: true, skipThumbnail: true })
-    expect(native.imageResources?.versionInfo?.hasRealMergedData).toBe(true)
-    expect(native.children![0].mask?.imageData).toBeTruthy()
-  })
+for (const kind of ['raster', 'vector'])
+  for (const transform of ['rotated', 'flipped', 'perspective', 'rotated-disabled', 'rotated-soft'])
+    test(`${kind} ${transform} painted mask keeps native pixels and a real merged image for an independent reader`, async ({
+      page,
+    }) => {
+      await start(page)
+      await create(page, 'Native mask')
+      await page.keyboard.press('u')
+      await drag(page, [80, 50], [220, 150])
+      // Keep the original pixel-mask regression exact, and separately exercise real native vectors.
+      if (kind === 'raster') {
+        await page.getByRole('button', { name: 'Слой', exact: true }).click()
+        await page.getByRole('menuitem', { name: 'Растрировать содержимое', exact: true }).click()
+        await expect(page.locator('.busy-overlay')).toBeHidden()
+      }
+      await page.getByRole('button', { name: 'Добавить маску слоя', exact: true }).click()
+      await expect(page.locator('.busy-overlay')).toBeHidden()
+      await drag(page, [95, 60], [95, 140])
+      await page.keyboard.press('v')
+      if (transform.startsWith('rotated')) {
+        await page.getByRole('spinbutton', { name: '∠', exact: true }).fill('30')
+        await page.getByRole('spinbutton', { name: '∠', exact: true }).press('Enter')
+      } else if (transform === 'flipped')
+        await page.getByRole('button', { name: 'Отразить по горизонтали', exact: true }).click()
+      else {
+        const handle = (await page.locator('[data-handle=ne]').boundingBox())!
+        await page.keyboard.down('Control')
+        await page.mouse.move(handle.x + 3, handle.y + 3)
+        await page.mouse.down()
+        await page.mouse.move(handle.x - 15, handle.y + 25, { steps: 5 })
+        await page.mouse.up()
+        await page.keyboard.up('Control')
+      }
+      if (transform === 'rotated-disabled')
+        await page.getByRole('checkbox', { name: 'Маска включена', exact: true }).uncheck()
+      if (transform === 'rotated-soft') {
+        const density = page.getByRole('slider', { name: 'Плотность маски', exact: true }),
+          feather = page.getByRole('slider', { name: 'Растушёвка маски', exact: true })
+        await density.focus()
+        await density.press('Home')
+        for (let i = 0; i < 6; i++) await density.press('PageUp')
+        for (let i = 0; i < 5; i++) await density.press('ArrowRight')
+        await expect(density).toHaveValue('65')
+        await feather.focus()
+        for (let i = 0; i < 8; i++) await feather.press('ArrowRight')
+        await expect(feather).toHaveValue('8')
+        await feather.blur()
+      }
+      const prefix = kind === 'vector' ? 'native-vector-mask' : 'native-mask'
+      const bytes = await psd(page)
+      await writeFile(`test-results/${prefix}-${transform}.psd`, bytes)
+      await page.getByRole('button', { name: 'Экспорт', exact: true }).click()
+      const promise = page.waitForEvent('download')
+      await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
+      const png = await promise
+      await writeFile(
+        `test-results/${prefix}-${transform}.png`,
+        await readFile((await png.path())!),
+      )
+      const native = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+      expect(native.imageResources?.versionInfo?.hasRealMergedData).toBe(true)
+      expect(native.children![0].mask?.imageData).toBeTruthy()
+      expect(!!native.children![0].vectorMask).toBe(kind === 'vector')
+    })

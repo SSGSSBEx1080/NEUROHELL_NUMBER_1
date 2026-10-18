@@ -549,3 +549,47 @@ test('mask/style offscreens and explicit rasterization retain point text beyond 
   await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
   await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Полный текст')
 })
+
+test('opaque projective fills keep their alpha and color across shallow mesh edges', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(500, 180, 'Mesh coverage', 'transparent')
+  doc.layers = [
+    makeLayer({
+      name: 'Solid warped shape',
+      x: 50,
+      y: 60,
+      width: 400,
+      height: 60,
+      color: '#b8a8ff',
+      warp: [
+        { x: 0.05, y: -0.1 },
+        { x: 0.92, y: 0.15 },
+        { x: 1.05, y: 1.15 },
+        { x: -0.04, y: 0.92 },
+      ],
+    }),
+  ]
+  await open(page, 'coverage.777', Buffer.from(JSON.stringify(doc)))
+  await expect
+    .poll(() =>
+      page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
+        const data = canvas.getContext('2d')!.getImageData(90, 85, 330, 15).data
+        let badAlpha = 0,
+          maxColorError = 0
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] !== 255) badAlpha++
+          maxColorError = Math.max(
+            maxColorError,
+            Math.abs(data[i] - 184),
+            Math.abs(data[i + 1] - 168),
+            Math.abs(data[i + 2] - 255),
+          )
+        }
+        return { badAlpha, maxColorError }
+      }),
+    )
+    .toEqual({ badAlpha: 0, maxColorError: 0 })
+})

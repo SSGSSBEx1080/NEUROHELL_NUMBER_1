@@ -44,15 +44,8 @@ function triangle(
       det,
   ]
   const x = coefficients(d.map((p) => p.x)),
-    y = coefficients(d.map((p) => p.y)),
-    center = { x: (d[0].x + d[1].x + d[2].x) / 3, y: (d[0].y + d[1].y + d[2].y) / 3 }
-  const edge = d.map((p) => {
-    const length = Math.hypot(p.x - center.x, p.y - center.y) || 1
-    return {
-      x: p.x + ((p.x - center.x) / length) * expansion,
-      y: p.y + ((p.y - center.y) / length) * expansion,
-    }
-  })
+    y = coefficients(d.map((p) => p.y))
+  const edge = expandTriangle(d, expansion)
   ctx.save()
   ctx.beginPath()
   ctx.moveTo(edge[0].x, edge[0].y)
@@ -124,9 +117,24 @@ export function renderWarped(
             source,
             indices.map((i) => origin[i]),
             indices.map((i) => dest[i]),
-            0.8 / quality,
+            1 / quality,
           )
       }
+    if (
+      layer.kind === 'shape' &&
+      !layer.strokeWidth &&
+      !layer.styles &&
+      Object.entries(layer.adjustments).every(([key, value]) => key === 'blur' || value === 0)
+    ) {
+      // Multiple clipped image draws can accumulate unpremultiplication rounding in a
+      // constant fill. Keep the projected coverage but restore its exact uniform paint.
+      o.save()
+      o.setTransform(1, 0, 0, 1, 0, 0)
+      o.globalCompositeOperation = 'source-in'
+      o.fillStyle = layer.color
+      o.fillRect(0, 0, output.width, output.height)
+      o.restore()
+    }
     entry = { layer, image: output, left, top, width, height }
     cache.set(layer.id, entry)
     let bytes = [...cache.values()].reduce((sum, v) => sum + v.image.width * v.image.height * 4, 0)
@@ -139,4 +147,32 @@ export function renderWarped(
     }
   }
   ctx.drawImage(entry.image, entry.left, entry.top, entry.width, entry.height)
+}
+
+/** Offset triangle EDGES uniformly. Moving vertices away from the centroid leaves
+ * subpixel gaps along shallow angles, making opaque perspective content translucent.
+ */
+export function expandTriangle(points: Point[], distance: number): Point[] {
+  const center = {
+    x: points.reduce((n, p) => n + p.x, 0) / 3,
+    y: points.reduce((n, p) => n + p.y, 0) / 3,
+  }
+  const lines = points.map((p, i) => {
+    const q = points[(i + 1) % 3],
+      length = Math.hypot(q.x - p.x, q.y - p.y)
+    let x = (q.y - p.y) / length,
+      y = (p.x - q.x) / length
+    if ((center.x - p.x) * x + (center.y - p.y) * y > 0) {
+      x = -x
+      y = -y
+    }
+    return { x, y, c: p.x * x + p.y * y + distance }
+  })
+  return points.map((p, i) => {
+    const a = lines[(i + 2) % 3],
+      b = lines[i],
+      determinant = a.x * b.y - a.y * b.x
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-8) return p
+    return { x: (a.c * b.y - a.y * b.c) / determinant, y: (a.x * b.c - a.c * b.x) / determinant }
+  })
 }

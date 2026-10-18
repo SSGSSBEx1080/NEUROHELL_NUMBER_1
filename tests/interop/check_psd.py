@@ -7,7 +7,7 @@ from pathlib import Path
 from io import BytesIO
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 from psd_tools import PSDImage
 from psd_tools.constants import Resource
 
@@ -41,6 +41,30 @@ for transform in ["rotated", "flipped", "perspective", "rotated-disabled", "rota
         worst = float(delta.max())
         assert worst <= 2.0, (transform, source, worst, int(np.count_nonzero(delta.max(axis=2) > 2)))
         print(f"PASS {transform}, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}")
+
+# Native vectors are now genuinely redrawn by aggdraw, unlike the old pixel-only shape cache.
+# Keep the original raster-mask <=2/255 contract above. For vector masks, allow different
+# AA only within a two-pixel geometric edge band derived from the UNMASKED native cache;
+# painted holes/density/feather and all other interior pixels still have the exact <=2 bound.
+for transform in ["rotated", "flipped", "perspective", "rotated-disabled", "rotated-soft"]:
+    document = PSDImage.open(RESULTS / f"native-vector-mask-{transform}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"native-vector-mask-{transform}.png"))
+    layer = document[0]
+    assert layer.kind == "shape" and layer.vector_mask and layer.has_mask()
+    assert float(np.abs(premultiplied(document.topil()) - reference).max()) <= 2
+    native = premultiplied(document.composite(ignore_preview=True, force=True, apply_icc=False))
+    delta = np.abs(native - reference)
+    plane = Image.new("L", document.size, 0)
+    plane.paste(layer.topil().getchannel("A"), layer.offset)
+    # Threshold the coverage silhouette: tiny perspective-mesh alpha variation inside is NOT an edge exemption.
+    plane = plane.point(lambda value: 255 if value >= 128 else 0)
+    outside = np.asarray(plane.filter(ImageFilter.MaxFilter(5)))
+    inside = np.asarray(plane.filter(ImageFilter.MinFilter(5)))
+    edge = outside != inside
+    assert float(edge.mean()) < .1, (transform, "edge band too broad")
+    assert float(delta[~edge].max()) <= 2.0, (transform, "vector mask interior", float(delta[~edge].max()))
+    assert float(delta.mean()) < .7, (transform, "vector mask mean", float(delta.mean()))
+    print(f"PASS vector {transform}: native ShapeLayer + raster mask, interior max {delta[~edge].max():.4f}/255; edge-AA mean {delta.mean():.6f}/255")
 
 document = PSDImage.open(RESULTS / "layout-workflow.psd")
 reference = premultiplied(Image.open(RESULTS / "layout-workflow.png"))
@@ -95,4 +119,4 @@ for fixture in ["native-point", "native-text-transforms"]:
         assert float(delta.max()) <= 2.0, (fixture, source, float(delta.max()))
         print(f"PASS {fixture}, {source}: max premultiplied RGBA error {delta.max():.4f}/255; native type and editable embedded PSD verified")
 
-print("Scope: RGB/8, these twelve fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+print("Scope: RGB/8, these seventeen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
