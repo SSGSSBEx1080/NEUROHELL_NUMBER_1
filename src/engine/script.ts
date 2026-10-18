@@ -1,5 +1,5 @@
 import { isLayerLocked, makeLayer } from './document'
-import { mangaTextPresets } from './textLayout'
+import { textPresets } from './textLayout'
 import type { EditorDocument, Rect } from '../types'
 import { MAX_LAYERS } from '../types'
 /** One immutable transaction: text + link enter history together. A locked linked layer is never bypassed. */
@@ -28,7 +28,7 @@ export function typesetEntry(
     ? { ...target, text: entry.translation }
     : makeLayer({
         kind: 'text',
-        ...mangaTextPresets[0].values,
+        ...textPresets[0].values,
         ...bounds,
         fontSize: Math.min(40, Math.max(12, bounds.height / 5)),
         name: `Реплика ${doc.script!.indexOf(entry) + 1}${entry.speaker ? ` · ${entry.speaker}` : ''}`,

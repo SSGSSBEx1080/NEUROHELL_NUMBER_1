@@ -16,7 +16,7 @@ const layer = (patch = {}) =>
     textFrame: { ...defaultTextFrame(), autoFit: false },
     ...patch,
   })
-describe('Bounded manga text layout', () => {
+describe('Bounded layout text layout', () => {
   it('wraps words, honors hard line breaks, blank lines, padding and vertical alignment', () => {
     const l = layer({ text: 'Одна реплика\n\nДа!', width: 140 })
     const result = layoutText(l, measure)

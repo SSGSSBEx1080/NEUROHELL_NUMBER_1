@@ -171,7 +171,7 @@ export function PanelDock({
           onChange={(e) => onChange(panelPreset(e.target.value as PanelLayout['preset']))}
         >
           <option value="retouch">Ретушь</option>
-          <option value="manga">Манга</option>
+          <option value="layout">Макет</option>
           <option value="type">Тайпсет</option>
           <option value="custom" disabled>
             Своя среда

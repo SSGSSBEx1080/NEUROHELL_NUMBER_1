@@ -6,7 +6,7 @@ async function blank(page: Page) {
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await page.locator('.home-new').click()
   const modal = page.getByRole('dialog')
-  await modal.getByLabel('Название проекта', { exact: true }).fill('Манга тест')
+  await modal.getByLabel('Название проекта', { exact: true }).fill('Макет тест')
   await modal.getByLabel('Ширина нового холста').fill('300')
   await modal.getByLabel('Высота нового холста').fill('200')
   await modal.getByRole('button', { name: 'Прозрачный', exact: true }).click()
@@ -149,7 +149,7 @@ test('area text wraps with editable native PSD type and roundtrips its frame', a
   expect(type?.text?.paragraphStyleRuns!.length).toBeGreaterThan(1)
   await page
     .getByLabel('Открыть изображение или проект')
-    .setInputFiles({ name: 'manga-text.psd', mimeType: 'image/vnd.adobe.photoshop', buffer: data })
+    .setInputFiles({ name: 'layout-text.psd', mimeType: 'image/vnd.adobe.photoshop', buffer: data })
   await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await page.locator('.layer-row').filter({ hasText: 'Реплика' }).click()
@@ -206,7 +206,7 @@ test('translation script is local, places linked type once, survives PSD and dat
   await expect(page.locator('.script-list > button')).toHaveCount(1)
 })
 
-async function beginRecording(page: Page, name = 'Манга — запись') {
+async function beginRecording(page: Page, name = 'Макет — запись') {
   await page.getByRole('button', { name: 'Фильтры', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Наборы операций…', exact: true }).click()
   await page.getByLabel('Название новой записи').fill(name)
@@ -234,7 +234,7 @@ test('real recording captures final property changes and duplicate; replay is on
   await page.keyboard.press('Control+j')
   await expect(page.getByTestId('recorded-step-count')).toContainText('3 шагов')
   await page.getByRole('button', { name: 'Сохранить запись', exact: true }).click()
-  await expect(page.getByLabel('Название операции', { exact: true })).toHaveValue('Манга — запись')
+  await expect(page.getByLabel('Название операции', { exact: true })).toHaveValue('Макет — запись')
   const saving = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Скачать набор', exact: true }).click()
   const file = await saving
@@ -398,15 +398,15 @@ test('panels resize, dock left, float, retain script cursor and restore safely o
   await expect(page.getByLabel('Рабочая среда')).toHaveValue('retouch')
 })
 
-test('manga practice completes J-to-typeset without covering translation and exports independent-check fixtures', async ({
+test('layout practice completes J-to-typeset without covering translation and exports independent-check fixtures', async ({
   page,
 }) => {
   await page.goto('/')
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.getByTestId('open-manga-demo').click()
+  await page.getByTestId('open-layout-demo').click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await expect(page.locator('.layer-row')).toHaveCount(4)
-  await expect(page.getByLabel('Рабочая среда')).toHaveValue('manga')
+  await expect(page.getByLabel('Рабочая среда')).toHaveValue('layout')
   const dark = () =>
     page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => {
       const sx = c.width / 896,
@@ -443,7 +443,7 @@ test('manga practice completes J-to-typeset without covering translation and exp
   await expect.poll(dark).toBe(0)
   await page.getByRole('button', { name: 'Обновить связанный текст', exact: true }).click()
   await expect.poll(dark).toBeGreaterThan(50)
-  await writeFile('test-results/manga-workflow.psd', await savePsd(page))
+  await writeFile('test-results/layout-workflow.psd', await savePsd(page))
   await page
     .locator('.header-actions')
     .getByRole('button', { name: 'Экспорт', exact: true })
@@ -455,9 +455,9 @@ test('manga practice completes J-to-typeset without covering translation and exp
   const saving = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
   const download = await saving
-  await writeFile('test-results/manga-workflow.png', await readFile((await download.path())!))
+  await writeFile('test-results/layout-workflow.png', await readFile((await download.path())!))
   await expect(page.getByRole('dialog')).toBeHidden()
-  await page.screenshot({ path: 'test-results/manga-workspace.png' })
+  await page.screenshot({ path: 'test-results/layout-workspace.png' })
 })
 
 test('donor strokes interpolate, Shift restores samples, preview slider avoids RGBA rewrites and reset recalculates', async ({

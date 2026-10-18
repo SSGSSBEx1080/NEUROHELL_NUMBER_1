@@ -1,5 +1,5 @@
 import type { EditorDocument, Layer } from '../types'
-/** An explicit manga mode: preserve only the trailing root-level type stack above the repair.
+/** An explicit layout mode: preserve only the trailing root-level type stack above the repair.
  * Groups and clipping chains stay intact. Sampling and placement use the same boundary so preview is not misleading. */
 export function repairPlacement(doc: EditorDocument, belowText: boolean) {
   const roots = doc.layers.filter((l) => !l.parentId),

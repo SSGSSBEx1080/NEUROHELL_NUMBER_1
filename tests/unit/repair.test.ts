@@ -27,7 +27,7 @@ function fixture(paint: (x: number, y: number) => number[], mode: RepairRequest[
   }
   return { request, truth }
 }
-describe('local manga restoration', () => {
+describe('local layout restoration', () => {
   it('removes lettering on paper exactly without touching any unselected pixel or source', () => {
     const { request, truth } = fixture(() => [247, 246, 240]),
       input = request.pixels.slice()
@@ -43,7 +43,7 @@ describe('local manga restoration', () => {
     expect(result.mode).toBe('smooth')
     expect(Math.max(...result.pixels.map((v, i) => Math.abs(v - truth[i])))).toBeLessThanOrEqual(1)
   })
-  it('preserves the phase of a repeating manga screen tone using original source patches', () => {
+  it('preserves the phase of a repeating layout screen tone using original source patches', () => {
     const { request, truth } = fixture((x, y) => {
       const v = x % 6 < 2 && y % 6 < 2 ? 35 : 235
       return [v, v, v]

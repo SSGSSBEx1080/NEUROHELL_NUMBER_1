@@ -7,7 +7,7 @@ import {
 } from '../../src/engine/panelLayout'
 import { insertRepairLayer, repairPlacement } from '../../src/engine/repairPlacement'
 import { makeLayer, newDocument } from '../../src/engine/document'
-describe('Workspace geometry and explicit manga layer placement', () => {
+describe('Workspace geometry and explicit layout layer placement', () => {
   it('validates saved layouts, supports real presets and clamps windows to a smaller monitor', () => {
     expect(
       normalizePanelLayout({
@@ -18,7 +18,7 @@ describe('Workspace geometry and explicit manga layer placement', () => {
         tab: 'eval',
       }),
     ).toMatchObject({ width: 300, split: 0.25, height: 1600, side: 'right', tab: 'properties' })
-    expect(panelPreset('manga')).toMatchObject({ tab: 'translation', width: 360, split: 0.66 })
+    expect(panelPreset('layout')).toMatchObject({ tab: 'translation', width: 360, split: 0.66 })
     expect(panelPreset('type').split).toBeGreaterThan(panelPreset('retouch').split)
     const small = visiblePanelLayout(
       { ...defaultPanelLayout, floating: true, x: 10000, y: 10000 },

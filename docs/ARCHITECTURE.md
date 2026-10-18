@@ -18,7 +18,7 @@
 | Шрифты                     | `engine/fonts.ts`, `fontCatalog.json`, `fontNames.json`, `FontsDialog.tsx`                                          | SFNT name parser, FontFace, bounded upload/cache, native PostScript names, Google Fonts/OFL                                      |
 | Интерфейс                  | `components/`, `styles.css`, `App.tsx`                                                                              | Панели/меню/диалоги и оркестрация, не PSD-парсер. Текстовые настройки справа                                                     |
 | J-клининг                  | `engine/repair.ts`, `repair.worker.ts`, `repairJob.ts`, `repairPreview.ts`, `repairPlacement.ts`                    | Paper-plane/exemplar, ROI/target/work limits, abort/timeout, cached preview and donor overlay, explicit source/stack placement   |
-| Манга-текст                | `engine/textLayout.ts`, `script.ts`, `scriptFormat.ts`, `TextFrameSettings.tsx`, `TranslationPanel.tsx`             | Bounded Unicode layout, font fitting, rectangles/ellipse, validated local script and atomic linking                              |
+| Рамочный текст                | `engine/textLayout.ts`, `script.ts`, `scriptFormat.ts`, `TextFrameSettings.tsx`, `TranslationPanel.tsx`             | Bounded Unicode layout, font fitting, rectangles/ellipse, validated local script and atomic linking                              |
 | Запись операций            | `editorEvents.ts`, `actionRecorder.ts`, `actionSchema.ts`, `actionStorage.ts`, `actions.ts`, `useActionRecorder.ts` | Final commits → validated commands; explicit blockers; immutable transactional replay, bounded recovery                          |
 | Док-панели                 | `engine/panelLayout.ts`, `PanelDock.tsx`, `ActionsPanel.tsx`                                                        | Validated persistent layout, RAF gesture preview, commit/cancel, viewport clamp, mounted tabs                                    |
 | Настольная граница         | `desktop/main.cjs`, `preload.cjs`, `protocol.cjs`, `fonts.cjs`, `files.cjs`                                         | Custom app protocol, доверенный main frame, whitelist IPC, native save dialog, atomic write, фиксированный Windows font query    |
@@ -87,11 +87,11 @@ npm audit --audit-level=moderate
 
 Windows: Python находится в `.venv\\Scripts\\python.exe`; native smoke — `npm run test:desktop`. После `npm run desktop:windows` можно задать `FSH777_SMOKE_EXECUTABLE` путём к `release/win-unpacked/ФШ 777.exe` и повторить smoke. GitHub Actions делает оба запуска автоматически перед release draft.
 
-Браузерные тесты используют **production bundle**, не vite dev. Fixture pixels проверяются отдельно от UI; крупные массивы сравниваются без огромного assert diff. Python psd-tools — независимый reader/compositor. Допуск 2/255 относится только к перечисленным масочным fixtures и учебному манга-процессу; он не доказывает полную Adobe/XnConvert совместимость.
+Браузерные тесты используют **production bundle**, не vite dev. Fixture pixels проверяются отдельно от UI; крупные массивы сравниваются без огромного assert diff. Python psd-tools — независимый reader/compositor. Допуск 2/255 относится только к перечисленным масочным fixtures и учебному редакторский процессу; он не доказывает полную Adobe/XnConvert совместимость.
 
 Необходимые дальнейшие направления: реальные проблемные пользовательские PSD, color-managed ICC/16-bit core, больше native adjustment/vector/FX semantics, полноценные text metrics/variable axes, аппаратные perf-бенчмарки. Ограничения текущего выпуска — в `COMPATIBILITY.md`.
 
-## Манга: изоляция задач и воспроизведение
+## Макет: изоляция задач и воспроизведение
 
 J передаёт worker копии пикселей/масок: исходные preview-буферы не detach. Смена параметров/источника, закрытие и отмена завершают предыдущий worker; поздние ответы игнорируются. Есть вычислительный бюджет алгоритма и внешний 60-секундный тайм-аут. Результат — отдельный растровый слой, не модификация источника. Вариант под верхним текстом использует один и тот же индекс для исключения текста из исходного композита и вставки результата; группы и обтравочные цепочки не разрезаются. Текст, обтравленный к нетекстовой основе ниже стека, остаётся в исходном композите; вставка не создаёт для него новую clipping base.
 

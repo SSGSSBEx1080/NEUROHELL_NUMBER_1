@@ -149,12 +149,12 @@ watchdog.unref()
     await page.keyboard.press('Control+s')
     await expect(page.locator('.busy-overlay')).toBeHidden()
     assert.equal(await app.evaluate(() => globalThis.__fshSaveDialogCount), dialogs + 1)
-    progress('manga practice, native J worker and linked typesetting')
+    progress('layout practice, native J worker and linked typesetting')
     await page.getByRole('button', { name: 'На главную', exact: true }).click()
-    await page.getByTestId('open-manga-demo').click()
+    await page.getByTestId('open-layout-demo').click()
     await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
     await expect(page.locator('.layer-row')).toHaveCount(4)
-    await expect(page.getByLabel('Рабочая среда')).toHaveValue('manga')
+    await expect(page.getByLabel('Рабочая среда')).toHaveValue('layout')
     const board = await page.locator('.artboard').boundingBox(),
       scale = board.width / 896
     await page.keyboard.press('j')
@@ -192,20 +192,20 @@ watchdog.unref()
     await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
     await page.keyboard.press('Control+z')
     await expect(xField).toHaveValue(String(xBefore + 10))
-    progress('save manga PSD through native atomic file writer')
+    progress('save layout PSD through native atomic file writer')
     await page.keyboard.press('Control+s')
     await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
     await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/)
-    const mangaPsd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd') && file !== psd)
-    assert.ok(mangaPsd)
-    assert.ok((await fs.stat(path.join(temp, mangaPsd))).size > 10000)
+    const layoutPsd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd') && file !== psd)
+    assert.ok(layoutPsd)
+    assert.ok((await fs.stat(path.join(temp, layoutPsd))).size > 10000)
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
     progress(
-      'passed: standalone sandbox, exports/reimport, J worker, linked manga type, recording/replay and native manga PSD',
+      'passed: standalone sandbox, exports/reimport, J worker, linked layout type, recording/replay and native layout PSD',
     )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })

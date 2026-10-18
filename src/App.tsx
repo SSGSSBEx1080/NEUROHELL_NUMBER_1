@@ -1560,7 +1560,7 @@ export default function App() {
     },
     ...(
       [
-        ['manga', 'Манга'],
+        ['layout', 'Макет'],
         ['type', 'Тайпсет'],
         ['retouch', 'Ретушь'],
       ] as const
@@ -1636,17 +1636,17 @@ export default function App() {
           onNew={() => setModal('new')}
           onOpen={() => input.current?.click()}
           onDemo={() => openDocument(demoDocument())}
-          onManga={() => {
+          onPractice={() => {
             if (workspace.tabs.length >= 6) {
               toastMessage('Закрой ненужную вкладку: доступно до 6 документов')
               return
             }
             setBusy('Готовим учебную страницу…')
-            void import('./engine/mangaDemo')
-              .then((module) => module.mangaDemoDocument())
+            void import('./engine/layoutDemo')
+              .then((module) => module.layoutDemoDocument())
               .then((doc) => {
                 openDocument(doc)
-                setPanelLayout(panelPreset('manga'))
+                setPanelLayout(panelPreset('layout'))
                 setInspector(true)
                 toastMessage(
                   'Практика: обведи английский текст инструментом J, затем обнови связанный перевод. Скрытый слой хранит чистый эталон.',

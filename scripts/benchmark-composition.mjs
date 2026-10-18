@@ -35,7 +35,7 @@ try {
   })
   await page.goto('http://127.0.0.1:4173')
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.getByTestId('open-manga-demo').click()
+  await page.getByTestId('open-layout-demo').click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await expect(page.locator('.layer-row')).toHaveCount(4)
   for (let i = 0; i < 5; i++) {

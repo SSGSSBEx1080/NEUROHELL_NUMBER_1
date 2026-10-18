@@ -4079,7 +4079,7 @@ kbd {
   min-width: 25px;
 }
 
-/* Local manga restoration: actual original/result pixels and editable donor exclusion. */
+/* Local layout restoration: actual original/result pixels and editable donor exclusion. */
 .repair-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 224px;
@@ -4156,7 +4156,7 @@ kbd {
   }
 }
 
-/* Manga type: frames are opt-in so existing typography never silently reflows. */
+/* Layout type: frames are opt-in so existing typography never silently reflows. */
 .tool-text-frame {
   cursor: crosshair;
 }
@@ -4169,12 +4169,12 @@ kbd {
 .frame-settings .section-heading {
   margin-bottom: 0;
 }
-.manga-presets {
+.layout-presets {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 5px;
 }
-.manga-presets button {
+.layout-presets button {
   justify-content: center;
   background: #b8a8ff0b;
   border: 1px solid #b8a8ff25;
@@ -4702,7 +4702,7 @@ kbd {
   font-size: 11px;
 }
 
-.home-manga-card {
+.home-layout-card {
   display: flex;
   align-items: center;
   gap: 23px;
@@ -4713,54 +4713,54 @@ kbd {
   overflow: hidden;
   padding-right: 23px;
 }
-.home-manga-card > img {
+.home-layout-card > img {
   width: 132px;
   height: 150px;
   object-fit: cover;
   object-position: 52% 35%;
   opacity: 0.9;
 }
-.home-manga-card > div {
+.home-layout-card > div {
   flex: 1;
   padding: 15px 0;
 }
-.home-manga-card h2 {
+.home-layout-card h2 {
   font-size: clamp(15px, 1.5vw, 21px);
   font-weight: 650;
   margin: 6px 0 8px;
   letter-spacing: -0.02em;
 }
-.home-manga-card p {
+.home-layout-card p {
   color: var(--muted);
   font-size: 11px;
   max-width: 490px;
   line-height: 1.65;
   margin: 0;
 }
-.home-manga-card .eyebrow {
+.home-layout-card .eyebrow {
   color: #c2afe5;
   font-size: 8px;
   letter-spacing: 0.15em;
 }
-.home-manga-card button {
+.home-layout-card button {
   flex-shrink: 0;
   font-size: 11px;
 }
 @media (max-width: 1100px) {
-  .home-manga-card {
+  .home-layout-card {
     gap: 15px;
     flex-wrap: wrap;
     padding: 0 15px 15px;
   }
-  .home-manga-card > img {
+  .home-layout-card > img {
     width: 95px;
     height: 122px;
     margin-left: -15px;
   }
-  .home-manga-card > div {
+  .home-layout-card > div {
     flex-basis: calc(100% - 120px);
   }
-  .home-manga-card > button {
+  .home-layout-card > button {
     margin-left: 95px;
   }
 }

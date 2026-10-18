@@ -1,7 +1,7 @@
 import { clearTextLayoutCache, getTextLayout, textFont } from './textLayout'
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
 import { clearWarpCache, renderWarped } from './warpRenderer'
-import { sourceDimensions } from './imageSafety'
+import { sourceDimensions, bundledImageSource } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
@@ -44,7 +44,7 @@ export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasEle
       loading.delete(src)
       reject(new Error('Не удалось прочитать изображение'))
     }
-    image.src = src
+    image.src = bundledImageSource(src)
   })
   loading.set(src, promise)
   return promise

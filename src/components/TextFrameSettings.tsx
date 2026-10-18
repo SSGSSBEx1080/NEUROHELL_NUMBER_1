@@ -1,5 +1,5 @@
 import type { Layer } from '../types'
-import { defaultTextFrame, getTextLayout, mangaTextPresets } from '../engine/textLayout'
+import { defaultTextFrame, getTextLayout, textPresets } from '../engine/textLayout'
 import { useFont } from '../engine/fonts'
 import { Field, Select } from './ui'
 
@@ -109,8 +109,8 @@ export function TextFrameSettings({
           </p>
         </>
       )}
-      <div className="manga-presets" aria-label="Пресеты тайпсета">
-        {mangaTextPresets.map((preset) => (
+      <div className="layout-presets" aria-label="Пресеты тайпсета">
+        {textPresets.map((preset) => (
           <button
             key={preset.name}
             className="compact-button"

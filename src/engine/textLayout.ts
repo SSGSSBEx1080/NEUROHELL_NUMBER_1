@@ -253,7 +253,7 @@ export function getTextLayout(layer: Layer): TextLayout {
   return result
 }
 
-export const mangaTextPresets: { name: string; values: Partial<Layer> }[] = [
+export const textPresets: { name: string; values: Partial<Layer> }[] = [
   {
     name: 'Реплика',
     values: {

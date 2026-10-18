@@ -41,15 +41,15 @@ for transform in ["rotated", "flipped", "perspective", "rotated-disabled", "rota
         assert worst <= 2.0, (transform, source, worst, int(np.count_nonzero(delta.max(axis=2) > 2)))
         print(f"PASS {transform}, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}")
 
-document = PSDImage.open(RESULTS / "manga-workflow.psd")
-reference = premultiplied(Image.open(RESULTS / "manga-workflow.png"))
+document = PSDImage.open(RESULTS / "layout-workflow.psd")
+reference = premultiplied(Image.open(RESULTS / "layout-workflow.png"))
 types = [layer for layer in document.descendants() if layer.kind == "type"]
-assert len(types) == 2, "Manga text must remain native type layers"
+assert len(types) == 2, "Layout text must remain native type layers"
 assert "город уже" in types[0].text and "доставка" in types[1].text
 for source, image in [("merged", document.topil()), ("native layers", document.composite(force=True, apply_icc=False))]:
     delta = np.abs(premultiplied(image) - reference)
     worst = float(delta.max())
-    assert worst <= 2.0, ("manga workflow", source, worst)
-    print(f"PASS manga J → typeset, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
+    assert worst <= 2.0, ("layout workflow", source, worst)
+    print(f"PASS layout J → typeset, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
 
 print("Scope: RGB/8, these nine fixtures only. No XnConvert/Photoshop execution, ICC conversion, or arbitrary Adobe FX validation.")

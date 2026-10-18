@@ -1,12 +1,12 @@
 import { makeLayer, newDocument, uid } from './document'
 import { bitmapLayer, loadImage } from './render'
-import { mangaTextPresets } from './textLayout'
-/** Practice data, not a benchmark of real scanned manga. The base illustration was generated for this project. */
-export async function mangaDemoDocument() {
+import { textPresets } from './textLayout'
+/** Practice data, not a benchmark of real scanned layout. The base illustration was generated for this project. */
+export async function layoutDemoDocument() {
   const width = 896,
     height = 1200,
     doc = newDocument(width, height, 'Последняя доставка · учебная страница', '#ffffff')
-  const image = await loadImage('/demo-manga.webp')
+  const image = await loadImage('/demo-layout.webp')
   await document.fonts.load('600 28px "Manrope"')
   const c = document.createElement('canvas')
   c.width = width
@@ -27,7 +27,7 @@ export async function mangaDemoDocument() {
   const reference = makeLayer({
     kind: 'image',
     name: 'Эталон без надписей · скрыт',
-    src: '/demo-manga.webp',
+    src: '/demo-layout.webp',
     width,
     height,
     visible: false,
@@ -35,7 +35,7 @@ export async function mangaDemoDocument() {
   })
   const first = makeLayer({
     kind: 'text',
-    ...mangaTextPresets[0].values,
+    ...textPresets[0].values,
     name: '01 · Перевод после клининга',
     text: '',
     x: 122,
@@ -46,7 +46,7 @@ export async function mangaDemoDocument() {
   })
   const second = makeLayer({
     kind: 'text',
-    ...mangaTextPresets[0].values,
+    ...textPresets[0].values,
     name: '02 · Последняя доставка',
     text: 'Но одна\nдоставка\nещё ждёт.',
     x: 647,
@@ -64,7 +64,7 @@ export async function mangaDemoDocument() {
         source: 'I thought the city was asleep.',
         translation: 'Я думал,\nгород уже\nуснул.',
         speaker: 'Курьер',
-        note: '1. J: обведи английский текст в верхнем пузыре. 2. Примени клин на новый слой. 3. Нажми «Обновить связанный текст». Рамка уже подготовлена.',
+        note: '1. J: обведи английский текст в верхнем текстовом блоке. 2. Примени клин на новый слой. 3. Нажми «Обновить связанный текст». Рамка уже подготовлена.',
         status: 'translated' as const,
         layerId: first.id,
       },

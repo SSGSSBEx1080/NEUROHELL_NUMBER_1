@@ -1,6 +1,6 @@
 export type DockTab = 'properties' | 'translation' | 'actions'
 export interface PanelLayout {
-  preset: 'retouch' | 'manga' | 'type' | 'custom'
+  preset: 'retouch' | 'layout' | 'type' | 'custom'
   side: 'left' | 'right'
   tab: DockTab
   width: number
@@ -25,7 +25,7 @@ export function panelPreset(preset: PanelLayout['preset']): PanelLayout {
   return {
     ...defaultPanelLayout,
     preset,
-    ...(preset === 'manga'
+    ...(preset === 'layout'
       ? { width: 360, split: 0.66, tab: 'translation' as const }
       : preset === 'type'
         ? { width: 340, split: 0.74 }
@@ -34,13 +34,14 @@ export function panelPreset(preset: PanelLayout['preset']): PanelLayout {
 }
 export function normalizePanelLayout(input: unknown): PanelLayout {
   const p = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const migrated = p.preset === 'manga' ? 'layout' : p.preset
   const number = (key: keyof PanelLayout, min: number, max: number) =>
     typeof p[key] === 'number' && Number.isFinite(p[key])
       ? Math.min(max, Math.max(min, p[key] as number))
       : (defaultPanelLayout[key] as number)
   return {
-    preset: ['retouch', 'manga', 'type', 'custom'].includes(String(p.preset))
-      ? (p.preset as PanelLayout['preset'])
+    preset: ['retouch', 'layout', 'type', 'custom'].includes(String(migrated))
+      ? (migrated as PanelLayout['preset'])
       : 'retouch',
     side: p.side === 'left' ? 'left' : 'right',
     tab: p.tab === 'translation' || p.tab === 'actions' ? p.tab : 'properties',
