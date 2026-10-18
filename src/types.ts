@@ -17,6 +17,8 @@ export type Tool =
   | 'clone'
   | 'bucket'
   | 'gradient'
+  | 'repair'
+  | 'repair-box'
 export type LayerKind = 'image' | 'text' | 'shape' | 'group'
 export type BlendMode =
   | 'source-over'

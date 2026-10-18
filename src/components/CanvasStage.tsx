@@ -46,6 +46,7 @@ interface Props {
   selection: Selection | null
   setSelection: (r: Selection | null) => void
   onCrop: () => void
+  onRepair: (selection: Selection) => void
   onPixelAction: (operation: 'wand' | 'erase' | 'fill' | 'bucket', point?: Point) => void
   onToast: (message: string) => void
   onBusy: (message: string | null) => void
@@ -65,8 +66,8 @@ type Drag =
       before: EditorDocument
       duplicatedFrom?: string
     }
-  | { type: 'region'; start: Point }
-  | { type: 'lasso'; points: Point[] }
+  | { type: 'region'; start: Point; repair?: boolean }
+  | { type: 'lasso'; points: Point[]; repair?: boolean }
   | {
       type: 'gradient'
       start: Point
@@ -114,6 +115,7 @@ export function CanvasStage({
   selection,
   setSelection,
   onCrop,
+  onRepair,
   onPixelAction,
   onToast,
   onBusy,
@@ -431,9 +433,9 @@ export function CanvasStage({
           }
         } else drag.current = { type: 'move', start: p, layer: { ...hit }, before: doc }
       }
-    } else if (tool === 'lasso') {
+    } else if (tool === 'lasso' || tool === 'repair') {
       setSelection(null)
-      drag.current = { type: 'lasso', points: [p] }
+      drag.current = { type: 'lasso', points: [p], repair: tool === 'repair' }
       setOutline([p])
     } else if (tool === 'polygon-lasso' || tool === 'magnetic-lasso') {
       if (!polygon.current.length) {
@@ -467,9 +469,14 @@ export function CanvasStage({
       onSelect(layer.id)
       overrides.current.set(layer.id, buffer)
       drag.current = { type: 'gradient', start: p, id: layer.id, canvas: buffer, before: doc }
-    } else if (tool === 'crop' || tool === 'select' || tool === 'ellipse-select') {
+    } else if (
+      tool === 'crop' ||
+      tool === 'select' ||
+      tool === 'ellipse-select' ||
+      tool === 'repair-box'
+    ) {
       setSelection({ ...p, width: 0, height: 0 })
-      drag.current = { type: 'region', start: p }
+      drag.current = { type: 'region', start: p, repair: tool === 'repair-box' }
     } else if (tool === 'text') {
       const hit = [...doc.layers].reverse().find((l) => l.kind === 'text' && hitTest(l, p))
       if (hit) {
@@ -845,8 +852,18 @@ export function CanvasStage({
       e.currentTarget.releasePointerCapture(e.pointerId)
     if (!d) return
     if (d.type === 'lasso') {
-      setSelection(polygonSelection(d.points, settings.feather || 0))
+      const selected = polygonSelection(d.points, settings.feather || 0)
+      setSelection(selected)
+      if (d.repair && selected) onRepair(selected)
       setOutline([])
+      return
+    }
+    if (d.type === 'region' && d.repair) {
+      const selected = getRect(d.start, pointFrom(e))
+      if (selected.width > 1 && selected.height > 1) {
+        setSelection(selected)
+        onRepair(selected)
+      }
       return
     }
     if (d.type === 'gradient') {
@@ -1221,11 +1238,11 @@ export function CanvasStage({
               </button>
               <button
                 className="compact-button accent"
-                onClick={() => onPixelAction('fill')}
-                title="Диффузная заливка цветами вокруг выделения"
+                onClick={() => onRepair(selection)}
+                title="Восстановить по локальным образцам на новом слое"
               >
                 <Sparkles size={14} />
-                Залить окружением
+                Восстановить · J
               </button>
             </>
           )}

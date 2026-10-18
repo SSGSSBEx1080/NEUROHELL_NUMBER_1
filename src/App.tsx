@@ -1,3 +1,4 @@
+import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
 import { ImageSizeDialog } from './components/ImageSizeDialog'
@@ -152,6 +153,7 @@ export default function App() {
     | 'fonts'
     | 'image-size'
     | 'canvas-size'
+    | 'repair'
     | null
   >(null)
   const [actions, setActions] = useState<StudioAction[]>(() => {
@@ -877,6 +879,13 @@ export default function App() {
       setBusy(null)
     }
   }
+  const openRepair = (area: Selection | null = selection) => {
+    if (!area || area.width < 1 || area.height < 1)
+      return toastMessage('Обведи область инструментом J или создай выделение.')
+    if (!doc.layers.length) return toastMessage('Сначала открой страницу или добавь изображение.')
+    setSelection(area)
+    setModal('repair')
+  }
   const crop = () => {
     if (!selection || selection.width < 1 || selection.height < 1) return
     const x = Math.round(selection.x),
@@ -1397,6 +1406,12 @@ export default function App() {
     },
   ]
   const filterMenu: MenuItem[] = [
+    {
+      label: 'Восстановление области…',
+      shortcut: 'J',
+      action: () => openRepair(),
+      disabled: !selection,
+    },
     ...(
       [
         ['Обесцветить', { grayscale: 100 }],
@@ -1856,13 +1871,14 @@ export default function App() {
                 selection={selection}
                 setSelection={setSelection}
                 onCrop={crop}
+                onRepair={openRepair}
                 onPixelAction={(op, point) => void pixelAction(op, point)}
                 onToast={toastMessage}
                 onBusy={setBusy}
                 smooth={preferences.smooth}
                 showPerformance={preferences.showPerformance}
                 rulers={rulers}
-                busy={!!busy}
+                busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
                 onOpenSmart={(id) => void workspace.openSmart(id)}
               />
             )}
@@ -1941,7 +1957,7 @@ export default function App() {
                 }}
                 settings={settings}
                 setSettings={setSettings}
-                busy={!!busy}
+                busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
               />
               <LayersPanel
                 editor={editor}
@@ -2002,6 +2018,26 @@ export default function App() {
           resize={modal === 'image-size'}
           onApply={imageSize}
           onClose={closeModal}
+        />
+      )}
+      {modal === 'repair' && selection && (
+        <RepairDialog
+          doc={doc}
+          selection={selection}
+          onClose={closeModal}
+          onApply={(layer) => {
+            if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
+            validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
+            editor.change(
+              (d) => ({ ...d, layers: [...d.layers, layer] }),
+              'Восстановление области · новый слой',
+            )
+            setSelectedId(layer.id)
+            closeModal()
+            toastMessage(
+              'Клин на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет результат.',
+            )
+          }}
         />
       )}
       {modal === 'settings' && (

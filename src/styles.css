@@ -4078,3 +4078,80 @@ kbd {
 .layer-name {
   min-width: 25px;
 }
+
+/* Local manga restoration: actual original/result pixels and editable donor exclusion. */
+.repair-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 224px;
+  gap: 20px;
+}
+.repair-view {
+  min-width: 0;
+}
+.repair-view-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 2px 0 10px;
+}
+.repair-canvas-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 230px;
+  height: 340px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.repair-canvas-wrap canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  touch-action: none;
+}
+.repair-canvas-wrap.painting-donors canvas {
+  cursor: crosshair;
+}
+.repair-split {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0;
+  font-size: 11px;
+}
+.repair-split input {
+  flex: 1;
+  accent-color: var(--accent);
+  min-width: 50px;
+}
+.repair-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.repair-controls .dialog-label {
+  margin: 0;
+}
+.repair-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 11px;
+  color: var(--accent);
+}
+.canvas-viewport.tool-repair,
+.canvas-viewport.tool-repair-box {
+  cursor: crosshair;
+}
+@media (max-width: 850px) {
+  .repair-layout {
+    grid-template-columns: minmax(0, 1fr) 190px;
+    gap: 12px;
+  }
+  .repair-canvas-wrap {
+    height: 290px;
+  }
+}
