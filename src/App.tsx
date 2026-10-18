@@ -11,7 +11,7 @@ import { demoDocument, localPoint, makeLayer, newDocument, parseProject, uid } f
 import { bitmapLayer, downloadBlob, loadImage, prepareDocument, rasterizeLayer } from './engine/render'
 import { loadDocument, saveDocument } from './engine/storage'
 import { runPixelOperation } from './engine/processing'
-import { MAX_LAYERS, type EditorDocument, type Point, type Rect, type Tool, type ToolSettings } from './types'
+import { MAX_LAYERS, type EditorDocument, type Layer, type Point, type Rect, type Tool, type ToolSettings } from './types'
 
 const tools = [
   { id: 'move', icon: MousePointer2, name: 'Перемещение', key: 'V' },
@@ -157,7 +157,7 @@ export default function App() {
         if (project.size > 50 * 1024 * 1024) throw new Error('Проект должен быть меньше 50 МБ')
         const next = parseProject(JSON.parse(await project.text())); await prepareDocument(next); setPendingDocument(next); return
       }
-      const added = []
+      const added: Layer[] = []
       for (const file of files.slice(0, 10)) {
         if (doc.layers.length + added.length >= MAX_LAYERS) throw new Error('В проекте может быть до 100 слоёв')
         if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Поддерживаются PNG, JPEG, WebP и проекты .777')
