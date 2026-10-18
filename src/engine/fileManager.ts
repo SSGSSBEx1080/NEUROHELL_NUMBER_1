@@ -5,7 +5,11 @@ export class FileManager {
   static async save(document: EditorDocument, large = false, saveAs = false) {
     const { exportPsd } = await import('./psd')
     const blob = await exportPsd(document, large)
-    const filename = await downloadBlob(blob, `${document.name.replace(/[\\/:*?"<>|]/g, '_')}.${large ? 'psb' : 'psd'}`, { documentId: document.id, saveAs })
+    const filename = await downloadBlob(
+      blob,
+      `${document.name.replace(/[\\/:*?"<>|]/g, '_')}.${large ? 'psb' : 'psd'}`,
+      { documentId: document.id, saveAs },
+    )
     return { blob, filename }
   }
 }

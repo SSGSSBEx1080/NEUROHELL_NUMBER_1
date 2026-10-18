@@ -1,19 +1,176 @@
 import { useState } from 'react'
-import { AlertTriangle, Check, ChevronRight, Download, ListPlus, Play, Search, Trash2, Upload, Zap } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  ChevronRight,
+  Download,
+  ListPlus,
+  Play,
+  Search,
+  Trash2,
+  Upload,
+  Zap,
+} from 'lucide-react'
 import { actionBlockers, type StudioAction } from '../engine/actions'
 import { downloadBlob } from '../engine/render'
 import { Modal } from './ui'
-export function ActionsDialog({ actions, onClose, onImport, onRun, onCapture, onDelete, canRun }: { actions: StudioAction[]; onClose: () => void; onImport: () => void; onRun: (action: StudioAction) => void; onCapture: () => void; onDelete: (id: string) => void; canRun: boolean }) {
+export function ActionsDialog({
+  actions,
+  onClose,
+  onImport,
+  onRun,
+  onCapture,
+  onDelete,
+  canRun,
+}: {
+  actions: StudioAction[]
+  onClose: () => void
+  onImport: () => void
+  onRun: (action: StudioAction) => void
+  onCapture: () => void
+  onDelete: (id: string) => void
+  canRun: boolean
+}) {
   const [exportError, setExportError] = useState('')
-  const [search, setSearch] = useState(''), [id, setId] = useState(actions[0]?.id)
-  const active = actions.find(a => a.id === id) || actions.at(-1), filtered = actions.filter(a => a.name.toLowerCase().includes(search.toLowerCase()))
+  const [search, setSearch] = useState(''),
+    [id, setId] = useState(actions[0]?.id)
+  const active = actions.find((a) => a.id === id) || actions.at(-1),
+    filtered = actions.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()))
   const blockers = active ? actionBlockers(active) : []
-  return <Modal title="Меньше повторов. Больше идей." subtitle="Операции · наборы действий для выбранного слоя" onClose={onClose} wide>
-    <div className="actions-top"><label className="action-search"><Search size={15} /><input aria-label="Поиск операций" placeholder="Найти свой сценарий…" value={search} onChange={e => setSearch(e.target.value)} /></label><button className="secondary-button" onClick={onImport}><Upload size={14} />Импорт .atn / .json</button></div>
-    <div className="actions-layout"><div className="actions-list">{filtered.map((a, i) => <button key={a.id} className={active?.id === a.id ? 'selected' : ''} onClick={() => setId(a.id)}><span className={`action-mark mark-${i % 5}`}><Zap size={15} /></span><span><strong>{a.name}</strong><small>{a.source}</small></span>{a.shortcut && <kbd>{a.shortcut.ctrl ? 'Ctrl+' : ''}{a.shortcut.shift ? '⇧' : ''}{a.shortcut.key}</kbd>}{actionBlockers(a).length > 0 ? <AlertTriangle size={12} /> : <ChevronRight size={12} />}</button>)}{!filtered.length && <p className="panel-note">По этому запросу ничего нет.</p>}</div>
-      <div className="action-detail">{active ? <><div className="section-heading">{active.steps.length} шагов{!active.source.startsWith('777 STUDIO') && <button className="icon-button" title="Удалить операцию из набора" aria-label="Удалить операцию" onClick={() => onDelete(active.id)}><Trash2 size={14} /></button>}</div>{active.steps.map((step, i) => <div key={i} className={`action-step ${!step.enabled ? 'disabled-step' : ''}`}><span>{step.command ? <Check size={13} /> : <AlertTriangle size={13} />}</span><div><strong>{step.name}</strong>{step.unsupported && <small>{step.unsupported}</small>}{!step.enabled && <small>Выключено в исходной операции</small>}</div></div>)}{blockers.length > 0 && <div className="action-warning">Есть неподдерживаемые шаги. Запуск всей операции заблокирован — ничего не будет молча пропущено.</div>}</> : <p>Импортируй набор, чтобы начать.</p>}</div></div>
-    <div className="actions-secondary">{exportError && <p role="alert" className="error-text">{exportError}</p>}<button className="text-button" disabled={!canRun} onClick={onCapture}><ListPlus size={14} />Сохранить цветокоррекцию слоя</button><button className="text-button" onClick={() => void downloadBlob(new Blob([JSON.stringify({ version: 1, actions }, null, 2)], { type: 'application/json' }), 'Мои операции.777actions.json').catch(e => setExportError(e instanceof Error ? e.message : 'Ошибка сохранения'))}><Download size={14} />Скачать набор</button></div>
-    <p className="help-footnote">ATN v16: поддерживаются отдельные безопасные шаги обесцвечивания, инверсии, Gaussian Blur до 30 px и яркости/контраста. Алгоритмы могут отличаться от Adobe. Ссылки на другие документы, плагины, скрипты и диалоги не исполняются. Операция отменяется одним Ctrl+Z.</p>
-    <footer className="dialog-footer"><span>{!canRun ? 'Выбери незаблокированный слой' : 'Исходные файлы не изменяются'}</span><button className="primary-button" disabled={!canRun || !active || blockers.length > 0 || !active.steps.some(s => s.enabled)} onClick={() => active && onRun(active)}><Play size={14} />Выполнить операцию</button></footer>
-  </Modal>
+  return (
+    <Modal
+      title="Меньше повторов. Больше идей."
+      subtitle="Операции · наборы действий для выбранного слоя"
+      onClose={onClose}
+      wide
+    >
+      <div className="actions-top">
+        <label className="action-search">
+          <Search size={15} />
+          <input
+            aria-label="Поиск операций"
+            placeholder="Найти свой сценарий…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+        <button className="secondary-button" onClick={onImport}>
+          <Upload size={14} />
+          Импорт .atn / .json
+        </button>
+      </div>
+      <div className="actions-layout">
+        <div className="actions-list">
+          {filtered.map((a, i) => (
+            <button
+              key={a.id}
+              className={active?.id === a.id ? 'selected' : ''}
+              onClick={() => setId(a.id)}
+            >
+              <span className={`action-mark mark-${i % 5}`}>
+                <Zap size={15} />
+              </span>
+              <span>
+                <strong>{a.name}</strong>
+                <small>{a.source}</small>
+              </span>
+              {a.shortcut && (
+                <kbd>
+                  {a.shortcut.ctrl ? 'Ctrl+' : ''}
+                  {a.shortcut.shift ? '⇧' : ''}
+                  {a.shortcut.key}
+                </kbd>
+              )}
+              {actionBlockers(a).length > 0 ? (
+                <AlertTriangle size={12} />
+              ) : (
+                <ChevronRight size={12} />
+              )}
+            </button>
+          ))}
+          {!filtered.length && <p className="panel-note">По этому запросу ничего нет.</p>}
+        </div>
+        <div className="action-detail">
+          {active ? (
+            <>
+              <div className="section-heading">
+                {active.steps.length} шагов
+                {!active.source.startsWith('777 STUDIO') && (
+                  <button
+                    className="icon-button"
+                    title="Удалить операцию из набора"
+                    aria-label="Удалить операцию"
+                    onClick={() => onDelete(active.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+              {active.steps.map((step, i) => (
+                <div key={i} className={`action-step ${!step.enabled ? 'disabled-step' : ''}`}>
+                  <span>{step.command ? <Check size={13} /> : <AlertTriangle size={13} />}</span>
+                  <div>
+                    <strong>{step.name}</strong>
+                    {step.unsupported && <small>{step.unsupported}</small>}
+                    {!step.enabled && <small>Выключено в исходной операции</small>}
+                  </div>
+                </div>
+              ))}
+              {blockers.length > 0 && (
+                <div className="action-warning">
+                  Есть неподдерживаемые шаги. Запуск всей операции заблокирован — ничего не будет
+                  молча пропущено.
+                </div>
+              )}
+            </>
+          ) : (
+            <p>Импортируй набор, чтобы начать.</p>
+          )}
+        </div>
+      </div>
+      <div className="actions-secondary">
+        {exportError && (
+          <p role="alert" className="error-text">
+            {exportError}
+          </p>
+        )}
+        <button className="text-button" disabled={!canRun} onClick={onCapture}>
+          <ListPlus size={14} />
+          Сохранить цветокоррекцию слоя
+        </button>
+        <button
+          className="text-button"
+          onClick={() =>
+            void downloadBlob(
+              new Blob([JSON.stringify({ version: 1, actions }, null, 2)], {
+                type: 'application/json',
+              }),
+              'Мои операции.777actions.json',
+            ).catch((e) => setExportError(e instanceof Error ? e.message : 'Ошибка сохранения'))
+          }
+        >
+          <Download size={14} />
+          Скачать набор
+        </button>
+      </div>
+      <p className="help-footnote">
+        ATN v16: поддерживаются отдельные безопасные шаги обесцвечивания, инверсии, Gaussian Blur до
+        30 px и яркости/контраста. Алгоритмы могут отличаться от Adobe. Ссылки на другие документы,
+        плагины, скрипты и диалоги не исполняются. Операция отменяется одним Ctrl+Z.
+      </p>
+      <footer className="dialog-footer">
+        <span>{!canRun ? 'Выбери незаблокированный слой' : 'Исходные файлы не изменяются'}</span>
+        <button
+          className="primary-button"
+          disabled={
+            !canRun || !active || blockers.length > 0 || !active.steps.some((s) => s.enabled)
+          }
+          onClick={() => active && onRun(active)}
+        >
+          <Play size={14} />
+          Выполнить операцию
+        </button>
+      </footer>
+    </Modal>
+  )
 }

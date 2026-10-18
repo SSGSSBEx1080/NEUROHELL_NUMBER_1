@@ -1,12 +1,17 @@
-'use strict';
-const fs = require('node:fs');
-const packages = ['react', 'react-dom', 'lucide-react', 'ag-psd', 'base64-js', 'pako'];
-let text = 'FSH 777 runtime dependency licenses\n\n';
+'use strict'
+const fs = require('node:fs')
+const packages = ['react', 'react-dom', 'lucide-react', 'ag-psd', 'base64-js', 'pako']
+let text = 'FSH 777 runtime dependency licenses\n\n'
 for (const name of packages) {
-  const root = `node_modules/${name}`, pkg = JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
-  const file = fs.readdirSync(root).find(f => /^license(\.txt|\.md)?$/i.test(f));
-  if (!file) throw new Error(`Missing license: ${name}`);
-  text += `${'='.repeat(72)}\n${name} ${pkg.version}\n${'='.repeat(72)}\n${fs.readFileSync(`${root}/${file}`, 'utf8')}\n\n`;
+  const root = `node_modules/${name}`,
+    pkg = JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'))
+  const file = fs.readdirSync(root).find((f) => /^license(\.txt|\.md)?$/i.test(f))
+  if (!file) throw new Error(`Missing license: ${name}`)
+  text += `${'='.repeat(72)}\n${name} ${pkg.version}\n${'='.repeat(72)}\n${fs.readFileSync(`${root}/${file}`, 'utf8')}\n\n`
 }
-for (const filename of fs.readdirSync('public/fonts/catalog').filter(f => f.endsWith('-OFL.txt')).sort()) text += `${'='.repeat(72)}\nBundled font: ${filename.replace('-OFL.txt', '')} — google/fonts\n${'='.repeat(72)}\n${fs.readFileSync('public/fonts/catalog/' + filename, 'utf8')}\n\n`;
-fs.writeFileSync('THIRD_PARTY_LICENSES.txt', text.trimEnd() + '\n');
+for (const filename of fs
+  .readdirSync('public/fonts/catalog')
+  .filter((f) => f.endsWith('-OFL.txt'))
+  .sort())
+  text += `${'='.repeat(72)}\nBundled font: ${filename.replace('-OFL.txt', '')} — google/fonts\n${'='.repeat(72)}\n${fs.readFileSync('public/fonts/catalog/' + filename, 'utf8')}\n\n`
+fs.writeFileSync('THIRD_PARTY_LICENSES.txt', text.trimEnd() + '\n')

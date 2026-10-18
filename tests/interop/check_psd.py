@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from psd_tools import PSDImage
+from psd_tools.constants import Resource
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "test-results"
@@ -23,10 +24,11 @@ for fixture in ["groups", "masks", "effects"]:
     original = PSDImage.open(ROOT / f"tests/fixtures/psd/{fixture}.psd")
     edited = PSDImage.open(RESULTS / f"exported-{fixture}.psd")
     assert np.array_equal(np.asarray(original.topil()), np.asarray(edited.topil())), fixture
+    assert original.image_resources.get_data(Resource.ICC_PROFILE) == edited.image_resources.get_data(Resource.ICC_PROFILE), fixture
     assert len(list(original.descendants())) == len(list(edited.descendants())), fixture
     print(f"PASS {fixture}: independent merged pixels exactly equal; layer count retained")
 
-for transform in ["rotated", "flipped", "perspective"]:
+for transform in ["rotated", "flipped", "perspective", "rotated-disabled", "rotated-soft"]:
     document = PSDImage.open(RESULTS / f"native-mask-{transform}.psd")
     reference = premultiplied(Image.open(RESULTS / f"native-mask-{transform}.png"))
     assert document[0].has_mask(), transform
@@ -39,4 +41,4 @@ for transform in ["rotated", "flipped", "perspective"]:
         assert worst <= 2.0, (transform, source, worst, int(np.count_nonzero(delta.max(axis=2) > 2)))
         print(f"PASS {transform}, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}")
 
-print("Scope: RGB/8, these six fixtures only. No XnConvert/Photoshop execution, ICC conversion, or arbitrary Adobe FX validation.")
+print("Scope: RGB/8, these eight fixtures only. No XnConvert/Photoshop execution, ICC conversion, or arbitrary Adobe FX validation.")

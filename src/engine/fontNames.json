@@ -1,0 +1,113 @@
+{
+  "Manrope": {
+    "default": "Manrope-ExtraLight",
+    "weights": {
+      "200": "Manrope-ExtraLight",
+      "300": "Manrope-Light",
+      "400": "Manrope-Regular",
+      "500": "Manrope-Medium",
+      "600": "Manrope-SemiBold",
+      "700": "Manrope-Bold",
+      "800": "Manrope-ExtraBold"
+    }
+  },
+  "Unbounded": {
+    "default": "Unbounded-Regular",
+    "weights": {
+      "400": "Unbounded-Regular"
+    }
+  },
+  "Inter": {
+    "default": "Inter-Regular",
+    "weights": {
+      "400": "Inter-Regular"
+    }
+  },
+  "Roboto": {
+    "default": "Roboto-Regular",
+    "weights": {
+      "400": "Roboto-CondensedRegular",
+      "100": "Roboto-CondensedThin",
+      "200": "Roboto-CondensedExtraLight",
+      "300": "Roboto-CondensedLight",
+      "500": "Roboto-CondensedMedium",
+      "600": "Roboto-CondensedSemiBold",
+      "700": "Roboto-CondensedBold",
+      "800": "Roboto-CondensedExtraBold",
+      "900": "Roboto-CondensedBlack"
+    }
+  },
+  "Montserrat": {
+    "default": "Montserrat-Thin",
+    "weights": {
+      "100": "Montserrat-Thin",
+      "200": "Montserrat-ExtraLight",
+      "300": "Montserrat-Light",
+      "400": "Montserrat-Regular",
+      "500": "Montserrat-Medium",
+      "600": "Montserrat-SemiBold",
+      "700": "Montserrat-Bold",
+      "800": "Montserrat-ExtraBold",
+      "900": "Montserrat-Black"
+    }
+  },
+  "Oswald": {
+    "default": "Oswald-Regular",
+    "weights": {
+      "400": "Oswald-Regular"
+    }
+  },
+  "Playfair Display": {
+    "default": "PlayfairDisplay-Regular",
+    "weights": {
+      "400": "PlayfairDisplayRoman-Regular",
+      "500": "PlayfairDisplayRoman-Medium",
+      "600": "PlayfairDisplayRoman-SemiBold",
+      "700": "PlayfairDisplayRoman-Bold",
+      "800": "PlayfairDisplayRoman-ExtraBold",
+      "900": "PlayfairDisplayRoman-Black"
+    }
+  },
+  "Caveat": {
+    "default": "Caveat-Regular",
+    "weights": {
+      "400": "CaveatRoman-Regular",
+      "700": "CaveatRoman-Bold"
+    }
+  },
+  "Arial": {
+    "default": "ArialMT",
+    "weights": {
+      "400": "ArialMT",
+      "700": "Arial-BoldMT"
+    }
+  },
+  "Times New Roman": {
+    "default": "TimesNewRomanPSMT",
+    "weights": {
+      "400": "TimesNewRomanPSMT",
+      "700": "TimesNewRomanPS-BoldMT"
+    }
+  },
+  "Courier New": {
+    "default": "CourierNewPSMT",
+    "weights": {
+      "400": "CourierNewPSMT",
+      "700": "CourierNewPS-BoldMT"
+    }
+  },
+  "Georgia": {
+    "default": "Georgia",
+    "weights": {
+      "400": "Georgia",
+      "700": "Georgia-Bold"
+    }
+  },
+  "Segoe UI": {
+    "default": "SegoeUI",
+    "weights": {
+      "400": "SegoeUI",
+      "700": "SegoeUI-Bold"
+    }
+  }
+}
