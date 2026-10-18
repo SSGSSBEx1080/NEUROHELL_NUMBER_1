@@ -29,6 +29,8 @@ async function blank(page: Page) {
     buffer: Buffer.from(encoded, 'base64'),
   })
   await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect.poll(() => pixels(page)).toEqual([23, 248])
 }
 async function outline(page: Page) {
   await page.keyboard.press('j')
@@ -332,6 +334,24 @@ test('panels resize, dock left, float, retain script cursor and restore safely o
   await page.mouse.move(handle.x - 57, handle.y + 120, { steps: 6 })
   await page.mouse.up()
   await expect.poll(async () => (await inspector.boundingBox())!.width).toBe(initial.width + 60)
+  const originalX = await page.getByLabel('X', { exact: true }).inputValue()
+  await page.getByRole('separator', { name: 'Ширина панелей', exact: true }).focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBe(initial.width + 70)
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue(originalX)
+  const escapeHandle = (await page
+    .getByRole('separator', { name: 'Ширина панелей', exact: true })
+    .boundingBox())!
+  await page.mouse.move(escapeHandle.x + 3, escapeHandle.y + 120)
+  await page.mouse.down()
+  await page.mouse.move(escapeHandle.x - 37, escapeHandle.y + 120, { steps: 3 })
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect.poll(async () => (await inspector.boundingBox())!.width).toBe(initial.width + 70)
+  await page.getByRole('tab', { name: 'Слой', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByLabel('X', { exact: true })).toHaveValue(originalX)
   const upper = page.locator('.dock-upper'),
     height = (await upper.boundingBox())!.height,
     divider = (await page.getByRole('separator', { name: 'Высота верхней панели' }).boundingBox())!
@@ -438,4 +458,320 @@ test('manga practice completes J-to-typeset without covering translation and exp
   await writeFile('test-results/manga-workflow.png', await readFile((await download.path())!))
   await expect(page.getByRole('dialog')).toBeHidden()
   await page.screenshot({ path: 'test-results/manga-workspace.png' })
+})
+
+test('donor strokes interpolate, Shift restores samples, preview slider avoids RGBA rewrites and reset recalculates', async ({
+  page,
+}) => {
+  await blank(page)
+  await outline(page)
+  const apply = page.getByRole('button', { name: 'Применить на новый слой', exact: true }),
+    preview = page.getByTestId('repair-preview')
+  const sample = (x: number, y: number) =>
+    preview.evaluate(
+      (c: HTMLCanvasElement, [x, y]) =>
+        Array.from(c.getContext('2d')!.getImageData(x, y, 1, 1).data),
+      [x, y],
+    )
+  await expect(apply).toBeEnabled()
+  const range = page.getByLabel('Сравнение до и после')
+  await range.focus()
+  await page.keyboard.press('Home')
+  await expect.poll(async () => (await sample(120, 85))[0]).toBe(248)
+  await page.evaluate(() => {
+    const w = window as typeof window & { __repairWrites: number }
+    w.__repairWrites = 0
+    const original = CanvasRenderingContext2D.prototype.putImageData
+    CanvasRenderingContext2D.prototype.putImageData = function (...args) {
+      w.__repairWrites += args[0].width * args[0].height
+      Reflect.apply(original, this, args)
+    }
+  })
+  await page.keyboard.press('End')
+  await expect.poll(async () => (await sample(120, 85))[0]).toBe(23)
+  await page.keyboard.press('Home')
+  await expect.poll(async () => (await sample(120, 85))[0]).toBe(248)
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __repairWrites: number }).__repairWrites,
+    ),
+  ).toBe(0)
+  await page.getByRole('button', { name: 'Зона образцов', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const c = await sample(140, 50)
+      return c[1] > c[0]
+    })
+    .toBe(true)
+  await page.evaluate(
+    () => ((window as typeof window & { __repairWrites: number }).__repairWrites = 0),
+  )
+  const b = (await preview.boundingBox())!,
+    x = (n: number) => b.x + (n * b.width) / 300,
+    y = b.y + (50 * b.height) / 200
+  await page.mouse.move(x(50), y)
+  await page.mouse.down()
+  await page.mouse.move(x(230), y, { steps: 1 })
+  await expect
+    .poll(async () => {
+      const c = await sample(140, 50)
+      return c[0] > c[1]
+    })
+    .toBe(true)
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __repairWrites: number }).__repairWrites,
+    ),
+  ).toBeLessThan(30000)
+  await page.mouse.up()
+  await expect(apply).toBeEnabled()
+  await page.keyboard.down('Shift')
+  await page.mouse.move(x(140), y)
+  await page.mouse.down()
+  await page.mouse.up()
+  await page.keyboard.up('Shift')
+  await expect
+    .poll(async () => {
+      const c = await sample(140, 50)
+      return c[1] > c[0]
+    })
+    .toBe(true)
+  await page.getByRole('button', { name: 'Сбросить запреты образцов', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const c = await sample(60, 50)
+      return c[1] > c[0]
+    })
+    .toBe(true)
+  await expect(apply).toBeEnabled()
+  await page.getByLabel('Под верхними текстовыми слоями').check()
+  await expect(apply).toBeDisabled()
+  await expect(apply).toBeEnabled()
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  expect(await pixels(page)).toEqual([23, 248])
+})
+
+test('cancelling active texture reconstruction terminates its actual worker without changing the document', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as typeof window & { __repairs: { started: number; terminated: number } }
+    w.__repairs = { started: 0, terminated: 0 }
+    const NativeWorker = window.Worker
+    window.Worker = class extends NativeWorker {
+      repair: boolean
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        this.repair = String(url).includes('repair.worker')
+        if (this.repair) w.__repairs.started++
+      }
+      terminate() {
+        if (this.repair) w.__repairs.terminated++
+        super.terminate()
+      }
+    }
+  })
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const image = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = c.height = 640
+    const ctx = c.getContext('2d')!,
+      im = ctx.createImageData(640, 640)
+    for (let y = 0; y < 640; y++)
+      for (let x = 0; x < 640; x++) {
+        const i = (y * 640 + x) * 4,
+          v = 80 + ((x * 17 + y * 37) % 176)
+        im.data[i] = im.data[i + 1] = im.data[i + 2] = v
+        im.data[i + 3] = 255
+      }
+    ctx.putImageData(im, 0, 0)
+    ctx.fillStyle = '#111'
+    ctx.fillRect(170, 170, 300, 300)
+    return c.toDataURL().split(',')[1]
+  })
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({
+    name: 'texture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  })
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const before = await page
+      .getByTestId('editor-canvas')
+      .evaluate((c: HTMLCanvasElement) => c.toDataURL()),
+    b = (await page.locator('.artboard').boundingBox())!,
+    scale = b.width / 640
+  await page.keyboard.press('j')
+  await page.mouse.move(b.x + 170 * scale, b.y + 170 * scale)
+  await page.mouse.down()
+  for (const [x, y] of [
+    [470, 170],
+    [470, 470],
+    [170, 470],
+    [170, 170],
+  ])
+    await page.mouse.move(b.x + x * scale, b.y + y * scale, { steps: 3 })
+  await page.mouse.up()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __repairs: { started: number } }).__repairs.started,
+      ),
+    )
+    .toBeGreaterThan(0)
+  await expect(
+    page.getByRole('button', { name: 'Применить на новый слой', exact: true }),
+  ).toBeDisabled()
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+  const stats = await page.evaluate(
+    () =>
+      (window as typeof window & { __repairs: { started: number; terminated: number } }).__repairs,
+  )
+  expect(stats.terminated).toBe(stats.started)
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  expect(
+    await page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => c.toDataURL()),
+  ).toBe(before)
+})
+
+test('recording shortcut commits focused input, F-key replay works, and pending full-library recovery is not lost', async ({
+  page,
+}) => {
+  await blank(page)
+  await page.keyboard.press('Control+Alt+r')
+  await page.getByLabel('Название новой записи').fill('Быстрая запись')
+  await page.getByRole('button', { name: 'Начать запись', exact: true }).click()
+  const field = page.getByLabel('X', { exact: true }),
+    before = Number(await field.inputValue())
+  await field.fill(String(before + 10))
+  await expect(page.getByTestId('recorded-step-count')).toHaveText('0 шагов')
+  await page.keyboard.press('Control+Alt+r')
+  const modal = page.getByRole('dialog')
+  await expect(modal.locator('.action-step')).toHaveCount(1)
+  await modal.getByLabel('Клавиша операции').selectOption('F8')
+  await modal.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
+  await page.locator('.document-bar').click()
+  await page.keyboard.press('Shift+F8')
+  await expect(field).toHaveValue(String(before + 20))
+  await page.keyboard.press('Control+z')
+  await expect(field).toHaveValue(String(before + 10))
+  await page.evaluate(() => {
+    const action = (name: string) => ({
+      name,
+      steps: [{ name: 'Invert', enabled: true, command: { type: 'invert' } }],
+    })
+    localStorage.setItem(
+      'fsh777-actions',
+      JSON.stringify({
+        version: 2,
+        actions: Array.from({ length: 100 }, (_, i) => action('Операция ' + i)),
+      }),
+    )
+    localStorage.setItem(
+      'fsh777-action-recording',
+      JSON.stringify({ version: 2, actions: [action('Не потерять черновик')] }),
+    )
+  })
+  await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена')
+  await page.reload()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByTestId('restore-project').click()
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.keyboard.press('Control+Alt+r')
+  await expect(page.getByRole('alert')).toContainText('набор заполнен')
+  expect(await page.evaluate(() => localStorage.getItem('fsh777-action-recording'))).toBeTruthy()
+  await page.getByRole('button', { name: 'Удалить операцию', exact: true }).click()
+  await expect(page.getByLabel('Название операции', { exact: true })).toHaveValue(
+    'Не потерять черновик',
+  )
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('fsh777-action-recording')))
+    .toBeNull()
+  await expect(page.locator('.actions-list>button')).toHaveCount(100)
+})
+
+test('cold bundled fonts finish loading before a framed document opens or exports', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/fonts/catalog/oswald.ttf', async (route) => {
+    await gate
+    await route.continue()
+  })
+  const request = page.waitForRequest('**/fonts/catalog/oswald.ttf')
+  const doc = {
+    version: 1,
+    id: 'font-cold-start',
+    name: 'Cold font',
+    width: 300,
+    height: 200,
+    background: 'transparent',
+    layers: [
+      {
+        id: 'type',
+        name: 'Framed Oswald',
+        kind: 'text',
+        x: 20,
+        y: 20,
+        width: 260,
+        height: 150,
+        text: 'WWW iii Первая отрисовка',
+        fontFamily: 'Oswald',
+        fontSize: 24,
+        fontWeight: 600,
+        textFrame: {
+          shape: 'rectangle',
+          padding: 8,
+          autoFit: true,
+          verticalAlign: 'middle',
+          minFontSize: 8,
+        },
+      },
+    ],
+  }
+  try {
+    await page.getByLabel('Открыть изображение или проект').setInputFiles({
+      name: 'cold-font.777',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify(doc)),
+    })
+    await request
+    await expect(page.locator('.busy-overlay')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Открыть проект', exact: true })).toHaveCount(0)
+  } finally {
+    release()
+  }
+  await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.getByLabel('Шрифт', { exact: true })).toHaveValue('Oswald')
+  expect(
+    await page.evaluate(() => document.fonts.check('600 32px Oswald', 'WWW iii Первая отрисовка')),
+  ).toBe(true)
+  const c = page.getByTestId('editor-canvas')
+  await expect
+    .poll(() =>
+      c.evaluate((canvas: HTMLCanvasElement) =>
+        canvas
+          .getContext('2d')!
+          .getImageData(0, 0, canvas.width, canvas.height)
+          .data.some((v, i) => i % 4 === 3 && v > 0),
+      ),
+    )
+    .toBe(true)
+  const first = await c.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    window.dispatchEvent(new Event('fsh777-fonts-changed'))
+    await new Promise(requestAnimationFrame)
+  })
+  expect(await c.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(first)
+  const psd = readPsd(await savePsd(page), { useImageData: true, skipThumbnail: true })
+  expect(psd.children?.find((l) => l.text)?.text?.style?.font?.name).toMatch(/Oswald/)
 })

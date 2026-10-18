@@ -873,7 +873,7 @@ export function CanvasStage({
       return
     }
     if (d.type === 'region' && d.textFrame) {
-      const rect = getRect(d.start, pointFrom(e))
+      const rect = getRect(d.start, clip(pointFrom(e)))
       setSelection(null)
       if (rect.width < 20 || rect.height < 20) {
         onToast('Протяни рамку от 20 × 20 px')
@@ -904,7 +904,7 @@ export function CanvasStage({
       return
     }
     if (d.type === 'region' && d.repair) {
-      const selected = getRect(d.start, pointFrom(e))
+      const selected = getRect(d.start, clip(pointFrom(e)))
       if (selected.width > 1 && selected.height > 1) {
         setSelection(selected)
         onRepair(selected)

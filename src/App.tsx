@@ -4,7 +4,12 @@ import { ActionsPanel } from './components/ActionsPanel'
 import { PanelDock } from './components/PanelDock'
 import { loadPanelLayout, savePanelLayout, panelPreset, type DockTab } from './engine/panelLayout'
 import { useActionRecorder } from './hooks/useActionRecorder'
-import { loadActionLibrary, storeActionLibrary } from './engine/actionStorage'
+import {
+  loadActionLibrary,
+  storeActionLibrary,
+  recoverActionDraft,
+  hasPendingActionDraft,
+} from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
 import { TranslationPanel } from './components/TranslationPanel'
 import { RepairDialog } from './components/RepairDialog'
@@ -191,8 +196,19 @@ export default function App() {
   }, [])
   useEffect(() => {
     try {
+      if (!recorder.recording) {
+        const recovered = recoverActionDraft(actions)
+        if (recovered !== actions) {
+          setActions(recovered)
+          return
+        }
+      }
       storeActionLibrary(actions, !!recorder.recording)
-      setActionsError('')
+      setActionsError(
+        !recorder.recording && hasPendingActionDraft(actions)
+          ? 'Сохранён черновик записи, но набор заполнен. Удали ненужную операцию — черновик восстановится автоматически.'
+          : '',
+      )
     } catch {
       setActionsError(
         'Набор не сохранён в локальном хранилище. Экспортируй JSON, чтобы не потерять операции.',
@@ -204,6 +220,8 @@ export default function App() {
       if (workspace.home) throw new Error('Сначала открой документ')
       if (actions.length >= 100)
         throw new Error('До 100 операций; удали ненужные или экспортируй набор')
+      if (hasPendingActionDraft(actions))
+        throw new Error('Сначала восстанови прежнюю запись: освободи место в наборе операций.')
       recorder.start(name)
       setModal(null)
       toastMessage(
@@ -1012,6 +1030,7 @@ export default function App() {
   }
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
       if (
         (e.ctrlKey || e.metaKey) &&
         e.code === 'KeyS' &&
@@ -1025,6 +1044,25 @@ export default function App() {
         ;(document.activeElement as HTMLElement)?.blur()
         editor.finish('Редактирование')
         void saveProject()
+        return
+      }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.altKey &&
+        e.code === 'KeyR' &&
+        !busy &&
+        !modal &&
+        !pendingDocument &&
+        !workspace.closing &&
+        !workspace.home
+      ) {
+        e.preventDefault()
+        ;(document.activeElement as HTMLElement)?.blur()
+        if (recorder.recording) stopActionRecording()
+        else {
+          editor.finish('Перед записью')
+          setModal('actions')
+        }
         return
       }
       if (typing(e.target) || busy || modal || pendingDocument || workspace.closing) return
@@ -1051,17 +1089,14 @@ export default function App() {
       }
       const action = actions.find(
         (a) =>
-          a.shortcut?.key === e.code && a.shortcut.shift === e.shiftKey && a.shortcut.ctrl === mod,
+          !e.altKey &&
+          a.shortcut?.key === e.code &&
+          a.shortcut.shift === e.shiftKey &&
+          a.shortcut.ctrl === mod,
       )
       if (action) {
         e.preventDefault()
         executeAction(action)
-        return
-      }
-      if (mod && e.altKey && e.code === 'KeyR') {
-        e.preventDefault()
-        if (recorder.recording) stopActionRecording()
-        else setModal('actions')
         return
       }
       if (mod) {

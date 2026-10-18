@@ -149,12 +149,63 @@ watchdog.unref()
     await page.keyboard.press('Control+s')
     await expect(page.locator('.busy-overlay')).toBeHidden()
     assert.equal(await app.evaluate(() => globalThis.__fshSaveDialogCount), dialogs + 1)
+    progress('manga practice, native J worker and linked typesetting')
+    await page.getByRole('button', { name: 'На главную', exact: true }).click()
+    await page.getByTestId('open-manga-demo').click()
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await expect(page.locator('.layer-row')).toHaveCount(4)
+    await expect(page.getByLabel('Рабочая среда')).toHaveValue('manga')
+    const board = await page.locator('.artboard').boundingBox(),
+      scale = board.width / 896
+    await page.keyboard.press('j')
+    await page.mouse.move(board.x + 125 * scale, board.y + 165 * scale)
+    await page.mouse.down()
+    for (const [x, y] of [
+      [330, 165],
+      [330, 280],
+      [125, 280],
+      [125, 165],
+    ])
+      await page.mouse.move(board.x + x * scale, board.y + y * scale, { steps: 5 })
+    await page.mouse.up()
+    await expect(page.getByLabel('Под верхними текстовыми слоями')).toBeChecked()
+    await page
+      .getByRole('button', { name: 'Применить на новый слой', exact: true })
+      .click({ timeout: 30000 })
+    await expect(page.locator('.layer-row')).toHaveCount(5)
+    await page.getByRole('button', { name: 'Обновить связанный текст', exact: true }).click()
+    await page.getByRole('tab', { name: 'Слой', exact: true }).click()
+    await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue(/город уже/)
+    progress('record/replay a committed property change in native Windows')
+    const xField = page.getByLabel('X', { exact: true }),
+      xBefore = Number(await xField.inputValue())
+    await page.locator('.document-bar').click()
+    await page.keyboard.press('Control+Alt+r')
+    await page.getByLabel('Название новой записи').fill('Windows: тайпсет')
+    await page.getByRole('button', { name: 'Начать запись', exact: true }).click()
+    await xField.fill(String(xBefore + 10))
+    await page.keyboard.press('Control+Alt+r')
+    await expect(page.getByRole('dialog').locator('.action-step')).toHaveCount(1)
+    await page.getByRole('button', { name: 'Выполнить операцию', exact: true }).click()
+    await expect(xField).toHaveValue(String(xBefore + 20))
+    await page.locator('.document-bar').click()
+    await page.keyboard.press('Control+z')
+    await expect(xField).toHaveValue(String(xBefore + 10))
+    progress('save manga PSD through native atomic file writer')
+    await page.keyboard.press('Control+s')
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/)
+    const mangaPsd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd') && file !== psd)
+    assert.ok(mangaPsd)
+    assert.ok((await fs.stat(path.join(temp, mangaPsd))).size > 10000)
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
-    progress('passed: standalone sandbox, PNG/JPG/WebP/PSD/PSB/.777 files and PSD reimport')
+    progress(
+      'passed: standalone sandbox, exports/reimport, J worker, linked manga type, recording/replay and native manga PSD',
+    )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })
     await fs.writeFile(

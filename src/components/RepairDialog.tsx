@@ -70,6 +70,7 @@ export function RepairDialog({
         if (width < 3 || height < 3 || width * height > 1048576)
           throw new Error('Фрагмент с окружением больше 1 Мп. Обведи меньшую область.')
         await prepareDocument(doc)
+        if (cancelled) return
         const c = document.createElement('canvas')
         c.width = width
         c.height = height
@@ -142,13 +143,21 @@ export function RepairDialog({
     }
   }, [source, mode, radius, expand, feather, search, revision])
   const draw = () => {
-    if (!source || !canvas.current) return
+    if (!canvas.current) return
+    if (!source) {
+      preview.current?.dispose()
+      preview.current = null
+      canvas.current.getContext('2d')?.clearRect(0, 0, canvas.current.width, canvas.current.height)
+      return
+    }
     if (preview.current?.source !== source) {
       preview.current?.dispose()
       preview.current = new RepairPreview(source)
     }
     preview.current.draw(canvas.current, result, split, protect)
   }
+  const latestDraw = useRef(draw)
+  latestDraw.current = draw
   useEffect(draw, [source, result, split, protect, revision])
   const paintDonor = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!source || !drawing.current || !protect) return
@@ -182,7 +191,7 @@ export function RepairDialog({
     if (!drawFrame.current)
       drawFrame.current = requestAnimationFrame(() => {
         drawFrame.current = 0
-        draw()
+        latestDraw.current()
       })
   }
   const apply = () => {

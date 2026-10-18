@@ -257,4 +257,29 @@ describe('Real recording and validated transactional playback', () => {
       }),
     ).toThrow()
   })
+  it('retains the exact 200th command but marks a multi-command overflow as blocked', () => {
+    const doc = setup(),
+      changed = edit(doc, { opacity: 0.5 })
+    let recording = startRecording(doc, doc.layers[0].id, 'Boundary')
+    for (let i = 0; i < 199; i++) recording = record(recording, doc, changed)
+    const full = record(recording, doc, changed)
+    expect(full.steps).toHaveLength(200)
+    expect(full.paused).toBe(true)
+    expect(actionBlockers(action(full))).toHaveLength(0)
+    expect(full.steps[199].command?.type).toBe('properties')
+    expect(() => resumeRecording(full, doc, doc.layers[0].id)).toThrow(/200/)
+    const overflow = record(
+      recording,
+      doc,
+      edit(doc, {
+        x: 30,
+        fontSize: 24,
+        adjustments: { ...doc.layers[0].adjustments, contrast: 10 },
+      }),
+    )
+    expect(overflow.steps).toHaveLength(200)
+    expect(overflow.paused).toBe(true)
+    expect(overflow.steps[199].unsupported).toMatch(/200/)
+    expect(() => runAction(doc, doc.layers[0].id, action(overflow))).toThrow()
+  })
 })
