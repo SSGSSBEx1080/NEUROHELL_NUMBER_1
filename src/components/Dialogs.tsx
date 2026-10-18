@@ -15,7 +15,7 @@ export function NewDocumentDialog({ onClose, onCreate, onSave }: { onClose: () =
       <div className="document-presets">{presets.map(p => <button type="button" key={p.name} className={+width === p.width && +height === p.height ? 'selected' : ''} onClick={() => { setWidth(String(p.width)); setHeight(String(p.height)) }}><p.icon size={24} strokeWidth={1.4} /><strong>{p.name}</strong><span>{p.width} × {p.height}</span></button>)}</div>
       <div className="dialog-grid"><label className="dialog-label">Ширина, px<input aria-label="Ширина нового холста" className="dialog-input" type="number" value={width} min={1} max={4096} onChange={e => setWidth(e.target.value)} required /></label><span className="dimension-times">×</span><label className="dialog-label">Высота, px<input aria-label="Высота нового холста" className="dialog-input" type="number" value={height} min={1} max={4096} onChange={e => setHeight(e.target.value)} required /></label></div>
       <div className="dialog-label">Фон холста<div className="background-options">{[{ value: '#ffffff', name: 'Светлый' }, { value: '#18181d', name: 'Тёмный' }, { value: 'transparent', name: 'Прозрачный' }].map(bg => <button type="button" key={bg.name} className={background === bg.value ? 'selected' : ''} onClick={() => setBackground(bg.value)}><span className={`bg-swatch ${bg.value === 'transparent' ? 'checkerboard' : ''}`} style={{ backgroundColor: bg.value }}>{background === bg.value && <Check size={12} color={bg.value === '#18181d' ? '#fff' : '#36313e'} />}</span>{bg.name}</button>)}</div></div>
-      <div className="info-note"><FileJson size={17} /><span>Новый холст заменит текущий проект.<br /><button type="button" className="text-button" onClick={onSave}>Сохранить текущий PSD</button></span></div>
+      <div className="info-note"><FileJson size={17} /><span>Новый холст откроется в отдельной вкладке.<br /><button type="button" className="text-button" onClick={onSave}>Сохранить текущий PSD</button></span></div>
       {!valid && <p className="error-text">Размер каждой стороны — от 1 до 4096 пикселей.</p>}
       <footer className="dialog-footer"><span>RGB · 8 бит · sRGB</span><button type="submit" className="primary-button" disabled={!valid}>Создать проект<ArrowUpRight size={16} /></button></footer>
     </form>
@@ -44,13 +44,13 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
       if (layered) {
         const { exportPsd } = await import('../engine/psd')
         const blob = await exportPsd(doc, format === 'psb')
-        downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format}`)
-        onToast(`${format.toUpperCase()} со слоями готов к скачиванию`); onClose(); return
+        const filename = await downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format}`)
+        onToast(window.fsh777?.saveFile ? `Файл сохранён: ${filename}` : `${format.toUpperCase()} со слоями готов к скачиванию`); onClose(); return
       }
       const output = await exportCanvas({ ...doc, background }, scale, format === 'jpeg' ? '#ffffff' : undefined)
       const blob = await canvasBlob(output, `image/${format}`, quality / 100)
-      downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format === 'jpeg' ? 'jpg' : format}`)
-      onToast(`Готово! ${format.toUpperCase()} · ${Math.round(doc.width * scale)} × ${Math.round(doc.height * scale)} · ${(blob.size / 1024 / 1024).toFixed(2)} МБ`)
+      const filename = await downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format === 'jpeg' ? 'jpg' : format}`)
+      onToast(window.fsh777?.saveFile ? `Файл сохранён: ${filename}` : `Готово! ${format.toUpperCase()} · ${Math.round(doc.width * scale)} × ${Math.round(doc.height * scale)} · ${(blob.size / 1024 / 1024).toFixed(2)} МБ`)
       onClose()
     } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка экспорта') }
     finally { setBusy(false) }

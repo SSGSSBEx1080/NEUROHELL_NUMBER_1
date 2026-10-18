@@ -1,0 +1,5 @@
+import { FileImage, Layers } from 'lucide-react'
+import { Modal } from './ui'
+export function CloseDocumentDialog({ name, smart, onSave, onApply, onConfirm, onCancel }: { name: string; smart: boolean; onSave: () => void; onApply: () => void; onConfirm: () => void; onCancel: () => void }) {
+  return <Modal title="Закрыть вкладку?" subtitle={name} onClose={onCancel}><div className="info-note"><FileImage size={20} /><span>Редактируемая локальная копия останется в «Недавних». История этой вкладки будет очищена. Отдельный PSD на диске обновляется только через сохранение.</span></div>{smart && <div className="info-note"><Layers size={20} /><span>Содержимое смарт-объекта не применяется к родительскому документу автоматически.<br /><button className="text-button" onClick={onApply}>Применить содержимое и вернуться</button></span></div>}<footer className="dialog-footer"><button className="text-button" onClick={onSave}>Сохранить отдельный PSD</button><button className="secondary-button" onClick={onCancel}>Отмена</button><button className="primary-button" onClick={onConfirm}>Закрыть вкладку</button></footer></Modal>
+}

@@ -30,9 +30,9 @@ export function ToolRail({ tool, onSelect }: { tool: Tool; onSelect: (tool: Tool
   useEffect(() => {
     if (!menu) return
     const close = (e: PointerEvent) => { if (!popup.current?.contains(e.target as Node)) setMenu(null) }
-    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
-    window.addEventListener('pointerdown', close); window.addEventListener('keydown', escape)
-    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape) }
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); setMenu(null) } }
+    window.addEventListener('pointerdown', close); window.addEventListener('keydown', escape, true)
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape, true) }
   }, [menu])
   useEffect(() => () => clearTimeout(timer.current), [])
   return <><div className="tool-list tool-list-pro">{groups.map((group, index) => {

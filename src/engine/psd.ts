@@ -152,14 +152,40 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
       out.protected = { ...out.protected, composite: layer.locked, position: layer.locked }
       if (!preserved || !sameVisual(layer.styles, before?.styles)) { out.effects = layer.styles ? exportStyles(layer.styles) : undefined; out.fillOpacity = layer.styles?.fillOpacity ?? 1 }
       if (layer.mask) {
-        const m = layer.mask, img = await loadImage(m.src), c = allocate(Math.max(1, Math.round(m.width)), Math.max(1, Math.round(m.height))); c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
-        out.mask = { ...out.mask, left: Math.round(m.x), top: Math.round(m.y), right: Math.round(m.x) + c.width, bottom: Math.round(m.y) + c.height, disabled: !m.enabled, positionRelativeToLayer: false, defaultColor: m.defaultColor, userMaskDensity: m.density, userMaskFeather: m.feather, imageData: c.getContext('2d')!.getImageData(0, 0, c.width, c.height) }
+        const m = layer.mask, old = before?.mask
+        const unchangedMask = preserved && raw?.mask && old && sameVisual({ ...m, x: 0, y: 0, enabled: true }, { ...old, x: 0, y: 0, enabled: true }) && Math.abs(m.x - old.x - (layer.x - before!.x)) < .001 && Math.abs(m.y - old.y - (layer.y - before!.y)) < .001
+        if (unchangedMask) {
+          const sourceMask = raw!.mask!, dx = m.x - old!.x + (sourceMask.positionRelativeToLayer ? before!.x : 0), dy = m.y - old!.y + (sourceMask.positionRelativeToLayer ? before!.y : 0)
+          out.mask = { ...sourceMask, disabled: !m.enabled, positionRelativeToLayer: false, left: (sourceMask.left || 0) + dx, top: (sourceMask.top || 0) + dy, right: (sourceMask.right || 0) + dx, bottom: (sourceMask.bottom || 0) + dy }
+        } else if (out.imageData && (layer.rotation || layer.warp || layer.flipX || layer.flipY)) {
+          // PSD raster masks live in document coordinates, unlike our editable local
+          // transform. Derive coverage from the same rendered pixels, not an unrotated
+          // mask rectangle. Keep hidden source pixels and an independent native mask.
+          // Density/feather are baked into this transformed mask; XMP retains the controls.
+          const data = out.imageData, c = allocate(data.width, data.height), x = c.getContext('2d')!
+          x.translate(-(out.left || 0), -(out.top || 0))
+          renderLayer(x, { ...layer, visible: true, opacity: 1, blendMode: 'source-over', styles: undefined, mask: { ...m, enabled: true } })
+          const masked = x.getImageData(0, 0, c.width, c.height), maskPixels = new Uint8ClampedArray(masked.data.length)
+          for (let i = 0; i < maskPixels.length; i += 4) {
+            const alpha = Math.max(data.data[i + 3], masked.data[i + 3])
+            if (masked.data[i + 3]) { data.data[i] = masked.data[i]; data.data[i + 1] = masked.data[i + 1]; data.data[i + 2] = masked.data[i + 2] }
+            data.data[i + 3] = alpha
+            const coverage = alpha ? Math.round(masked.data[i + 3] * 255 / alpha) : 0
+            maskPixels[i] = maskPixels[i + 1] = maskPixels[i + 2] = coverage; maskPixels[i + 3] = 255
+          }
+          out.mask = { left: out.left, top: out.top, right: out.right, bottom: out.bottom, disabled: !m.enabled, positionRelativeToLayer: false, defaultColor: 0, userMaskDensity: 1, userMaskFeather: 0, imageData: { width: c.width, height: c.height, data: maskPixels } }
+        } else {
+          const img = await loadImage(m.src), c = allocate(Math.max(1, Math.round(m.width)), Math.max(1, Math.round(m.height))); c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
+          out.mask = { ...out.mask, left: Math.round(m.x), top: Math.round(m.y), right: Math.round(m.x) + c.width, bottom: Math.round(m.y) + c.height, disabled: !m.enabled, positionRelativeToLayer: false, defaultColor: m.defaultColor, userMaskDensity: m.density, userMaskFeather: m.feather, imageData: c.getContext('2d')!.getImageData(0, 0, c.width, c.height) }
+        }
       } else out.mask = undefined
       if (layer.smart && !preserved) {
         const nested = await exportPsd({ ...layer.smart, sourceId: undefined }, false, depth + 1), id = uid()
         linkedFiles.push({ id, name: `${layer.name}.psd`, type: '8BPS', creator: '8BIM', data: new Uint8Array(await nested.arrayBuffer()) })
         const a = layer.rotation * Math.PI / 180, cx = layer.x + layer.width / 2, cy = layer.y + layer.height / 2
-        const corners = (layer.warp || [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]).flatMap(p => { const x = (p.x - .5) * layer.width, y = (p.y - .5) * layer.height; return [cx + x * Math.cos(a) - y * Math.sin(a), cy + x * Math.sin(a) + y * Math.cos(a)] })
+        const quad = layer.warp || [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]
+        const order = layer.flipX && layer.flipY ? [2, 3, 0, 1] : layer.flipX ? [1, 0, 3, 2] : layer.flipY ? [3, 2, 1, 0] : [0, 1, 2, 3]
+        const corners = order.map(i => quad[i]).flatMap(p => { const x = (p.x - .5) * layer.width, y = (p.y - .5) * layer.height; return [cx + x * Math.cos(a) - y * Math.sin(a), cy + x * Math.sin(a) + y * Math.cos(a)] })
         out.placedLayer = { id, type: 'raster', width: layer.smart.width, height: layer.smart.height, transform: corners, resolution: { units: 'Density', value: layer.smart.dpi || 72 } }
       }
       output.push(out)

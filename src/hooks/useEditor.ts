@@ -1,10 +1,11 @@
 import { loadPreferences } from '../engine/preferences'
 import { useCallback, useRef, useState } from 'react'
 import type { EditorDocument, HistoryEntry, Layer } from '../types'
-import { descendants } from '../engine/document'
+import { descendants, isLayerLocked } from '../engine/document'
 import { ReplaceDocumentCommand, trimHistory } from '../engine/history'
 import { pruneImageCache } from '../engine/render'
 
+export interface EditorSession { document: EditorDocument; entries: HistoryEntry[]; index: number; selectedId: string | null }
 export function useEditor(initial: EditorDocument) {
   const initialSelection = initial.layers.find(l => l.kind === 'image')?.id || initial.layers.at(-1)?.id || null
   const [selectedId, setSelectionState] = useState<string | null>(initialSelection)
@@ -38,6 +39,7 @@ export function useEditor(initial: EditorDocument) {
   const patchLayer = useCallback((id: string, patch: Partial<Layer>, label = 'Изменение слоя', temporary = false) => {
     change(d => {
       const target = d.layers.find(l => l.id === id); if (!target) return d
+      if (isLayerLocked(d, id) && Object.keys(patch).some(k => !['locked', 'visible', 'expanded', 'name'].includes(k))) return d
       const children = target.kind === 'group' ? descendants(d, id) : new Set<string>()
       const dx = (patch.x ?? target.x) - target.x, dy = (patch.y ?? target.y) - target.y
       return { ...d, layers: d.layers.map(l => {
@@ -67,6 +69,12 @@ export function useEditor(initial: EditorDocument) {
     entriesRef.current = e; indexRef.current = 0; setEntries(e); setIndex(0); setCurrent(doc)
     pruneImageCache([doc])
   }, [setCurrent])
-  return { document, documentRef, selectedId, setSelectedId, change, patchLayer, finish, undo, redo, reset, travel, entries, index, canUndo: index > 0, canRedo: index < entries.length - 1 }
+  const snapshot = useCallback((): EditorSession => ({ document: documentRef.current, entries: entriesRef.current, index: indexRef.current, selectedId: selectionRef.current }), [])
+  const restore = useCallback((session: EditorSession) => {
+    entriesRef.current = session.entries; indexRef.current = session.index; selectionRef.current = session.selectedId
+    setEntries(session.entries); setIndex(session.index); setSelectionState(session.selectedId); setCurrent(session.document)
+    pruneImageCache(session.entries.map(e => e.document))
+  }, [setCurrent])
+  return { document, documentRef, snapshot, restore, selectedId, setSelectedId, change, patchLayer, finish, undo, redo, reset, travel, entries, index, canUndo: index > 0, canRedo: index < entries.length - 1 }
 }
 export type Editor = ReturnType<typeof useEditor>

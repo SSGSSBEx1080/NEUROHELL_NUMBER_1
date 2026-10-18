@@ -119,3 +119,9 @@ export function descendants(doc: EditorDocument, id: string): Set<string> {
 export function effectiveLayers(doc: EditorDocument): Layer[] {
   return doc.layers.filter(l => { let p: Layer | undefined = l; const seen = new Set<string>(); while (p) { if (!p.visible || p.locked || seen.has(p.id)) return false; seen.add(p.id); p = doc.layers.find(v => v.id === p!.parentId) } return l.kind !== 'group' })
 }
+
+export function isLayerLocked(doc: EditorDocument, id: string) {
+  let layer = doc.layers.find(l => l.id === id); const seen = new Set<string>()
+  while (layer) { if (layer.locked || seen.has(layer.id)) return true; seen.add(layer.id); layer = doc.layers.find(l => l.id === layer!.parentId) }
+  return false
+}

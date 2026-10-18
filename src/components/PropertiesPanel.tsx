@@ -1,6 +1,7 @@
+import { descendants } from '../engine/document'
 import { useFonts } from '../hooks/useFonts'
 import { useFont } from '../engine/fonts'
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { AlignCenter, AlignLeft, AlignRight, Bold, ChevronDown, ChevronRight, FlipHorizontal2, FlipVertical2, Image, Italic, Link2, LockKeyhole, Maximize, Palette, RotateCcw, SlidersHorizontal, Sparkles, Type, Unlink2, Upload } from 'lucide-react'
 import { DEFAULT_ADJUSTMENTS, type Layer, type ToolSettings } from '../types'
 import type { Editor } from '../hooks/useEditor'
@@ -16,6 +17,9 @@ interface Props {
   onFitLayer: () => void
   onImport: () => void
   onAddText: () => void
+  onMask: () => void
+  onOpenSmart: () => void
+  onParent: (id: string | null) => void
   settings: ToolSettings
   setSettings: (patch: Partial<ToolSettings>) => void
   busy: boolean
@@ -29,7 +33,8 @@ const presets = [
   { name: 'Плёнка', filter: 'sepia(.25) contrast(.8)', values: { sepia: 25, contrast: -20, saturation: -15 } },
 ]
 
-export function PropertiesPanel({ editor, layer, onStyle, onFonts, onExtractText, onRemoveBackground, onFitLayer, onImport, onAddText, settings, setSettings, busy }: Props) {
+export function PropertiesPanel({ editor, layer, onStyle, onFonts, onExtractText, onRemoveBackground, onFitLayer, onImport, onAddText, onMask, onOpenSmart, onParent, settings, setSettings, busy }: Props) {
+  useLayoutEffect(() => { if (layer?.kind === 'text') setTab('properties') }, [layer?.id, layer?.kind])
   const fonts = useFonts()
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
   const [linked, setLinked] = useState(true)
@@ -56,23 +61,26 @@ export function PropertiesPanel({ editor, layer, onStyle, onFonts, onExtractText
         <div className="property-section"><div className="section-heading">Цвет фона</div><ColorField label="Цвет фона холста" value={doc.background} onChange={background => editor.change(d => ({ ...d, background }), '', true)} onCommit={() => editor.finish('Цвет фона холста')} /><label className="checkbox-row"><input type="checkbox" checked={doc.background === 'transparent'} onChange={e => editor.change(d => ({ ...d, background: e.target.checked ? 'transparent' : '#ffffff' }), 'Прозрачность холста')} />Прозрачный фон</label></div>
         <div className="property-section"><div className="section-heading">С чего начнём?</div><button className="action-button primary-action" onClick={onImport}><Upload size={15} />Добавить изображение<span>↗</span></button><button className="action-button" onClick={onAddText}><Type size={15} />Добавить текст<span>T</span></button><p className="panel-note">Или просто перетащи файл на холст.<br />PNG, JPEG, WebP — до 25 МБ.</p></div>
       </> : <>
-        <div className="object-heading"><span className="object-icon">{layer.kind === 'text' ? <Type size={18} /> : layer.kind === 'image' ? <Image size={18} /> : <Maximize size={18} />}</span><div><strong>{layer.kind === 'text' ? 'Текстовый слой' : layer.kind === 'image' ? 'Изображение' : 'Фигура'}</strong><span>{layer.name}</span></div>{layer.locked ? <LockKeyhole size={14} /> : <span className="small-badge">{layer.kind === 'image' ? 'РАСТР' : 'ВЕКТОР'}</span>}</div>
+        <div className="object-heading"><span className="object-icon">{layer.kind === 'text' ? <Type size={18} /> : layer.kind === 'image' ? <Image size={18} /> : <Maximize size={18} />}</span><div><strong>{layer.smart ? 'Смарт-объект' : layer.kind === 'group' ? 'Группа слоёв' : layer.kind === 'text' ? 'Текстовый слой' : layer.kind === 'image' ? 'Изображение' : 'Фигура'}</strong><span>{layer.name}</span></div>{layer.locked ? <LockKeyhole size={14} /> : <span className="small-badge">{layer.smart ? 'SMART' : layer.kind === 'group' ? 'ГРУППА' : layer.kind === 'image' ? 'РАСТР' : 'ВЕКТОР'}</span>}</div>
         {layer.locked && <div className="locked-notice"><LockKeyhole size={13} />Сними замок слоя, чтобы редактировать</div>}
         <button className="action-button style-open-button" disabled={layer.locked || busy} onClick={onStyle}><Sparkles size={14} />Стиль слоя<span>fx</span></button>
+        {layer.smart && <button className="action-button style-open-button" onClick={onOpenSmart}><Image size={14} />Редактировать содержимое<span>↗</span></button>}
         {layer.sourceText && <button className="action-button style-open-button" disabled={layer.locked || busy} onClick={onExtractText}><Type size={14} />Извлечь текст из PSD<span>↗</span></button>}
         <fieldset disabled={layer.locked || busy} className="properties-fieldset">
         {tab === 'properties' ? <>
+          {layer.mask && <div className="property-section mask-properties"><div className="section-heading">Маска слоя<button className="text-button" onClick={() => patch({ mask: undefined }, 'Удаление маски')}>Удалить</button></div><button className={`action-button ${settings.editMask ? 'primary-action' : ''}`} onClick={onMask}>{settings.editMask ? 'Рисуем по маске · кисть' : 'Редактировать маску'}</button><p className="panel-note">Чёрный скрывает, белый проявляет. X меняет цвета местами. Исходные пиксели не стираются.</p><label className="checkbox-row"><input type="checkbox" checked={layer.mask.enabled} onChange={e => patch({ mask: { ...layer.mask!, enabled: e.target.checked } }, 'Включение маски')} />Маска включена</label><label className="checkbox-row"><input type="checkbox" checked={layer.mask.linked} onChange={e => patch({ mask: { ...layer.mask!, linked: e.target.checked } }, 'Связь маски')} />Перемещать вместе со слоем</label><Slider label="Плотность маски" value={layer.mask.density * 100} onChange={v => patch({ mask: { ...layer.mask!, density: v / 100 } }, '', true)} onCommit={finish} /><Slider label="Растушёвка маски" value={layer.mask.feather} max={100} suffix=" px" onChange={v => patch({ mask: { ...layer.mask!, feather: v } }, '', true)} onCommit={finish} /></div>}
           <div className="property-section transform-section"><div className="section-heading">Трансформация<IconButton icon={linked ? Link2 : Unlink2} label={linked ? 'Отключить сохранение пропорций' : 'Сохранять пропорции'} active={linked} onClick={() => setLinked(!linked)} /></div>
             <div className="field-grid">
               <Field label="X" value={layer.x} onChange={x => patch({ x }, '', true)} onCommit={finish} />
               <Field label="Y" value={layer.y} onChange={y => patch({ y }, '', true)} onCommit={finish} />
-              <Field label="Ш" value={layer.width} min={1} onChange={v => setDimension('width', v)} onCommit={finish} />
-              <Field label="В" value={layer.height} min={1} onChange={v => setDimension('height', v)} onCommit={finish} />
-              <Field label="∠" value={layer.rotation} min={-360} max={360} suffix="°" onChange={rotation => patch({ rotation }, '', true)} onCommit={finish} />
-              <div className="transform-buttons"><IconButton icon={FlipHorizontal2} label="Отразить по горизонтали" onClick={() => patch({ flipX: !layer.flipX }, 'Отражение по горизонтали')} /><IconButton icon={FlipVertical2} label="Отразить по вертикали" onClick={() => patch({ flipY: !layer.flipY }, 'Отражение по вертикали')} /><IconButton icon={RotateCcw} label="Сбросить поворот" onClick={() => patch({ rotation: 0 }, 'Сброс поворота')} /></div>
+              <Field label="Ш" value={layer.width} disabled={layer.kind === 'group'} min={1} onChange={v => setDimension('width', v)} onCommit={finish} />
+              <Field label="В" value={layer.height} disabled={layer.kind === 'group'} min={1} onChange={v => setDimension('height', v)} onCommit={finish} />
+              <Field label="∠" value={layer.rotation} disabled={layer.kind === 'group'} min={-360} max={360} suffix="°" onChange={rotation => patch({ rotation }, '', true)} onCommit={finish} />
+              <div className="transform-buttons"><IconButton icon={FlipHorizontal2} disabled={layer.kind === 'group'} label="Отразить по горизонтали" onClick={() => patch({ flipX: !layer.flipX }, 'Отражение по горизонтали')} /><IconButton icon={FlipVertical2} disabled={layer.kind === 'group'} label="Отразить по вертикали" onClick={() => patch({ flipY: !layer.flipY }, 'Отражение по вертикали')} /><IconButton icon={RotateCcw} disabled={layer.kind === 'group'} label="Сбросить поворот" onClick={() => patch({ rotation: 0 }, 'Сброс поворота')} /></div>
             </div>
           {layer.warp && <button className="text-button" style={{ marginTop: 10 }} onClick={() => patch({ warp: undefined }, 'Сброс перспективы')}>Сбросить перспективу</button>}
           </div>
+          <div className="property-section layer-structure"><div className="section-heading">Структура слоя</div><Select aria-label="Родительская группа" value={layer.parentId || ''} onChange={e => onParent(e.target.value || null)}><option value="">Вне группы</option>{doc.layers.filter(l => l.kind === 'group' && l.id !== layer.id && !descendants(doc, layer.id).has(l.id)).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Select><label className="checkbox-row"><input type="checkbox" checked={!!layer.clipping} onChange={e => patch({ clipping: e.target.checked }, 'Обтравочная маска')} />Обтравка по нижнему слою</label>{layer.kind === 'group' && <label className="checkbox-row"><input type="checkbox" checked={!!layer.isolated} onChange={e => patch({ isolated: e.target.checked }, 'Изоляция группы')} />Изолировать наложение группы</label>}</div>
           {layer.kind === 'text' && <div className="property-section text-properties"><div className="section-heading">Свойства текста<Type size={13} /></div>
             <textarea aria-label="Текст слоя" className="text-content-field" value={layer.text || ''} onChange={e => patch({ text: e.target.value, height: Math.max(layer.height, e.target.value.split('\n').length * (layer.fontSize || 48) * (layer.lineHeight || 1.2)) }, '', true)} onBlur={() => editor.finish('Редактирование текста')} maxLength={20000} rows={3} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.currentTarget.blur() } }} />
             <div className="font-select-row"><Select aria-label="Шрифт" value={layer.fontFamily || 'Manrope'} onChange={e => { const fontFamily = e.target.value; void useFont(fontFamily).then(() => patch({ fontFamily }, 'Шрифт')) }}>{[...new Set([layer.fontFamily || 'Manrope', ...fonts])].map(f => <option key={f}>{f}</option>)}</Select><button className="compact-button" onClick={onFonts} title="Системные шрифты, TTF / OTF и Google Fonts" aria-label="Библиотека шрифтов">Aa+</button></div>
@@ -82,7 +90,7 @@ export function PropertiesPanel({ editor, layer, onStyle, onFonts, onExtractText
             <ColorField label="Цвет текста" value={layer.color} onChange={color => patch({ color }, '', true)} onCommit={finish} />
           </div>}
           {layer.kind === 'shape' && <div className="property-section"><div className="section-heading">Заливка<Palette size={13} /></div><ColorField label="Цвет фигуры" value={layer.color} onChange={color => patch({ color }, '', true)} onCommit={finish} />{layer.shape !== 'ellipse' && <Field label="Радиус" value={layer.radius || 0} min={0} max={2000} suffix="px" onChange={radius => patch({ radius }, '', true)} onCommit={finish} />}<div className="section-heading subheading">Обводка</div><div className="field-grid"><ColorField label="Цвет обводки" value={layer.strokeColor || '#ffffff'} onChange={strokeColor => patch({ strokeColor, strokeWidth: layer.strokeWidth || 2 }, '', true)} onCommit={finish} /><Field label="Толщ." value={layer.strokeWidth || 0} min={0} max={200} onChange={strokeWidth => patch({ strokeWidth, strokeColor: layer.strokeColor || '#ffffff' }, '', true)} onCommit={finish} /></div></div>}
-          {layer.kind === 'image' && <div className="property-section quick-actions"><div className="section-heading">Быстрые действия<Sparkles size={13} /></div>
+          {layer.kind === 'image' && !layer.smart && <div className="property-section quick-actions"><div className="section-heading">Быстрые действия<Sparkles size={13} /></div>
             <button className="action-button primary-action" onClick={onRemoveBackground} title="Локальное удаление связного фона по цветам углов изображения"><Sparkles size={15} /><strong>Удалить фон</strong><span className="local-tag">ЛОКАЛЬНО</span></button>
             <div className="quick-action-row"><button className="action-button" onClick={onFitLayer}><Maximize size={13} />Подогнать</button><button className={`action-button ${layer.adjustments.grayscale ? 'active' : ''}`} onClick={() => patch({ adjustments: { ...layer.adjustments, grayscale: layer.adjustments.grayscale ? 0 : 100 } }, 'Чёрно-белый фильтр')}><span className="bw-icon" />Чёрно-белое</button></div>
             <div className="tolerance-row"><span title="Больше допуск — больше близких цветов будет удалено">Допуск фона</span><input type="range" aria-label="Допуск удаления фона" min={1} max={75} value={settings.tolerance} onChange={e => setSettings({ tolerance: +e.target.value })} /><span>{settings.tolerance}%</span></div>

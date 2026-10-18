@@ -18,7 +18,7 @@ export function isOriginalAppearance(doc: EditorDocument) {
   const s = originalSource(doc); return !!s && sameVisual(doc, s.baseline)
 }
 export function isOriginalDocument(doc: EditorDocument) {
-  const s = originalSource(doc); return !!s && equal({ ...doc, name: '' }, { ...s.baseline, name: '' }, ignoredSave)
+  const s = originalSource(doc); return !!s && equal({ ...doc, name: '', id: '' }, { ...s.baseline, name: '', id: '' }, ignoredSave)
 }
 function remember(source: PsdSource) {
   sources.delete(source.id); sources.set(source.id, source)

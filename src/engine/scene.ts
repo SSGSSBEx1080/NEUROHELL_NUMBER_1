@@ -1,3 +1,4 @@
+import { isOriginalAppearance } from './psdSource'
 import type { EditorDocument } from '../types'
 import { renderDocument } from './render'
 /** One pending frame, latest state wins; never draw twice for a single pointer update. */
@@ -11,7 +12,7 @@ export class SceneRenderer {
   private prefix?: { layers: EditorDocument['layers']; background: string; width: number; height: number; canvas: HTMLCanvasElement }
   draw(ctx: CanvasRenderingContext2D, doc: EditorDocument, overrides: Map<string, HTMLCanvasElement>, activeId?: string) {
     const index = doc.layers.findIndex(l => l.id === activeId)
-    if (index <= 0 || doc.sourceId || doc.layers.some(l => l.parentId || l.kind === 'group' || l.clipping)) { renderDocument(ctx, doc, overrides); return }
+    if (index <= 0 || (doc.sourceId && isOriginalAppearance(doc)) || doc.layers.some(l => l.parentId || l.kind === 'group' || l.clipping)) { renderDocument(ctx, doc, overrides); return }
     const layers = doc.layers.slice(0, index), width = ctx.canvas.width, height = ctx.canvas.height, p = this.prefix
     if (!p || p.width !== width || p.height !== height || p.background !== doc.background || p.layers.length !== layers.length || p.layers.some((l, i) => l !== layers[i])) {
       const c = document.createElement('canvas'); c.width = width; c.height = height

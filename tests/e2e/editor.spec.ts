@@ -5,7 +5,8 @@ import { atnFixture } from '../fixtures'
 async function ready(page: Page) {
   await page.goto('/')
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await expect(page.locator('.save-indicator')).toContainText('Все изменения сохранены')
+  await page.getByTestId('open-demo').click()
+  await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена')
 }
 async function blank(page: Page) {
   await page.getByRole('button', { name: 'Создать новый проект', exact: true }).click()
@@ -123,8 +124,8 @@ test('portable project saves layers and restores autosaved edits after reload', 
   const project = JSON.parse(await readFile((await download.path())!, 'utf8'))
   expect(project.version).toBe(1); expect(project.layers).toHaveLength(1); expect(project.layers[0].src).toMatch(/^data:image\/png/)
   await page.getByRole('button', { name: 'Заблокировать: subject', exact: true }).click()
-  await expect(page.locator('.save-indicator')).toContainText('Все изменения сохранены')
-  await page.reload(); await expect(page.locator('.busy-overlay')).toBeHidden(); await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена')
+  await page.reload(); await expect(page.locator('.busy-overlay')).toBeHidden(); await page.getByTestId('restore-project').click(); await expect(page.locator('.busy-overlay')).toBeHidden(); await expect(page.locator('.layer-row')).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Разблокировать: subject', exact: true })).toBeVisible()
   await page.getByLabel('Открыть изображение или проект').setInputFiles({ name: 'saved.777', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) })
   await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()

@@ -30,6 +30,7 @@ watchdog.unref();
     page.on('console', message => { if (message.type() === 'error' || message.type() === 'warning') consoleMessages.push(message.text()); });
     await page.waitForURL('fsh777://studio/index.html', { timeout: 30000 });
     await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 });
+    await page.getByTestId('open-demo').click();
     await expect(page.locator('.layer-row')).toHaveCount(7, { timeout: 15000 });
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
     assert.equal(await page.evaluate(() => window.fsh777.desktop), true);
@@ -37,7 +38,8 @@ watchdog.unref();
     assert.equal(await app.evaluate(({ app }) => app.getPath('userData')), temp);
     progress('sandbox and custom protocol OK; intercept native save paths');
     // Do not return Session (a native, non-serializable object) from evaluate.
-    await app.evaluate(({ session }, directory) => {
+    await app.evaluate(({ session, dialog }, directory) => {
+      dialog.showSaveDialog = async (_window, options) => ({ canceled: false, filePath: directory + '/' + options.defaultPath.split(/[\\/]/).pop() });
       session.defaultSession.on('will-download', (_event, item) => { item.setSavePath(directory + '/' + item.getFilename()); });
     }, temp);
     for (const format of ['PNG', 'JPG', 'WEBP', 'PSD', 'PSB']) {
@@ -59,6 +61,12 @@ watchdog.unref();
     progress('save standard PSD using Ctrl+S');
     await page.keyboard.press('Control+s');
     await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/, { timeout: 30000 });
+    progress('repeat Ctrl+S atomically without truncation');
+    await page.keyboard.press('Control+s'); await expect(page.locator('.busy-overlay')).toBeHidden();
+    await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/);
+    progress('enumerate Windows fonts through trusted IPC');
+    const families = await page.evaluate(() => window.fsh777.listFonts()); assert.ok(families.length > 10);
+    assert.ok(families.some(f => /Arial|Segoe|Times/.test(f)));
     progress('save legacy .777 backup from File menu');
     await page.getByRole('button', { name: 'Файл', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click();
@@ -70,7 +78,7 @@ watchdog.unref();
     await page.getByLabel('Открыть изображение или проект').setInputFiles(path.join(temp, psd));
     await expect(page.getByRole('button', { name: 'Открыть рабочую копию', exact: true })).toBeVisible({ timeout: 30000 });
     await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click();
-    await expect(page.locator('.save-indicator')).toContainText('Все изменения сохранены', { timeout: 15000 });
+    await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена', { timeout: 15000 });
     await fs.mkdir('test-results', { recursive: true });
     await page.screenshot({ path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png' });
     assert.deepEqual(errors, []);

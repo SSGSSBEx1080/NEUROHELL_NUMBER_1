@@ -13,7 +13,7 @@
     "check": "tsc --noEmit",
     "desktop:dev": "npm run build && electron .",
     "desktop:windows": "npm run build && electron-builder --win --publish never",
-    "test:desktop-security": "node --test tests/desktop/security.test.cjs",
+    "test:desktop-security": "node --test tests/desktop/security.test.cjs tests/desktop/files.test.cjs",
     "test:desktop": "node tests/desktop/smoke.cjs"
   },
   "dependencies": {

@@ -115,32 +115,50 @@ export function renderDocument(ctx: CanvasRenderingContext2D, doc: EditorDocumen
     const image = images.get(original.composite); if (image) { ctx.drawImage(image, 0, 0, doc.width, doc.height); return }
   }
   if (doc.background !== 'transparent') { ctx.fillStyle = doc.background; ctx.fillRect(0, 0, doc.width, doc.height) }
-  const surface = () => { const c = document.createElement('canvas'); c.width = doc.width; c.height = doc.height; return c }
+  const transform = ctx.getTransform(), width = Math.max(1, Math.min(4096, Math.ceil(doc.width * Math.hypot(transform.a, transform.b)))), height = Math.max(1, Math.min(4096, Math.ceil(doc.height * Math.hypot(transform.c, transform.d))))
+  let allocated = 0
+  const surface = () => {
+    const bytes = width * height * 4
+    if (allocated + bytes > 192 * 1024 * 1024) throw new Error('Слишком много вложенных групп для этого размера. Уменьши масштаб просмотра или объедини часть групп перед экспортом.')
+    allocated += bytes
+    const c = document.createElement('canvas'); c.width = width; c.height = height
+    c.getContext('2d')!.scale(width / doc.width, height / doc.height); return c
+  }
+  const release = (c: HTMLCanvasElement) => { allocated -= c.width * c.height * 4; c.width = c.height = 1 }
   const draw = (target: CanvasRenderingContext2D, parentId?: string, depth = 0) => {
-    if (depth > 32) return
-    let base: HTMLCanvasElement | undefined
+    if (depth > 12) throw new Error('Превышена поддерживаемая вложенность групп')
     const siblings = doc.layers.filter(l => l.parentId === parentId)
+    const paint = (layer: Layer, out: CanvasRenderingContext2D) => {
+      if (layer.kind === 'group') {
+        if (!layer.isolated && layer.opacity === 1 && !layer.mask && layer.blendMode === 'source-over' && !hasStyles(layer.styles) && Object.values(layer.adjustments).every(v => v === 0)) { draw(out, layer.id, depth + 1); return }
+        const c = surface()
+        try { draw(c.getContext('2d')!, layer.id, depth + 1); renderLayer(out, { ...layer, kind: 'image', x: 0, y: 0, width: doc.width, height: doc.height }, c) } finally { release(c) }
+      } else {
+        const override = overrides?.get(layer.id)
+        renderLayer(out, override ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false } : layer, override)
+      }
+    }
     for (let i = 0; i < siblings.length; i++) {
       const layer = siblings[i]
-      if (layer.id === hideId || !layer.visible) { if (!layer.clipping) base = undefined; continue }
-      const paint = (out: CanvasRenderingContext2D) => {
-        if (layer.kind === 'group') {
-          if (!layer.isolated && layer.opacity === 1 && !layer.mask && layer.blendMode === 'source-over') { draw(out, layer.id, depth + 1); return }
-          const c = surface(); draw(c.getContext('2d')!, layer.id, depth + 1)
-          renderLayer(out, { ...layer, kind: 'image', x: 0, y: 0, width: doc.width, height: doc.height }, c)
-        } else {
-          const override = overrides?.get(layer.id)
-          renderLayer(out, override ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false } : layer, override)
-        }
-      }
-      if (layer.clipping) {
-        if (!base) continue
-        const c = surface(), x = c.getContext('2d')!; paint(x); x.globalCompositeOperation = 'destination-in'; x.drawImage(base, 0, 0)
-        target.save(); target.globalCompositeOperation = layer.blendMode; target.drawImage(c, 0, 0); target.restore()
-      } else {
-        paint(target); base = undefined
-        if (siblings[i + 1]?.clipping) { base = surface(); paint(base.getContext('2d')!) }
-      }
+      if (layer.clipping) continue // Orphan clipping layers have no visible base.
+      let end = i + 1; while (siblings[end]?.clipping) end++
+      if (!layer.visible || layer.id === hideId) { i = end - 1; continue }
+      if (end === i + 1) { paint(layer, target); continue }
+      // A clipping stack shares the base alpha and base opacity. Normalizing before
+      // blending avoids applying that alpha twice at semi-transparent edges.
+      const base = surface(); let group: HTMLCanvasElement | undefined
+      try {
+        paint({ ...layer, opacity: 1, blendMode: 'source-over' }, base.getContext('2d')!)
+        group = surface(); const x = group.getContext('2d', { willReadFrequently: true })!
+        x.drawImage(base, 0, 0, doc.width, doc.height)
+        const pixels = x.getImageData(0, 0, width, height)
+        for (let p = 3; p < pixels.data.length; p += 4) if (pixels.data[p]) pixels.data[p] = 255
+        x.putImageData(pixels, 0, 0)
+        for (let j = i + 1; j < end; j++) if (siblings[j].visible && siblings[j].id !== hideId) paint(siblings[j], x)
+        x.globalCompositeOperation = 'destination-in'; x.drawImage(base, 0, 0, doc.width, doc.height)
+        target.save(); target.globalAlpha = layer.opacity; target.globalCompositeOperation = layer.blendMode; target.drawImage(group, 0, 0, doc.width, doc.height); target.restore()
+      } finally { release(base); if (group) release(group) }
+      i = end - 1
     }
   }
   draw(ctx)
@@ -196,10 +214,17 @@ export async function exportCanvas(doc: EditorDocument, scale = 1, background?: 
 export function canvasBlob(canvas: HTMLCanvasElement, mime: string, quality = 0.95): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob(blob => !blob ? reject(new Error('Не удалось сформировать файл')) : blob.type !== mime ? reject(new Error('Этот формат экспорта не поддерживается. Выбери PNG.')) : resolve(blob), mime, quality))
 }
-export function downloadBlob(blob: Blob, name: string) {
+export async function downloadBlob(blob: Blob, name: string, options: { documentId?: string; saveAs?: boolean } = {}) {
+  if (window.fsh777?.saveFile) {
+    if (blob.size > 128 * 1024 * 1024) throw new Error('Файл больше 128 МиБ — уменьши масштаб экспорта')
+    const result = await window.fsh777.saveFile({ name, bytes: new Uint8Array(await blob.arrayBuffer()), ...options })
+    if (result.state !== 'completed') throw new Error(result.message || 'Сохранение отменено')
+    return result.name
+  }
   const url = URL.createObjectURL(blob)
-  const link = document.createElement('a'); link.href = url; link.download = name; link.click()
+  const link = document.createElement('a'); link.href = url; link.download = name; link.style.display = 'none'; document.body.append(link); link.click(); link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return name
 }
 export function bitmapLayer(layer: Layer, canvas: HTMLCanvasElement): Layer {
   const src = canvas.toDataURL('image/png')

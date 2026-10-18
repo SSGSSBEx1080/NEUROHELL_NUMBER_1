@@ -22,17 +22,19 @@ export async function listRecords<T>(store: string): Promise<T[]> {
   const db = await openDatabase()
   try { return await new Promise<T[]>((resolve, reject) => { const r = db.transaction(store).objectStore(store).getAll(); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error) }) } finally { db.close() }
 }
-export async function saveDocument(doc: EditorDocument, thumbnail?: string) {
+async function saveDocumentRecord(doc: EditorDocument, thumbnail?: string, current = true) {
   const db = await openDatabase()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('projects', 'readwrite'), store = tx.objectStore('projects')
-      store.put(doc, 'current')
-      store.put({ id: doc.id, name: doc.name, width: doc.width, height: doc.height, savedAt: Date.now(), thumbnail, document: doc } satisfies RecentProject, `recent:${doc.id}`)
+      if (current) store.put(doc, 'current')
+      const previous = store.get(`recent:${doc.id}`)
+      previous.onsuccess = () => { store.put({ id: doc.id, name: doc.name, width: doc.width, height: doc.height, savedAt: Date.now(), thumbnail: thumbnail || previous.result?.thumbnail, document: doc } satisfies RecentProject, `recent:${doc.id}`)
       const all = store.getAll()
       all.onsuccess = () => {
         const recent = (all.result as RecentProject[]).filter(v => v.document).sort((a, b) => b.savedAt - a.savedAt)
         for (const old of recent.slice(8)) store.delete(`recent:${old.id}`)
+      }
       }
       tx.oncomplete = () => resolve(); tx.onerror = tx.onabort = () => reject(tx.error)
     })
@@ -45,4 +47,16 @@ export async function loadDocument(): Promise<EditorDocument | null> {
 export async function recentProjects(): Promise<RecentProject[]> {
   const records = await listRecords<RecentProject>('projects')
   return records.filter(v => v.document && Number.isFinite(v.savedAt)).sort((a, b) => b.savedAt - a.savedAt).slice(0, 8)
+}
+
+export async function forgetRecent(id: string) {
+  const db = await openDatabase()
+  try { await new Promise<void>((resolve, reject) => { const tx = db.transaction('projects', 'readwrite'), store = tx.objectStore('projects'); store.delete(`recent:${id}`); const current = store.get('current'); current.onsuccess = () => { if (current.result?.id === id) store.delete('current') }; tx.oncomplete = () => resolve(); tx.onerror = tx.onabort = () => reject(tx.error) }) } finally { db.close() }
+}
+
+let pendingWrites = 0
+export const hasPendingWrites = () => pendingWrites > 0
+export async function saveDocument(doc: EditorDocument, thumbnail?: string, current = true) {
+  pendingWrites++
+  try { await saveDocumentRecord(doc, thumbnail, current) } finally { pendingWrites-- }
 }

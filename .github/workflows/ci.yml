@@ -24,6 +24,11 @@ jobs:
       - run: npm run test:e2e
         env:
           CI: 'true'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r tests/interop/requirements.txt
+      - run: python tests/interop/check_psd.py
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

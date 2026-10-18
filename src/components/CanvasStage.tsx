@@ -1,3 +1,4 @@
+import { duplicateLayers, subtree } from '../engine/layerOperations'
 import { FrameScheduler, SceneRenderer } from '../engine/scene'
 import { magneticPoint, polygonSelection, selectionMask, selectionPath } from '../engine/selection'
 import { brushStamp, strokeStamps } from '../engine/brush'
@@ -7,7 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Crosshair, Eraser, ScanLine, Sparkles, X } from 'lucide-react'
 import type { Editor } from '../hooks/useEditor'
 import { type EditorDocument, type Layer, type Point, type Quad, type Rect, type Selection, type Tool, type ToolSettings, MAX_LAYERS } from '../types'
-import { hitTest, localPoint, makeLayer, effectiveLayers } from '../engine/document'
+import { hitTest, localPoint, makeLayer, effectiveLayers, isLayerLocked } from '../engine/document'
 import { encodeBitmap, prepareDocument, isPrepared, rasterizeLayer, loadImage, clearRenderCaches, cacheImage, validateRasterBudget } from '../engine/render'
 
 interface Props {
@@ -33,6 +34,7 @@ interface Props {
   showPerformance: boolean
   rulers: boolean
   busy: boolean
+  onOpenSmart: (id: string) => void
 }
 type Drag =
   | { type: 'pan'; client: Point; pan: Point }
@@ -46,7 +48,7 @@ type Drag =
 const getRect = (a: Point, b: Point): Rect => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) })
 const isInput = (target: EventTarget | null) => target instanceof HTMLElement && !!target.closest('input,textarea,select,[contenteditable="true"],[role="dialog"]')
 
-export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, settings, setColor, zoom, setZoom, onEffectiveZoom, pan, setPan, selection, setSelection, onCrop, onPixelAction, onToast, onBusy, smooth, showPerformance, rulers, busy }: Props) {
+export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, settings, setColor, zoom, setZoom, onEffectiveZoom, pan, setPan, selection, setSelection, onCrop, onPixelAction, onToast, onBusy, smooth, showPerformance, rulers, busy, onOpenSmart }: Props) {
   const doc = editor.document
   const viewport = useRef<HTMLDivElement>(null)
   const artboard = useRef<HTMLDivElement>(null)
@@ -63,16 +65,18 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
   const polygon = useRef<Point[]>([]), [outline, setOutline] = useState<Point[]>([])
   const magnetic = useRef<ImageData | null>(null)
   const clone = useRef<{ id: string; point: Point; canvas: HTMLCanvasElement; offset?: Point } | null>(null)
+  const renderError = useRef('')
   const [frameTime, setFrameTime] = useState(0)
   const fit = Math.max(0.05, Math.min((size.width - (size.width < 600 ? 56 : 112)) / doc.width, (size.height - 138) / doc.height, 1))
   const scale = zoom ?? fit
   const left = (size.width - doc.width * scale) / 2 + pan.x
   const top = (size.height - doc.height * scale) / 2 + pan.y - 6
   const selected = doc.layers.find(l => l.id === selectedId)
-  const showTransform = selected && selected.visible && !selected.locked && tool === 'move' && selected.kind !== 'group'
+  const showTransform = selected && selected.visible && !isLayerLocked(doc, selected.id) && tool === 'move' && selected.kind !== 'group'
 
   useLayoutEffect(() => {
     if (!viewport.current) return
+    const initial = viewport.current.getBoundingClientRect(); setSize({ width: initial.width, height: initial.height })
     const resize = new ResizeObserver(([entry]) => setSize({ width: entry.contentRect.width, height: entry.contentRect.height }))
     resize.observe(viewport.current)
     return () => resize.disconnect()
@@ -92,7 +96,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       const ctx = el.getContext('2d')!
       ctx.setTransform(width / doc.width, 0, 0, height / doc.height, 0, 0)
       ctx.imageSmoothingEnabled = smooth; ctx.imageSmoothingQuality = 'high'
-      const start = performance.now(); renderer.current.draw(ctx, doc, overrides.current, selectedId || undefined)
+      const start = performance.now(); try { renderer.current.draw(ctx, doc, overrides.current, selectedId || undefined); renderError.current = '' } catch (error) { const message = error instanceof Error ? error.message : 'Ошибка отрисовки'; if (renderError.current !== message) onToast(message); renderError.current = message; return }
       if (showPerformance) setFrameTime(performance.now() - start)
     }
     if (isPrepared(doc)) scheduler.current.request(paint)
@@ -129,9 +133,9 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
   const inside = (p: Point) => p.x >= 0 && p.y >= 0 && p.x <= doc.width && p.y <= doc.height
   const redraw = () => setRevision(v => v + 1)
   const beginText = (layer: Layer) => {
-    if (layer.locked) return
+    if (isLayerLocked(doc, layer.id)) { onToast('Слой или его группа заблокированы'); return }
     onSelect(layer.id); setTool('move')
-    requestAnimationFrame(() => { const field = document.querySelector<HTMLTextAreaElement>('[aria-label="Текст слоя"]'); field?.focus(); field?.select() })
+    requestAnimationFrame(() => requestAnimationFrame(() => { const field = document.querySelector<HTMLTextAreaElement>('[aria-label="Текст слоя"]'); field?.focus(); field?.select() }))
   }
   const finishPolygon = () => { const next = polygonSelection(polygon.current, settings.feather || 0); if (next) setSelection(next); polygon.current = []; setOutline([]); magnetic.current = null }
   const snapMagnet = (p: Point) => magnetic.current ? magneticPoint(p, magnetic.current, canvas.current!.width / doc.width, canvas.current!.height / doc.height, 10) : p
@@ -156,19 +160,20 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
     const p = pointFrom(e)
     if (spaceDown || tool === 'hand' || e.button === 1) { drag.current = { type: 'pan', client: { x: e.clientX, y: e.clientY }, pan }; return }
     const handle = (e.target as Element).closest('[data-handle]')?.getAttribute('data-handle')
-    if (handle && selected && !selected.locked && tool === 'move') {
+    if (handle && selected && !isLayerLocked(doc, selected.id) && tool === 'move') {
       drag.current = { type: handle === 'rotate' ? 'rotate' : e.ctrlKey || e.metaKey ? 'distort' : 'resize', start: p, layer: { ...selected }, handle, before: doc }; return
     }
     if (!inside(p)) { if (tool === 'move') onSelect(null); return }
     if (tool === 'move') {
-      const hit = settings.autoSelect ? [...effectiveLayers(doc)].reverse().find(l => hitTest(l, p)) : selected
+      const selectedGroup = selected?.kind === 'group' && effectiveLayers(doc).some(l => subtree(doc, selected.id).has(l.id) && hitTest(l, p)) ? selected : undefined
+      const hit = selectedGroup || (settings.autoSelect ? [...effectiveLayers(doc)].reverse().find(l => hitTest(l, p)) : selected)
       onSelect(hit?.id || null)
-      if (hit && !hit.locked && hit.visible) {
+      if (hit && !isLayerLocked(doc, hit.id) && hit.visible) {
         if (e.altKey) {
           if (doc.layers.length >= MAX_LAYERS) { onToast('В одном проекте доступно до 100 слоёв'); return }
-          const copy = { ...hit, id: crypto.randomUUID(), name: `${hit.name} — копия`, locked: false }
-          editor.change(d => { const layers = [...d.layers]; layers.splice(layers.findIndex(l => l.id === hit.id) + 1, 0, copy); return { ...d, layers } }, '', true)
-          onSelect(copy.id); drag.current = { type: 'move', start: p, layer: copy, before: doc, duplicatedFrom: hit.id }
+          try { const result = duplicateLayers(doc, hit.id, 0), copy = result.document.layers.find(l => l.id === result.selectedId)!
+            editor.change(() => result.document, '', true); onSelect(copy.id); drag.current = { type: 'move', start: p, layer: copy, before: doc, duplicatedFrom: hit.id }
+          } catch (error) { onToast(error instanceof Error ? error.message : 'Не удалось дублировать') }
         } else drag.current = { type: 'move', start: p, layer: { ...hit }, before: doc }
       }
     } else if (tool === 'lasso') {
@@ -207,7 +212,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       if ((selected?.smart || selected?.kind === 'group') && !maskMode) return onToast('Открой содержимое смарт-объекта или выбери растровый слой')
       if (tool === 'clone' && (!selected || selected.kind !== 'image')) return onToast('Штамп работает на выбранном растровом слое. Alt+клик задаёт источник.')
       if (selected && !selected.visible) { onToast('Слой скрыт. Включи его видимость перед рисованием.'); return }
-      if (selected?.locked) { onToast('Слой заблокирован. Сначала снимите замок.'); return }
+      if (selected && isLayerLocked(doc, selected.id)) { onToast('Слой заблокирован. Сначала снимите замок.'); return }
       if (tool === 'eraser' && !selected) { onToast('Выберите слой для ластика'); return }
       if (tool === 'clone' && e.altKey && selected) { try { const source = await rasterizeLayer(selected); if (editor.documentRef.current.id !== doc.id) return; clone.current = { id: selected.id, point: localPoint(selected, p), canvas: source } } catch { onToast('Не удалось прочитать источник штампа'); return }; onToast('Источник штампа выбран. Рисуй без Alt.'); return }
       if (tool === 'clone' && clone.current?.id !== selected?.id) return onToast('Сначала Alt+клик по источнику на этом слое')
@@ -351,7 +356,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
 
   return <div ref={viewport} className={`canvas-viewport tool-${spaceDown ? 'hand' : tool} ${busy ? 'is-busy' : ''}`} data-testid="canvas-viewport"
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onPointerLeave={() => setCursor(null)}
-    onDoubleClick={e => { if (tool === 'polygon-lasso' || tool === 'magnetic-lasso') { finishPolygon(); return } if (tool !== 'move') return; const p = pointFrom(e); const hit = [...effectiveLayers(doc)].reverse().find(l => hitTest(l, p)); if (hit?.kind === 'text') beginText(hit) }}>
+    onDoubleClick={e => { if (tool === 'polygon-lasso' || tool === 'magnetic-lasso') { finishPolygon(); return } if (tool !== 'move') return; const p = pointFrom(e); const hit = [...effectiveLayers(doc)].reverse().find(l => hitTest(l, p)); if (hit?.kind === 'text') beginText(hit); else if (hit?.smart) onOpenSmart(hit.id) }}>
     {rulers && <><div className="ruler-corner"><Crosshair size={10} /></div><div className="ruler ruler-x">{xTicks.map(t => <span key={t} style={{ left: left + t * scale }}>{t}</span>)}</div><div className="ruler ruler-y">{yTicks.map(t => <span key={t} style={{ top: top + t * scale }}>{t}</span>)}</div></>}
     <div ref={artboard} className="artboard checkerboard" style={{ width: doc.width * scale, height: doc.height * scale, left, top }}>
       <div className="artboard-label"><span>Холст 1</span><span>{doc.width} × {doc.height}</span></div>
