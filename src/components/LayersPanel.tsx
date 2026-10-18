@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Circle, Copy, Eye, EyeOff, History, Layers, LockKeyhole, MoreHorizontal, Plus, Square, Trash2, Type, UnlockKeyhole } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Circle, Copy, Eye, EyeOff, History, Layers, LockKeyhole, Plus, Square, Trash2, Type, UnlockKeyhole } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
 import type { BlendMode, Layer } from '../types'
