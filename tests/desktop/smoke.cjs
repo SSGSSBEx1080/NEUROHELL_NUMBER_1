@@ -179,7 +179,6 @@ watchdog.unref()
     progress('record/replay a committed property change in native Windows')
     const xField = page.getByLabel('X', { exact: true }),
       xBefore = Number(await xField.inputValue())
-    await page.locator('.document-bar').click()
     await page.keyboard.press('Control+Alt+r')
     await page.getByLabel('Название новой записи').fill('Windows: тайпсет')
     await page.getByRole('button', { name: 'Начать запись', exact: true }).click()
@@ -188,7 +187,9 @@ watchdog.unref()
     await expect(page.getByRole('dialog').locator('.action-step')).toHaveCount(1)
     await page.getByRole('button', { name: 'Выполнить операцию', exact: true }).click()
     await expect(xField).toHaveValue(String(xBefore + 20))
-    await page.locator('.document-bar').click()
+    // On a narrow window the middle of the tab strip is the document-name input.
+    // Keep Ctrl+Z out of text editing; focus a real non-text UI control explicitly.
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
     await page.keyboard.press('Control+z')
     await expect(xField).toHaveValue(String(xBefore + 10))
     progress('save manga PSD through native atomic file writer')
@@ -212,6 +213,21 @@ watchdog.unref()
       'test-results/desktop-errors.txt',
       `${phase}\n${error.stack}\n${errors.join('\n')}\n${consoleMessages.join('\n')}`,
     )
+    if (page) {
+      const state = await page
+        .evaluate(() => ({
+          focus: {
+            tag: document.activeElement?.tagName,
+            label: document.activeElement?.getAttribute('aria-label'),
+          },
+          dialogs: Array.from(document.querySelectorAll('[role=dialog]')).map((node) =>
+            node.textContent?.slice(0, 400),
+          ),
+          viewport: [innerWidth, innerHeight],
+        }))
+        .catch(() => null)
+      consoleMessages.push(`UI state: ${JSON.stringify(state)}`)
+    }
     if (page)
       await page
         .screenshot({ path: 'test-results/desktop-failure.png', timeout: 5000 })
