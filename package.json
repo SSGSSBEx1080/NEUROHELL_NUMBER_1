@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/generate-notices.cjs && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "start": "vite --host 127.0.0.1 --port 5173 --strictPort --open",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:windows": "npm run build && electron-builder --win --publish never",
+    "test:desktop-security": "node --test tests/desktop/security.test.cjs",
+    "test:desktop": "node tests/desktop/smoke.cjs"
   },
   "dependencies": {
     "ag-psd": "^31.0.3",
@@ -25,11 +29,20 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
     "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "main": "desktop/main.cjs",
+  "description": "Independent local-first graphics editor with layers, text and PSD/PSB interchange",
+  "author": "FSH 777 contributors",
+  "license": "MIT",
+  "overrides": {
+    "global-agent": "^4.1.3"
   }
 }

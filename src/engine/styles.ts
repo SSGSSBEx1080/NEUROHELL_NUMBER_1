@@ -40,9 +40,9 @@ const surface = (w: number, h: number) => { const c = document.createElement('ca
 export function clearStyleCache() { cache.clear() }
 
 /** Original raster layer styles. Cached separately from position/opacity for smooth dragging. */
-export function renderStyled(ctx: CanvasRenderingContext2D, layer: Layer, draw: (ctx: CanvasRenderingContext2D) => void) {
+export function renderStyled(ctx: CanvasRenderingContext2D, layer: Layer, draw: (ctx: CanvasRenderingContext2D) => void, volatile = false) {
   let entry = cache.get(layer.id)
-  if (!entry || !equalContent(entry.layer, layer)) {
+  if (volatile || !entry || !equalContent(entry.layer, layer)) {
     const s = layer.styles!, padding = Math.ceil(Math.max(s.stroke.enabled ? s.stroke.size : 0, s.shadow.enabled ? s.shadow.blur * 2 + Math.max(Math.abs(s.shadow.x), Math.abs(s.shadow.y)) : 0, s.glow.enabled ? s.glow.blur * 2 : 0)) + 2
     const scale = Math.min(1, 4096 / (layer.width + padding * 2), 4096 / (layer.height + padding * 2))
     const pad = Math.ceil(padding * scale), w = Math.max(1, Math.ceil(layer.width * scale) + pad * 2), h = Math.max(1, Math.ceil(layer.height * scale) + pad * 2)

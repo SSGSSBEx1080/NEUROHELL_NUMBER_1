@@ -1,0 +1,39 @@
+appId: app.fsh777.editor
+productName: ФШ 777
+copyright: Copyright © 2026 FSH 777 contributors
+asar: true
+npmRebuild: false
+directories:
+  output: release
+files:
+  - dist/**/*
+  - desktop/**/*
+  - package.json
+  - LICENSE
+  - THIRD_PARTY_NOTICES.md
+  - THIRD_PARTY_LICENSES.txt
+  - '!node_modules/**'
+win:
+  icon: desktop/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: FSH777-${version}-Windows-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+  installerLanguages: [ru_RU, en_US]
+  language: 1049
+linux:
+  icon: desktop/icon.png
+  category: Graphics
+  target: [AppImage]
+mac:
+  category: public.app-category.graphics-design
+  target: [dmg]

@@ -66,3 +66,27 @@ describe('Raster memory guard', () => {
     expect(sourceDimensions(`data:image/png;base64,${Buffer.from(b).toString('base64')}`)).toEqual({ width: 320, height: 200 })
   })
 })
+
+describe('Perspective geometry', () => {
+  it('maps all four corners and reverses points through the homography', async () => {
+    const { homography, invertMatrix, project } = await import('../../src/engine/projection')
+    const q = [{ x: 0.1, y: 0 }, { x: 0.8, y: 0.2 }, { x: 1, y: 1 }, { x: 0, y: 0.9 }] as const
+    const matrix = homography([...q]), inverse = invertMatrix(matrix)
+    for (const [x, y, i] of [[0, 0, 0], [1, 0, 1], [1, 1, 2], [0, 1, 3]]) { const out = project(matrix, x, y); expect(out.x).toBeCloseTo(q[i].x); expect(out.y).toBeCloseTo(q[i].y) }
+    const point = project(matrix, 0.3, 0.4), roundtrip = project(inverse, point.x, point.y)
+    expect(roundtrip.x).toBeCloseTo(0.3); expect(roundtrip.y).toBeCloseTo(0.4)
+  })
+  it('rejects collapsed, concave and malicious quads', async () => {
+    const { validQuad, rectangleQuad } = await import('../../src/engine/projection')
+    expect(validQuad(rectangleQuad())).toBe(true)
+    expect(validQuad([{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }])).toBe(false)
+    expect(validQuad([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 1, y: 0 }, { x: 0, y: 1 }])).toBe(false)
+    expect(validQuad([{ x: Infinity, y: 0 }, ...rectangleQuad().slice(1)])).toBe(false)
+  })
+  it('hit-tests distorted layers and persists perspective in .777', () => {
+    const layer = makeLayer({ x: 50, y: 50, width: 100, height: 100, warp: [{ x: 0, y: 0 }, { x: 0.8, y: 0.3 }, { x: 1, y: 1 }, { x: 0, y: 1 }], textScaleX: 1.8 })
+    expect(hitTest(layer, { x: 140, y: 60 })).toBe(false); expect(hitTest(layer, { x: 80, y: 100 })).toBe(true)
+    const parsed = parseProject({ ...newDocument(), layers: [layer] })
+    expect(parsed.layers[0].warp).toEqual(layer.warp); expect(parsed.layers[0].textScaleX).toBe(1.8)
+  })
+})

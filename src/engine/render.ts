@@ -1,3 +1,4 @@
+import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
@@ -44,7 +45,7 @@ export async function prepareDocument(doc: EditorDocument) {
   await document.fonts.ready
 }
 export function pruneImageCache(documents: EditorDocument[]) {
-  clearStyleCache()
+  clearStyleCache(); clearWarpCache()
   const keep = new Set(documents.flatMap(d => d.layers.map(l => l.src)))
   for (const src of images.keys()) if (!keep.has(src)) images.delete(src)
 }
@@ -62,12 +63,15 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
     ctx.rotate(layer.rotation * Math.PI / 180)
     ctx.translate(-layer.width / 2, -layer.height / 2)
   }
+  if (layer.warp && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
+    renderWarped(ctx, layer, base => renderLayer(base, { ...layer, warp: undefined }, override, true), !!override); ctx.restore(); return
+  }
   if (layer.flipX || layer.flipY) {
     ctx.translate(layer.flipX ? layer.width : 0, layer.flipY ? layer.height : 0)
     ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1)
   }
-  if (!override && hasStyles(layer.styles) && (layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
-    renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, undefined, true))
+  if (hasStyles(layer.styles) && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
+    renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, override, true), !!override)
     ctx.restore(); return
   }
   ctx.filter = filterString(layer)
@@ -85,6 +89,8 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
       ctx.strokeStyle = layer.strokeColor; ctx.lineWidth = layer.strokeWidth; ctx.stroke()
     }
   } else if (layer.kind === 'text') {
+    const textScale = layer.textScaleX || 1
+    ctx.scale(textScale, 1)
     const size = layer.fontSize || 48
     ctx.font = `${layer.italic ? 'italic ' : ''}${layer.fontWeight || 500} ${size}px "${layer.fontFamily || 'Manrope'}"`
     ctx.fillStyle = layer.color
@@ -92,7 +98,7 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
     ctx.textAlign = layer.textAlign || 'left'
     if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
     const x = layer.textAlign === 'center' ? layer.width / 2 : layer.textAlign === 'right' ? layer.width : 0
-    ;(layer.text || '').split('\n').forEach((line, i) => ctx.fillText(line, x, i * size * (layer.lineHeight || 1.2)))
+    ;(layer.text || '').split('\n').forEach((line, i) => ctx.fillText(line, x / textScale, i * size * (layer.lineHeight || 1.2)))
   }
   ctx.restore()
 }
@@ -113,7 +119,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   canvas.height = Math.max(1, Math.round(layer.height * scale))
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
   ctx.scale(canvas.width / layer.width, canvas.height / layer.height)
-  renderLayer(ctx, { ...layer, styles: undefined }, undefined, true)
+  renderLayer(ctx, { ...layer, styles: undefined, warp: undefined }, undefined, true)
   return canvas
 }
 export async function exportCanvas(doc: EditorDocument, scale = 1, background?: string) {

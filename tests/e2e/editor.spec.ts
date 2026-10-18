@@ -177,3 +177,45 @@ test('cancelled style edits do not mutate the layer and tablet chrome stays usab
   await expect(page.getByRole('dialog')).toBeHidden(); await expect(page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true })).toBeDisabled()
   await expect(page.locator('.small-screen-note')).toBeHidden(); expect((await artboard(page)).width).toBeGreaterThan(500)
 })
+
+test('Alt-drag duplicates a layer in one undoable gesture', async ({ page }) => {
+  await ready(page); await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click(); await drag(page, [50, 50], [150, 130])
+  await page.keyboard.down('Alt'); await drag(page, [80, 80], [130, 100]); await page.keyboard.up('Alt')
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(page.locator('.layer-row.selected .layer-name')).toHaveText('Прямоугольник — копия')
+  await expect(page.getByRole('spinbutton', { name: 'X', exact: true })).toHaveValue('100')
+  await expect(page.getByRole('spinbutton', { name: 'Y', exact: true })).toHaveValue('70')
+  await page.keyboard.press('Control+z'); await expect(page.locator('.layer-row')).toHaveCount(1)
+  await page.keyboard.press('Control+Shift+z'); await expect(page.locator('.layer-row')).toHaveCount(2)
+})
+
+test('corner resize is proportional by default and free with Shift', async ({ page }) => {
+  await ready(page); await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click(); await drag(page, [50, 50], [150, 100])
+  const resize = async (dx: number, dy: number) => {
+    const h = (await page.locator('[data-handle=se]').boundingBox())!
+    await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await page.mouse.down(); await page.mouse.move(h.x + h.width / 2 + dx, h.y + h.height / 2 + dy, { steps: 8 }); await page.mouse.up()
+  }
+  await resize(100, 10)
+  const width = Number(await page.getByRole('spinbutton', { name: 'Ш', exact: true }).inputValue()), height = Number(await page.getByRole('spinbutton', { name: 'В', exact: true }).inputValue())
+  expect(width).toBeCloseTo(200, 0); expect(width / height).toBeCloseTo(2, 2)
+  await page.keyboard.down('Shift'); await resize(30, 10); await page.keyboard.up('Shift')
+  const nextW = Number(await page.getByRole('spinbutton', { name: 'Ш', exact: true }).inputValue()), nextH = Number(await page.getByRole('spinbutton', { name: 'В', exact: true }).inputValue())
+  expect(nextW).toBeCloseTo(230, 0); expect(nextH).toBeCloseTo(110, 0)
+})
+
+test('Ctrl corner distortion changes real pixels and survives PSD export', async ({ page }) => {
+  await ready(page); await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click(); await drag(page, [50, 50], [150, 150])
+  const h = (await page.locator('[data-handle=ne]').boundingBox())!
+  await page.keyboard.down('Control'); await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await page.mouse.down(); await page.mouse.move(h.x + h.width / 2 - 20, h.y + h.height / 2 + 30, { steps: 5 }); await page.mouse.up(); await page.keyboard.up('Control')
+  await expect.poll(async () => (await pixel(page, 140, 60))[3]).toBe(0)
+  await expect.poll(async () => (await pixel(page, 80, 100))[3]).toBe(255)
+  await expect(page.getByRole('button', { name: 'Сбросить перспективу' })).toBeVisible()
+  const file = await exportFile(page, 'PSD')
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({ name: 'perspective.psd', mimeType: 'application/octet-stream', buffer: file.bytes })
+  await page.getByRole('button', { name: 'Открыть рабочую копию' }).click()
+  await expect.poll(async () => (await pixel(page, 140, 60))[3]).toBe(0)
+  await expect.poll(async () => (await pixel(page, 80, 100))[3]).toBe(255)
+})

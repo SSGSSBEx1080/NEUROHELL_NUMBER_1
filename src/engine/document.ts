@@ -1,3 +1,4 @@
+import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
 import { DEFAULT_ADJUSTMENTS, MAX_DIMENSION, MAX_LAYERS, type EditorDocument, type Layer, type Point } from '../types'
 
@@ -27,11 +28,13 @@ export function demoDocument(): EditorDocument {
   return doc
 }
 
-export function localPoint(layer: Layer, point: Point): Point {
+export function localPoint(layer: Layer, point: Point, undoWarp = true): Point {
   const angle = -layer.rotation * Math.PI / 180
   const dx = point.x - layer.x - layer.width / 2
   const dy = point.y - layer.y - layer.height / 2
-  return { x: dx * Math.cos(angle) - dy * Math.sin(angle) + layer.width / 2, y: dx * Math.sin(angle) + dy * Math.cos(angle) + layer.height / 2 }
+  const local = { x: dx * Math.cos(angle) - dy * Math.sin(angle) + layer.width / 2, y: dx * Math.sin(angle) + dy * Math.cos(angle) + layer.height / 2 }
+  if (layer.warp && undoWarp) { const p = project(invertMatrix(homography(layer.warp)), local.x / layer.width, local.y / layer.height); return { x: p.x * layer.width, y: p.y * layer.height } }
+  return local
 }
 export function hitTest(layer: Layer, point: Point): boolean {
   if (!layer.visible || layer.locked) return false
@@ -66,7 +69,7 @@ export function parseProject(input: unknown): EditorDocument {
       width: finite(l.width, 1, 16384, 100), height: finite(l.height, 1, 16384, 100),
       rotation: finite(l.rotation, -360, 360, 0), opacity: finite(l.opacity, 0, 1, 1),
       blendMode: blends.has(String(l.blendMode)) ? l.blendMode as Layer['blendMode'] : 'source-over',
-      styles: normalizeStyles(l.styles), sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
+      warp: validQuad(l.warp) ? l.warp : undefined, textScaleX: finite(l.textScaleX, 0.01, 100, 1), styles: normalizeStyles(l.styles), sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff', src: typeof l.src === 'string' ? l.src : undefined,
       text: typeof l.text === 'string' ? l.text.slice(0, 20000) : undefined,
       fontFamily: fonts.has(String(l.fontFamily)) ? String(l.fontFamily) : 'Manrope',

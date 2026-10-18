@@ -1,0 +1,50 @@
+name: Windows application
+on:
+  push:
+    branches: [main, 'arena/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:desktop-security
+      - run: npm run build
+      - run: npm run test:desktop
+      - run: npm run desktop:windows
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem release -File | Where-Object { $_.Extension -in '.exe','.zip' } | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $($_.Name)"
+          } | Out-File -FilePath release/SHA256SUMS.txt -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FSH777-Windows-x64
+          path: |
+            release/*.exe
+            release/*.zip
+            release/SHA256SUMS.txt
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: desktop-test-diagnostics
+          path: test-results/
+          retention-days: 7

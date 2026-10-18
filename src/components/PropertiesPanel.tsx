@@ -67,6 +67,7 @@ export function PropertiesPanel({ editor, layer, onStyle, onExtractText, onRemov
               <Field label="∠" value={layer.rotation} min={-360} max={360} suffix="°" onChange={rotation => patch({ rotation }, '', true)} onCommit={finish} />
               <div className="transform-buttons"><IconButton icon={FlipHorizontal2} label="Отразить по горизонтали" onClick={() => patch({ flipX: !layer.flipX }, 'Отражение по горизонтали')} /><IconButton icon={FlipVertical2} label="Отразить по вертикали" onClick={() => patch({ flipY: !layer.flipY }, 'Отражение по вертикали')} /><IconButton icon={RotateCcw} label="Сбросить поворот" onClick={() => patch({ rotation: 0 }, 'Сброс поворота')} /></div>
             </div>
+          {layer.warp && <button className="text-button" style={{ marginTop: 10 }} onClick={() => patch({ warp: undefined }, 'Сброс перспективы')}>Сбросить перспективу</button>}
           </div>
           {layer.kind === 'text' && <div className="property-section text-properties"><div className="section-heading">Типографика<Type size={13} /></div>
             <textarea aria-label="Текст слоя" className="text-content-field" value={layer.text || ''} onChange={e => patch({ text: e.target.value, height: Math.max(layer.height, e.target.value.split('\n').length * (layer.fontSize || 48) * (layer.lineHeight || 1.2)) }, '', true)} onBlur={() => editor.finish('Редактирование текста')} rows={2} />

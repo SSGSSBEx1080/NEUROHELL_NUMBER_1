@@ -39,6 +39,8 @@ export interface Layer {
   radius?: number
   strokeColor?: string
   strokeWidth?: number
+  warp?: Quad
+  textScaleX?: number
   styles?: LayerStyles
   sourceText?: string
   flipX?: boolean
@@ -80,3 +82,5 @@ export interface LayerStyles {
   overlay: { enabled: boolean; color: string; opacity: number }
   gradient: { enabled: boolean; from: string; to: string; angle: number; opacity: number }
 }
+
+export type Quad = [Point, Point, Point, Point]

@@ -80,6 +80,7 @@ export default function App() {
     const action: StudioAction = { id: uid(), name: `${selected.name} · цвет`, source: 'Мой набор', steps: [{ name: 'Цветокоррекция слоя', enabled: true, command: { type: 'adjust', values: { ...selected.adjustments } } }] }
     setActions(a => [...a, action]); toastMessage('Цветокоррекция сохранена как операция')
   }
+  useEffect(() => window.fsh777?.onDownloadStatus(({ state, name }) => { toastMessage(state === 'completed' ? `Файл сохранён: ${name}` : state === 'cancelled' ? 'Сохранение отменено' : 'Не удалось записать файл. Проверь свободное место и права доступа.') }), [toastMessage])
   const fitView = useCallback(() => { setZoom(null); setPan({ x: 0, y: 0 }) }, [])
   const openDocument = (next: EditorDocument) => {
     editor.reset(next); setSelectedId(next.layers.find(l => l.kind === 'image')?.id || next.layers.at(-1)?.id || null)

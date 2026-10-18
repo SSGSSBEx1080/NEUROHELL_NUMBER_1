@@ -1,7 +1,8 @@
+import { rectangleQuad, validQuad } from '../engine/projection'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Crosshair, Eraser, ScanLine, Sparkles, X } from 'lucide-react'
 import type { Editor } from '../hooks/useEditor'
-import { type EditorDocument, type Layer, type Point, type Rect, type Tool, type ToolSettings, MAX_LAYERS } from '../types'
+import { type EditorDocument, type Layer, type Point, type Quad, type Rect, type Tool, type ToolSettings, MAX_LAYERS } from '../types'
 import { hitTest, localPoint, makeLayer } from '../engine/document'
 import { bitmapLayer, prepareDocument, rasterizeLayer, renderDocument, validateRasterBudget } from '../engine/render'
 
@@ -28,7 +29,7 @@ interface Props {
 }
 type Drag =
   | { type: 'pan'; client: Point; pan: Point }
-  | { type: 'move' | 'resize' | 'rotate'; start: Point; layer: Layer; handle?: string; before: EditorDocument }
+  | { type: 'move' | 'resize' | 'rotate' | 'distort'; start: Point; layer: Layer; handle?: string; before: EditorDocument; duplicatedFrom?: string }
   | { type: 'region'; start: Point }
   | { type: 'shape'; start: Point; id: string; before: EditorDocument }
   | { type: 'paint'; layer: Layer; canvas: HTMLCanvasElement; last: Point; before: EditorDocument; tool: Tool }
@@ -115,6 +116,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
   const redraw = () => setRevision(v => v + 1)
   const beginText = (layer: Layer) => {
     if (layer.locked) return
+    if (layer.warp || (layer.textScaleX && layer.textScaleX !== 1)) { onSelect(layer.id); setTool('move'); onToast('Трансформированный текст редактируется в правой панели'); return }
     onSelect(layer.id); setTool('move'); setEditingId(layer.id); setTextValue(layer.text || '')
     setTimeout(() => { textInput.current?.focus(); textInput.current?.select() }, 0)
   }
@@ -152,13 +154,20 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
     if (spaceDown || tool === 'hand' || e.button === 1) { drag.current = { type: 'pan', client: { x: e.clientX, y: e.clientY }, pan }; return }
     const handle = (e.target as Element).closest('[data-handle]')?.getAttribute('data-handle')
     if (handle && selected && !selected.locked && tool === 'move') {
-      drag.current = { type: handle === 'rotate' ? 'rotate' : 'resize', start: p, layer: { ...selected }, handle, before: doc }; return
+      drag.current = { type: handle === 'rotate' ? 'rotate' : e.ctrlKey || e.metaKey ? 'distort' : 'resize', start: p, layer: { ...selected }, handle, before: doc }; return
     }
     if (!inside(p)) { if (tool === 'move') onSelect(null); return }
     if (tool === 'move') {
       const hit = settings.autoSelect ? [...doc.layers].reverse().find(l => hitTest(l, p)) : selected
       onSelect(hit?.id || null)
-      if (hit && !hit.locked && hit.visible) drag.current = { type: 'move', start: p, layer: { ...hit }, before: doc }
+      if (hit && !hit.locked && hit.visible) {
+        if (e.altKey) {
+          if (doc.layers.length >= MAX_LAYERS) { onToast('В одном проекте доступно до 100 слоёв'); return }
+          const copy = { ...hit, id: crypto.randomUUID(), name: `${hit.name} — копия`, locked: false }
+          editor.change(d => { const layers = [...d.layers]; layers.splice(layers.findIndex(l => l.id === hit.id) + 1, 0, copy); return { ...d, layers } }, '', true)
+          onSelect(copy.id); drag.current = { type: 'move', start: p, layer: copy, before: doc, duplicatedFrom: hit.id }
+        } else drag.current = { type: 'move', start: p, layer: { ...hit }, before: doc }
+      }
     } else if (tool === 'crop' || tool === 'select') {
       setSelection({ ...p, width: 0, height: 0 }); drag.current = { type: 'region', start: p }
     } else if (tool === 'text') {
@@ -233,13 +242,22 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       let rotation = d.layer.rotation + (angle(p) - angle(d.start)) * 180 / Math.PI
       if (e.shiftKey) rotation = Math.round(rotation / 15) * 15
       editor.patchLayer(d.layer.id, { rotation: (rotation + 360) % 360 }, '', true)
+    } else if (d.type === 'distort') {
+      const current = localPoint(d.layer, p, false), start = localPoint(d.layer, d.start, false)
+      const dx = (current.x - start.x) / d.layer.width, dy = (current.y - start.y) / d.layer.height
+      const quad = (d.layer.warp || rectangleQuad()).map(v => ({ ...v })) as Quad
+      const indices: Record<string, number[]> = { nw: [0], ne: [1], se: [2], sw: [3], n: [0, 1], e: [1, 2], s: [2, 3], w: [3, 0] }
+      for (const i of indices[d.handle!] || []) { quad[i].x += dx; quad[i].y += dy }
+      if (validQuad(quad)) editor.patchLayer(d.layer.id, { warp: quad }, '', true)
     } else if (d.type === 'resize') {
-      const local = localPoint(d.layer, p), h = d.handle!
+      let local = localPoint(d.layer, p, false)
+      const h = d.handle!
+      if (d.layer.warp) { const start = localPoint(d.layer, d.start, false); local = { x: (h.includes('w') ? 0 : h.includes('e') ? d.layer.width : d.layer.width / 2) + local.x - start.x, y: (h.includes('n') ? 0 : h.includes('s') ? d.layer.height : d.layer.height / 2) + local.y - start.y } }
       let x1 = h.includes('w') ? Math.min(local.x, d.layer.width - 8) : 0
       let y1 = h.includes('n') ? Math.min(local.y, d.layer.height - 8) : 0
       let x2 = h.includes('e') ? Math.max(local.x, 8) : d.layer.width
       let y2 = h.includes('s') ? Math.max(local.y, 8) : d.layer.height
-      const keepRatio = e.shiftKey || (d.layer.kind === 'text' && h.length === 2)
+      const keepRatio = h.length === 2 && !e.shiftKey
       if (keepRatio) {
         const ratio = Math.max((x2 - x1) / d.layer.width, (y2 - y1) / d.layer.height)
         if (h.includes('w')) x1 = x2 - d.layer.width * ratio; else x2 = x1 + d.layer.width * ratio
@@ -247,7 +265,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       }
       const width = Math.min(16384, x2 - x1), height = Math.min(16384, y2 - y1)
       const cx = (x1 + x2 - d.layer.width) / 2, cy = (y1 + y2 - d.layer.height) / 2, a = d.layer.rotation * Math.PI / 180
-      editor.patchLayer(d.layer.id, { width, height, x: d.layer.x + d.layer.width / 2 + cx * Math.cos(a) - cy * Math.sin(a) - width / 2, y: d.layer.y + d.layer.height / 2 + cx * Math.sin(a) + cy * Math.cos(a) - height / 2, ...(d.layer.kind === 'text' && keepRatio ? { fontSize: Math.max(4, Math.min(1000, (d.layer.fontSize || 48) * width / d.layer.width)) } : {}) }, '', true)
+      editor.patchLayer(d.layer.id, { width, height, x: d.layer.x + d.layer.width / 2 + cx * Math.cos(a) - cy * Math.sin(a) - width / 2, y: d.layer.y + d.layer.height / 2 + cx * Math.sin(a) + cy * Math.cos(a) - height / 2, ...(d.layer.kind === 'text' ? { fontSize: Math.max(4, Math.min(1000, (d.layer.fontSize || 48) * height / d.layer.height)), textScaleX: Math.max(0.01, Math.min(100, (d.layer.textScaleX || 1) * (width / d.layer.width) / (height / d.layer.height))), letterSpacing: (d.layer.letterSpacing || 0) * height / d.layer.height } : {}) }, '', true)
     }
   }
   const pointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -264,11 +282,12 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       const layer = editor.documentRef.current.layers.find(l => l.id === d.id)!
       if (layer.width < 4 && layer.height < 4) editor.patchLayer(d.id, { width: 240, height: 160 }, '', true)
       editor.finish('Добавление фигуры'); setTool('move')
-    } else if (d.type !== 'pan' && d.type !== 'region') editor.finish(d.type === 'move' ? 'Перемещение слоя' : d.type === 'rotate' ? 'Поворот слоя' : 'Размер слоя')
+    } else if (d.type !== 'pan' && d.type !== 'region') editor.finish(d.type === 'move' ? d.duplicatedFrom ? 'Копия перетягиванием (Alt)' : 'Перемещение слоя' : d.type === 'rotate' ? 'Поворот слоя' : d.type === 'distort' ? 'Перспектива слоя' : 'Размер слоя')
   }
   const cancelPointer = () => {
     const d = drag.current
     if (d && 'before' in d) editor.change(() => d.before, '', true)
+    if (d && 'duplicatedFrom' in d && d.duplicatedFrom) onSelect(d.duplicatedFrom)
     drag.current = null; activePointer.current = null; overrides.current.clear(); redraw(); setGuides({ x: false, y: false })
   }
   useEffect(() => {
@@ -276,6 +295,8 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
     window.addEventListener('keydown', cancel)
     return () => window.removeEventListener('keydown', cancel)
   })
+  const quad = selected ? (selected.warp || rectangleQuad()).map(p => ({ x: p.x * selected.width, y: p.y * selected.height })) : []
+  const handles: [string, number, number][] = quad.length ? [['nw', quad[0].x, quad[0].y], ['n', (quad[0].x + quad[1].x) / 2, (quad[0].y + quad[1].y) / 2], ['ne', quad[1].x, quad[1].y], ['e', (quad[1].x + quad[2].x) / 2, (quad[1].y + quad[2].y) / 2], ['se', quad[2].x, quad[2].y], ['s', (quad[2].x + quad[3].x) / 2, (quad[2].y + quad[3].y) / 2], ['sw', quad[3].x, quad[3].y], ['w', (quad[3].x + quad[0].x) / 2, (quad[3].y + quad[0].y) / 2]] : []
   const step = scale < 0.35 ? 500 : scale < 0.8 ? 200 : 100
   const xTicks = Array.from({ length: Math.ceil(size.width / scale / step) + 3 }, (_, i) => (Math.floor(-left / scale / step) + i) * step)
   const yTicks = Array.from({ length: Math.ceil(size.height / scale / step) + 3 }, (_, i) => (Math.floor(-top / scale / step) + i) * step)
@@ -291,10 +312,10 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
         {guides.x && <line x1={doc.width / 2} y1={0} x2={doc.width / 2} y2={doc.height} stroke="#d99cff" strokeWidth={1 / scale} />}
         {guides.y && <line x1={0} y1={doc.height / 2} x2={doc.width} y2={doc.height / 2} stroke="#d99cff" strokeWidth={1 / scale} />}
         {showTransform && <g transform={`translate(${selected.x + selected.width / 2} ${selected.y + selected.height / 2}) rotate(${selected.rotation}) translate(${-selected.width / 2} ${-selected.height / 2})`}>
-          <rect width={selected.width} height={selected.height} fill="none" stroke="#b3a0ff" strokeWidth={1 / scale} />
+          <polygon points={quad.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#b3a0ff" strokeWidth={1 / scale} />
           <line x1={selected.width / 2} y1={0} x2={selected.width / 2} y2={-24 / scale} stroke="#b3a0ff" strokeWidth={1 / scale} />
           <circle data-handle="rotate" cx={selected.width / 2} cy={-24 / scale} r={4 / scale} fill="#25212e" stroke="#b3a0ff" strokeWidth={1.2 / scale} style={{ pointerEvents: 'all', cursor: 'grab' }} />
-          {([['nw', 0, 0], ['n', selected.width / 2, 0], ['ne', selected.width, 0], ['e', selected.width, selected.height / 2], ['se', selected.width, selected.height], ['s', selected.width / 2, selected.height], ['sw', 0, selected.height], ['w', 0, selected.height / 2]] as [string, number, number][]).map(([h, x, y]) => <rect key={h} data-handle={h} x={x - 3 / scale} y={y - 3 / scale} width={6 / scale} height={6 / scale} fill="#e3dbff" stroke="#a38be7" strokeWidth={1 / scale} style={{ pointerEvents: 'all', cursor: `${h}-resize` }} />)}
+          {handles.map(([h, x, y]) => <rect key={h} data-handle={h} x={x - 3 / scale} y={y - 3 / scale} width={6 / scale} height={6 / scale} fill="#e3dbff" stroke="#a38be7" strokeWidth={1 / scale} style={{ pointerEvents: 'all', cursor: `${h}-resize` }} />)}
         </g>}
         {selection && (tool === 'crop' || tool === 'select') && <>
           {tool === 'crop' && <path d={`M0 0H${doc.width}V${doc.height}H0Z M${selection.x} ${selection.y}h${selection.width}v${selection.height}h-${selection.width}Z`} fillRule="evenodd" fill="#0009" />}
@@ -310,6 +331,6 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       <span><ScanLine size={15} />{Math.round(selection.width)} × {Math.round(selection.height)}</span><div className="vertical-divider" />
       {tool === 'crop' ? <button className="compact-button accent" onClick={onCrop}><Check size={14} />Кадрировать</button> : <><button className="compact-button" onClick={() => onPixelAction('erase')}><Eraser size={14} />Стереть</button><button className="compact-button accent" onClick={() => onPixelAction('fill')} title="Диффузная заливка цветами вокруг выделения"><Sparkles size={14} />Залить окружением</button></>}
       <button className="icon-button" onClick={() => setSelection(null)} aria-label="Снять выделение"><X size={15} /></button>
-    </div> : <div className="workspace-hint"><span className="hint-key">Пробел</span> перемещение <i /> <span className="hint-key">Ctrl</span> + колесо — масштаб</div>}
+    </div> : <div className="workspace-hint"><span className="hint-key">Alt</span> + перетаскивание — копия <i /> <span className="hint-key">Пробел</span> рука <i /> <span className="hint-key">Ctrl</span> + колесо — масштаб</div>}
   </div>
 }

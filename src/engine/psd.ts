@@ -103,8 +103,8 @@ export async function exportPsd(doc: EditorDocument, psb: boolean): Promise<Blob
   for (const layer of doc.layers) {
     const angle = layer.rotation * Math.PI / 180, w = Math.abs(Math.cos(angle) * layer.width) + Math.abs(Math.sin(angle) * layer.height), h = Math.abs(Math.cos(angle) * layer.height) + Math.abs(Math.sin(angle) * layer.width)
     const pad = hasStyles(layer.styles) ? 380 : 2
-    const left = Math.max(0, Math.floor(layer.x + layer.width / 2 - w / 2 - pad)), top = Math.max(0, Math.floor(layer.y + layer.height / 2 - h / 2 - pad))
-    const right = Math.min(doc.width, Math.ceil(layer.x + layer.width / 2 + w / 2 + pad)), bottom = Math.min(doc.height, Math.ceil(layer.y + layer.height / 2 + h / 2 + pad))
+    const left = layer.warp ? 0 : Math.max(0, Math.floor(layer.x + layer.width / 2 - w / 2 - pad)), top = layer.warp ? 0 : Math.max(0, Math.floor(layer.y + layer.height / 2 - h / 2 - pad))
+    const right = layer.warp ? doc.width : Math.min(doc.width, Math.ceil(layer.x + layer.width / 2 + w / 2 + pad)), bottom = layer.warp ? doc.height : Math.min(doc.height, Math.ceil(layer.y + layer.height / 2 + h / 2 + pad))
     if (right <= left || bottom <= top) continue
     const width = right - left, height = bottom - top
     budget += width * height * 4
@@ -114,10 +114,10 @@ export async function exportPsd(doc: EditorDocument, psb: boolean): Promise<Blob
     renderLayer(ctx, { ...layer, visible: true, opacity: 1, blendMode: 'source-over' })
     const output: PsdLayer = { name: layer.name, left, top, right, bottom, imageData: ctx.getImageData(0, 0, width, height), opacity: layer.opacity, hidden: !layer.visible, blendMode: blendToPsd[layer.blendMode], protected: { composite: layer.locked, position: layer.locked } }
     // Preserve simple native text metadata; complex styles are baked for consistent appearance.
-    if (layer.kind === 'text' && !hasStyles(layer.styles) && !layer.flipX && !layer.flipY && Object.values(layer.adjustments).every(v => v === 0)) {
+    if (layer.kind === 'text' && !layer.warp && !hasStyles(layer.styles) && !layer.flipX && !layer.flipY && Object.values(layer.adjustments).every(v => v === 0)) {
       const rgb = [1, 3, 5].map(i => parseInt(layer.color.slice(i, i + 2), 16)), a = angle
       const cx = layer.x + layer.width / 2, cy = layer.y + layer.height / 2
-      output.text = { text: (layer.text || '').replace(/\n/g, '\r'), transform: [Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), cx - Math.cos(a) * layer.width / 2 + Math.sin(a) * layer.height / 2, cy - Math.sin(a) * layer.width / 2 - Math.cos(a) * layer.height / 2], shapeType: 'box', boxBounds: [0, 0, layer.width, layer.height], style: { font: { name: layer.fontFamily || 'Manrope' }, fontSize: layer.fontSize || 48, fauxBold: (layer.fontWeight || 400) >= 700, fauxItalic: layer.italic, fillColor: { r: rgb[0], g: rgb[1], b: rgb[2] }, leading: (layer.fontSize || 48) * (layer.lineHeight || 1.2), autoLeading: false, tracking: (layer.letterSpacing || 0) / (layer.fontSize || 48) * 1000 }, paragraphStyle: { justification: layer.textAlign || 'left' } }
+      output.text = { text: (layer.text || '').replace(/\n/g, '\r'), transform: [Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), cx - Math.cos(a) * layer.width / 2 + Math.sin(a) * layer.height / 2, cy - Math.sin(a) * layer.width / 2 - Math.cos(a) * layer.height / 2], shapeType: 'box', boxBounds: [0, 0, layer.width, layer.height], style: { font: { name: layer.fontFamily || 'Manrope' }, fontSize: layer.fontSize || 48, horizontalScale: layer.textScaleX || 1, fauxBold: (layer.fontWeight || 400) >= 700, fauxItalic: layer.italic, fillColor: { r: rgb[0], g: rgb[1], b: rgb[2] }, leading: (layer.fontSize || 48) * (layer.lineHeight || 1.2), autoLeading: false, tracking: (layer.letterSpacing || 0) / (layer.fontSize || 48) * 1000 }, paragraphStyle: { justification: layer.textAlign || 'left' } }
     }
     children.push(output)
   }
