@@ -1,5 +1,13 @@
 'use strict'
 const { _electron: electron, expect } = require('@playwright/test')
+const { initializeCanvas, readPsd, writePsd } = require('ag-psd')
+initializeCanvas(
+  () => {
+    throw new Error('No browser canvas in native PSD verifier')
+  },
+  (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+)
+const decodePsd = (bytes) => readPsd(bytes, { useImageData: true, skipThumbnail: true })
 const path = require('node:path'),
   fs = require('node:fs/promises'),
   os = require('node:os'),
@@ -199,13 +207,162 @@ watchdog.unref()
     const layoutPsd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd') && file !== psd)
     assert.ok(layoutPsd)
     assert.ok((await fs.stat(path.join(temp, layoutPsd))).size > 10000)
+
+    progress('native point bounds, editable vector controls and projected smart type')
+    const nativeDoc = {
+      version: 1,
+      id: 'desktop-native-doc',
+      name: 'Native layers',
+      width: 800,
+      height: 380,
+      background: '#f5f2ee',
+      dpi: 72,
+      layers: [
+        {
+          id: 'desktop-point',
+          name: 'Native point',
+          kind: 'text',
+          x: 40,
+          y: 42,
+          width: 16,
+          height: 8,
+          text: 'Редактируемый текст',
+          fontFamily: 'Manrope',
+          fontSize: 42,
+          fontWeight: 700,
+          italic: true,
+          color: '#242336',
+        },
+        {
+          id: 'desktop-shape',
+          name: 'Native rounded',
+          kind: 'shape',
+          shape: 'rectangle',
+          x: 60,
+          y: 180,
+          width: 210,
+          height: 130,
+          color: '#7355c6',
+          cornerRadii: [4, 12, 20, 28],
+          strokeColor: '#27263d',
+          strokeWidth: 6,
+          strokeAlign: 'inside',
+        },
+        {
+          id: 'desktop-smart',
+          name: 'Native smart',
+          kind: 'text',
+          x: 410,
+          y: 200,
+          width: 280,
+          height: 55,
+          text: 'Трансформация',
+          fontFamily: 'Manrope',
+          fontSize: 30,
+          fontWeight: 600,
+          color: '#6349bb',
+          warp: [
+            { x: 0.04, y: 0.02 },
+            { x: 0.93, y: -0.08 },
+            { x: 1.08, y: 1.06 },
+            { x: 0, y: 1.02 },
+          ],
+        },
+      ],
+    }
+    await page.getByLabel('Открыть изображение или проект').setInputFiles({
+      name: 'native.777',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify(nativeDoc)),
+    })
+    await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await page.locator('.layer-row').filter({ hasText: 'Native point' }).click()
+    await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Редактируемый текст')
+    assert.ok(
+      Number(await page.getByLabel('Ш', { exact: true }).inputValue()) > 300,
+      'Point bounds must not remain at the obsolete 16px width',
+    )
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('Control+s')
+    await expect(page.locator('.toast')).toContainText('Файл сохранён: Native layers.psd', {
+      timeout: 30000,
+    })
+    const native = decodePsd(await fs.readFile(path.join(temp, 'Native layers.psd')))
+    const point = native.children.find((l) => l.name === 'Native point')
+    assert.equal(point.text.shapeType, 'point')
+    assert.ok(point.imageData.width > 300)
+    const shape = native.children.find((l) => l.name === 'Native rounded')
+    assert.ok(shape.vectorFill && shape.vectorMask && shape.vectorStroke)
+    assert.equal(shape.vectorOrigination.keyDescriptorList[0].keyOriginRRectRadii.topLeft.value, 4)
+
+    progress('remove every private XMP and reopen native text, vector and embedded PSD')
+    const removePrivate = (document) => {
+      if (document.imageResources) delete document.imageResources.xmpMetadata
+      for (const linked of document.linkedFiles || []) {
+        if (!linked.data) continue
+        const contents = decodePsd(linked.data)
+        removePrivate(contents)
+        linked.data = new Uint8Array(
+          writePsd(contents, { noBackground: true, invalidateTextLayers: false }),
+        )
+      }
+    }
+    removePrivate(native)
+    await page.getByLabel('Открыть изображение или проект').setInputFiles({
+      name: 'native-only.psd',
+      mimeType: 'image/vnd.adobe.photoshop',
+      buffer: Buffer.from(writePsd(native, { noBackground: true, invalidateTextLayers: false })),
+    })
+    await page
+      .getByRole('button', { name: 'Открыть рабочую копию', exact: true })
+      .click({ timeout: 30000 })
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await page.locator('.layer-row').filter({ hasText: 'Native point' }).click()
+    const nativeText = page.getByLabel('Текст слоя', { exact: true })
+    await expect(nativeText).toHaveValue('Редактируемый текст')
+    await nativeText.fill('Нативный текст 777')
+    await nativeText.press('Control+Enter')
+    await page.locator('.layer-row').filter({ hasText: 'Native rounded' }).click()
+    await expect(page.getByLabel('Верхний левый угол', { exact: true })).toHaveValue('4')
+    await page.getByLabel('Верхний левый угол', { exact: true }).fill('24')
+    await page.getByLabel('Верхний левый угол', { exact: true }).press('Enter')
+    await expect(page.getByLabel('Нижний правый угол', { exact: true })).toHaveValue('20')
+    await page
+      .getByRole('button', { name: 'Открыть содержимое: Native smart', exact: true })
+      .dblclick()
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await expect(nativeText).toHaveValue('Трансформация')
+    await nativeText.fill('Готово')
+    await nativeText.press('Control+Enter')
+    await page.getByRole('button', { name: 'Применить в документ · Ctrl+S', exact: true }).click()
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('Control+s')
+    await expect(page.locator('.toast')).toContainText('Файл сохранён: native-only.psd', {
+      timeout: 30000,
+    })
+    const updated = decodePsd(await fs.readFile(path.join(temp, 'native-only.psd')))
+    assert.equal(
+      updated.children.find((l) => l.name === 'Native point').text.text,
+      'Нативный текст 777',
+    )
+    assert.equal(
+      updated.children.find((l) => l.name === 'Native rounded').vectorOrigination
+        .keyDescriptorList[0].keyOriginRRectRadii.topLeft.value,
+      24,
+    )
+    const placed = updated.children.find((l) => l.name === 'Native smart').placedLayer
+    const inner = decodePsd(updated.linkedFiles.find((l) => l.id === placed.id).data)
+    assert.equal(inner.children[0].text.text, 'Готово')
+    await page.locator('.layer-row').filter({ hasText: 'Native rounded' }).click()
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
     progress(
-      'passed: standalone sandbox, exports/reimport, J worker, linked layout type, recording/replay and native layout PSD',
+      'passed: standalone sandbox, exports, J/layout/recording, measured point bounds, native text/vector and XMP-free embedded PSD editing',
     )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })
