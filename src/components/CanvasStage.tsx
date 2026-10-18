@@ -3,7 +3,7 @@ import { Check, Crosshair, Eraser, ScanLine, Sparkles, X } from 'lucide-react'
 import type { Editor } from '../hooks/useEditor'
 import { type EditorDocument, type Layer, type Point, type Rect, type Tool, type ToolSettings, MAX_LAYERS } from '../types'
 import { hitTest, localPoint, makeLayer } from '../engine/document'
-import { bitmapLayer, prepareDocument, rasterizeLayer, renderDocument } from '../engine/render'
+import { bitmapLayer, prepareDocument, rasterizeLayer, renderDocument, validateRasterBudget } from '../engine/render'
 
 interface Props {
   editor: Editor
@@ -179,6 +179,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
       setColor(color); onToast(`Цвет ${color.toUpperCase()} выбран`)
     } else if (tool === 'wand') onPixelAction('wand', p)
     else if (tool === 'brush' || tool === 'eraser') {
+      if (selected && !selected.visible) { onToast('Слой скрыт. Включи его видимость перед рисованием.'); return }
       if (selected?.locked) { onToast('Слой заблокирован. Сначала снимите замок.'); return }
       if (tool === 'eraser' && !selected) { onToast('Выберите слой для ластика'); return }
       const before = editor.documentRef.current
@@ -256,6 +257,7 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
     if (!d) return
     if (d.type === 'paint') {
       const next = bitmapLayer(d.layer, d.canvas)
+      try { validateRasterBudget({ ...editor.documentRef.current, layers: editor.documentRef.current.layers.map(l => l.id === d.layer.id ? next : l) }) } catch (error) { editor.change(() => d.before, '', true); overrides.current.clear(); redraw(); onToast(error instanceof Error ? error.message : 'Превышен лимит растров'); return }
       editor.patchLayer(d.layer.id, next, '', true)
       overrides.current.delete(d.layer.id); editor.finish(d.tool === 'eraser' ? 'Ластик' : 'Рисование кистью'); redraw()
     } else if (d.type === 'shape') {
@@ -269,6 +271,11 @@ export function CanvasStage({ editor, selectedId, onSelect, tool, setTool, setti
     if (d && 'before' in d) editor.change(() => d.before, '', true)
     drag.current = null; activePointer.current = null; overrides.current.clear(); redraw(); setGuides({ x: false, y: false })
   }
+  useEffect(() => {
+    const cancel = (e: KeyboardEvent) => { if (e.key === 'Escape' && drag.current) cancelPointer() }
+    window.addEventListener('keydown', cancel)
+    return () => window.removeEventListener('keydown', cancel)
+  })
   const step = scale < 0.35 ? 500 : scale < 0.8 ? 200 : 100
   const xTicks = Array.from({ length: Math.ceil(size.width / scale / step) + 3 }, (_, i) => (Math.floor(-left / scale / step) + i) * step)
   const yTicks = Array.from({ length: Math.ceil(size.height / scale / step) + 3 }, (_, i) => (Math.floor(-top / scale / step) + i) * step)

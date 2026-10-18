@@ -152,3 +152,28 @@ test('import rejects SVG and unsupported documents without changing the project'
   await page.getByLabel('Открыть изображение или проект').setInputFiles({ name: 'bad.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg><script>alert(1)</script></svg>') })
   await expect(page.locator('.toast')).toContainText('Поддерживаются'); await expect(page.locator('.layer-row')).toHaveCount(7)
 })
+
+test('color picker accepts exact HEX and updates a vector layer', async ({ page }) => {
+  await ready(page); await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click(); await drag(page, [50, 50], [220, 140])
+  await page.getByRole('button', { name: 'Выбрать основной цвет', exact: true }).click()
+  await page.getByLabel('HEX цвета').fill('#12AB34'); await page.getByRole('button', { name: 'Применить цвет' }).click()
+  await expect.poll(async () => await pixel(page, 120, 90)).toEqual([18, 171, 52, 255])
+})
+
+test('copy/paste and merging produce editable, undoable real layers', async ({ page }) => {
+  await ready(page); await blank(page); await importTestImage(page)
+  await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v')
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await page.keyboard.press('Control+Shift+e'); await expect(page.locator('.busy-overlay')).toBeHidden(); await expect(page.locator('.layer-row')).toHaveCount(1)
+  await expect(page.locator('.layer-name')).toHaveText('Объединённые слои')
+  await page.keyboard.press('Control+z'); await expect(page.locator('.layer-row')).toHaveCount(2)
+})
+
+test('cancelled style edits do not mutate the layer and tablet chrome stays usable', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 }); await ready(page)
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check(); await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toBeHidden(); await expect(page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true })).toBeDisabled()
+  await expect(page.locator('.small-screen-note')).toBeHidden(); expect((await artboard(page)).width).toBeGreaterThan(500)
+})

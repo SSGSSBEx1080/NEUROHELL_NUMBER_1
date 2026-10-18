@@ -85,7 +85,12 @@ export function renderStyled(ctx: CanvasRenderingContext2D, layer: Layer, draw: 
       r.globalCompositeOperation = 'destination-out'; r.drawImage(inner, 0, 0); o.drawImage(ring, 0, 0)
     }
     entry = { layer, image: output, pad, scale }; cache.set(layer.id, entry)
-    if (cache.size > 12) cache.delete(cache.keys().next().value!)
+    let bytes = [...cache.values()].reduce((n, e) => n + e.image.width * e.image.height * 4, 0)
+    for (const [key, value] of cache) {
+      if (bytes <= 64 * 1024 * 1024 && cache.size <= 12) break
+      if (key === layer.id) continue
+      bytes -= value.image.width * value.image.height * 4; cache.delete(key)
+    }
   }
   ctx.drawImage(entry.image, -entry.pad / entry.scale, -entry.pad / entry.scale, entry.image.width / entry.scale, entry.image.height / entry.scale)
 }

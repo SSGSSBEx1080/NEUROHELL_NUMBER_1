@@ -1,26 +1,46 @@
+import { sourceDimensions } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
 const loading = new Map<string, Promise<HTMLImageElement>>()
 export const getImage = (src: string) => images.get(src)
-export const cacheImage = (src: string, image: HTMLCanvasElement) => images.set(src, image)
+function rememberImage(src: string, image: HTMLImageElement | HTMLCanvasElement) {
+  images.delete(src); images.set(src, image)
+  let total = [...images.values()].reduce((n, c) => n + c.width * c.height * 4, 0)
+  for (const [key, value] of images) {
+    if (total <= 128 * 1024 * 1024 || key === src) break
+    total -= value.width * value.height * 4; images.delete(key)
+  }
+}
+export const cacheImage = (src: string, image: HTMLCanvasElement) => rememberImage(src, image)
 export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasElement> {
   const existing = images.get(src)
-  if (existing) return Promise.resolve(existing)
+  if (existing) { images.delete(src); images.set(src, existing); return Promise.resolve(existing) }
   const pending = loading.get(src)
   if (pending) return pending
+  try { sourceDimensions(src) } catch (error) { return Promise.reject(error) }
   const promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image()
-    image.onload = () => { images.set(src, image); loading.delete(src); resolve(image) }
+    image.onload = () => { rememberImage(src, image); loading.delete(src); resolve(image) }
     image.onerror = () => { loading.delete(src); reject(new Error('Не удалось прочитать изображение')) }
     image.src = src
   })
   loading.set(src, promise)
   return promise
 }
+export function validateRasterBudget(doc: EditorDocument) {
+  const sources = [...new Set(doc.layers.map(l => l.src).filter((s): s is string => !!s))]
+  let pixels = 0
+  for (const src of sources) {
+    const size = images.get(src) || sourceDimensions(src); pixels += size.width * size.height
+    if (pixels > 24_000_000) throw new Error('Слишком много растров в одном проекте: до 24 мегапикселей суммарно. Уменьши изображения или объедини слои.')
+  }
+  return sources
+}
 export async function prepareDocument(doc: EditorDocument) {
-  await Promise.all(doc.layers.filter(l => l.src).map(l => loadImage(l.src!)))
+  const sources = validateRasterBudget(doc)
+  await Promise.all(sources.map(loadImage))
   await document.fonts.ready
 }
 export function pruneImageCache(documents: EditorDocument[]) {

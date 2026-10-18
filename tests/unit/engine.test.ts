@@ -54,3 +54,15 @@ describe('PSD/PSB resource guard', () => {
   it('recognizes both headers', () => { expect(validatePsdHeader(psdHeaderFixture(1)).psb).toBe(false); expect(validatePsdHeader(psdHeaderFixture(2)).psb).toBe(true) })
   it('rejects oversized documents, unsupported color and bit depth before decoding', () => { expect(() => validatePsdHeader(psdHeaderFixture(2, 60000))).toThrow(/4096/); expect(() => validatePsdHeader(psdHeaderFixture(1, 300, 16))).toThrow(/8 бит/); expect(() => validatePsdHeader(psdHeaderFixture(1, 300, 8, 4))).toThrow(/CMYK/); expect(() => validatePsdHeader(new ArrayBuffer(10))).toThrow() })
 })
+
+describe('Raster memory guard', () => {
+  it('inspects and rejects decompression-bomb dimensions before Image decoding', async () => {
+    const { sourceDimensions } = await import('../../src/engine/imageSafety')
+    const b = new Uint8Array(32), v = new DataView(b.buffer)
+    v.setUint32(0, 0x89504e47); v.setUint32(12, 0x49484452); v.setUint32(16, 50000); v.setUint32(20, 50000)
+    expect(() => sourceDimensions(`data:image/png;base64,${Buffer.from(b).toString('base64')}`)).toThrow(/слишком велико/)
+    expect(() => sourceDimensions('https://example.com/image.png')).toThrow(/локальные/)
+    v.setUint32(16, 320); v.setUint32(20, 200)
+    expect(sourceDimensions(`data:image/png;base64,${Buffer.from(b).toString('base64')}`)).toEqual({ width: 320, height: 200 })
+  })
+})

@@ -63,7 +63,7 @@ export async function importPsd(buffer: ArrayBuffer, name: string): Promise<{ do
       if (src.text) warnings.add('Текст импортирован как растр для сохранения внешнего вида. Кнопка «Извлечь текст» создаёт редактируемый слой с заменой шрифта.')
       if (!blendToCanvas[src.blendMode || 'normal']) warnings.add('Некоторые режимы наложения заменены на «Обычный».')
       const dataUrl = canvas.toDataURL('image/png'); cacheImage(dataUrl, canvas)
-      const layer = makeLayer({ kind: 'image', name: parent + (src.name || 'Слой'), x: src.left || 0, y: src.top || 0, width: canvas.width, height: canvas.height, src: dataUrl, opacity: opacity * (src.opacity ?? 1), visible: !(hidden || src.hidden), locked: !!(src.protected?.composite || src.protected?.position), blendMode: blendToCanvas[src.blendMode || 'normal'] || 'source-over', sourceText: src.text?.text?.replace(/\r/g, '\n') })
+      const layer = makeLayer({ kind: 'image', name: parent + (src.name || 'Слой'), x: src.left || 0, y: src.top || 0, width: canvas.width, height: canvas.height, src: dataUrl, opacity: opacity * (src.opacity ?? 1), visible: !(hidden || src.hidden), locked: !!(src.protected?.composite || src.protected?.position), blendMode: blendToCanvas[src.blendMode || 'normal'] || 'source-over', sourceText: src.text?.text?.replace(/\r\n?/g, '\n') })
       if (src.effects && !src.effects.disabled) {
         warnings.add('Базовые стили слоёв приближённо преобразованы. Для точного вида проверь композит оригинала.')
         const s = defaultStyles(), f = src.effects
