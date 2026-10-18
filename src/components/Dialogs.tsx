@@ -23,7 +23,8 @@ export function NewDocumentDialog({ onClose, onCreate, onSave }: { onClose: () =
 }
 
 export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDocument; onClose: () => void; onSave: () => void; onToast: (s: string) => void }) {
-  const [format, setFormat] = useState<'png' | 'jpeg' | 'webp'>('png')
+  const [format, setFormat] = useState<'png' | 'jpeg' | 'webp' | 'psd' | 'psb'>('png')
+  const layered = format === 'psd' || format === 'psb'
   const [scale, setScale] = useState(1)
   const [quality, setQuality] = useState(95)
   const [transparent, setTransparent] = useState(doc.background === 'transparent')
@@ -39,6 +40,12 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
   const runExport = async () => {
     setBusy(true); setError('')
     try {
+      if (layered) {
+        const { exportPsd } = await import('../engine/psd')
+        const blob = await exportPsd(doc, format === 'psb')
+        downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format}`)
+        onToast(`${format.toUpperCase()} со слоями готов к скачиванию`); onClose(); return
+      }
       const output = await exportCanvas({ ...doc, background: transparent && format !== 'jpeg' ? 'transparent' : doc.background }, scale, format === 'jpeg' ? '#ffffff' : undefined)
       const blob = await canvasBlob(output, `image/${format}`, quality / 100)
       downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format === 'jpeg' ? 'jpg' : format}`)
@@ -50,9 +57,10 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
   return <Modal title="Пора показать миру" subtitle="Твоя работа. В лучшем качестве. Без водяных знаков." onClose={busy ? () => {} : onClose}>
     <div className="export-preview checkerboard">{preview ? <img src={preview} alt="Предпросмотр экспортируемого изображения" /> : <LoaderCircle className="spin" size={24} />}</div>
     <div className="export-file-info"><FileImage size={16} /><span>{doc.name}</span><span>{Math.round(doc.width * scale)} × {Math.round(doc.height * scale)} px</span></div>
-    <div className="format-options">{(['png', 'jpeg', 'webp'] as const).map(f => <button key={f} className={format === f ? 'selected' : ''} onClick={() => setFormat(f)}><strong>{f === 'jpeg' ? 'JPG' : f.toUpperCase()}</strong><span>{f === 'png' ? 'Без потерь' : f === 'jpeg' ? 'Для фотографий' : 'Для веба'}</span>{format === f && <Check size={14} />}</button>)}</div>
-    <div className="export-options"><label className="dialog-label">Масштаб<Select aria-label="Масштаб экспорта" value={scale} onChange={e => setScale(+e.target.value)}><option value={0.5}>0.5× — уменьшенный</option><option value={1}>1× — оригинальный</option><option value={2} disabled={doc.width * doc.height * 4 > 32_000_000}>2× — увеличенный</option></Select></label><label className={`checkbox-row ${format === 'jpeg' ? 'muted' : ''}`}><input type="checkbox" checked={transparent && format !== 'jpeg'} disabled={format === 'jpeg'} onChange={e => setTransparent(e.target.checked)} />Прозрачный холст</label></div>
-    {format !== 'png' && <Slider label="Качество" value={quality} min={10} max={100} suffix="%" onChange={setQuality} />}
+    <div className="format-options">{(['png', 'jpeg', 'webp', 'psd', 'psb'] as const).map(f => <button key={f} className={format === f ? 'selected' : ''} onClick={() => { setFormat(f); if (f === 'psd' || f === 'psb') setScale(1) }}><strong>{f === 'jpeg' ? 'JPG' : f.toUpperCase()}</strong><span>{f === 'png' ? 'Без потерь' : f === 'jpeg' ? 'Для фото' : f === 'psd' || f === 'psb' ? 'Со слоями' : 'Для веба'}</span>{format === f && <Check size={14} />}</button>)}</div>
+    <div className="export-options" style={layered ? { display: 'none' } : undefined}><label className="dialog-label">Масштаб<Select aria-label="Масштаб экспорта" value={scale} onChange={e => setScale(+e.target.value)}><option value={0.5}>0.5× — уменьшенный</option><option value={1}>1× — оригинальный</option><option value={2} disabled={doc.width * doc.height * 4 > 32_000_000}>2× — увеличенный</option></Select></label><label className={`checkbox-row ${format === 'jpeg' ? 'muted' : ''}`}><input type="checkbox" checked={transparent && format !== 'jpeg'} disabled={format === 'jpeg'} onChange={e => setTransparent(e.target.checked)} />Прозрачный холст</label></div>
+    {!layered && format !== 'png' && <Slider label="Качество" value={quality} min={10} max={100} suffix="%" onChange={setQuality} />}
+    {layered && <div className="info-note"><FileJson size={16} /><span>RGB / 8 бит. Слои, видимость и наложение сохраняются. Эффекты и фигуры растрируются; простой текст записывается с текстовыми данными (может потребоваться замена шрифта). Пиксели за холстом обрезаются. Для полной редактируемости сохрани также .777.</span></div>}
     {error && <p className="error-text" role="alert">{error}</p>}
     <footer className="dialog-footer"><button className="text-button" onClick={onSave}><FileJson size={14} />Сохранить проект .777</button><button className="primary-button" onClick={runExport} disabled={busy}>{busy ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}{busy ? 'Экспортируем…' : `Скачать ${format === 'jpeg' ? 'JPG' : format.toUpperCase()}`}</button></footer>
   </Modal>
@@ -69,8 +77,8 @@ export function HelpDialog({ onClose, initialTab = 'shortcuts' }: { onClose: () 
       <div className="about-hero"><div className="about-777">777</div><div><span className="eyebrow">МЕНЬШЕ ЛИШНЕГО. БОЛЬШЕ ТВОЕГО.</span><h3>Идеи не должны<br />ждать загрузки.</h3></div></div>
       <div className="about-feature"><LockKeyhole size={20} /><div><strong>Твои файлы остаются у тебя</strong><p>Редактирование происходит в браузере. Изображения не загружаются на сервер. Последний проект автоматически сохраняется в IndexedDB на этом устройстве. Для надёжного хранения скачай файл .777.</p></div></div>
       <div className="about-feature"><Sparkles size={20} /><div><strong>Честно о возможностях</strong><p>Это первая версия: слои, трансформации, текст, кисти, фигуры, цветокоррекция и экспорт. Удаление фона использует цвета краёв, а заливка окружением — диффузию; это не нейросетевые инструменты. Сложные волосы, фактуры и большие объекты потребуют ручной доработки.</p></div></div>
-      <div className="about-feature"><ShieldCheck size={20} /><div><strong>Независимый редактор</strong><p>Собственные интерфейс, код и формат проекта. Не связан с Adobe. PSD, RAW, CMYK, плагины и смарт-объекты пока не поддерживаются. Шрифты Manrope и Unbounded распространяются по SIL OFL, зависимости — по разрешительным лицензиям.</p></div></div>
-      <p className="help-footnote">Версия 0.1.0 · Холст до 4096 × 4096 px · До 100 слоёв · История 30 действий<br />Независимая реализация снижает риски копирования, но не является юридической гарантией.</p>
+      <div className="about-feature"><ShieldCheck size={20} /><div><strong>Независимый редактор</strong><p>Собственные интерфейс, код и формат проекта. Не связан с Adobe. PSD/PSB поддерживаются частично: RGB / 8 бит, до 4096 × 4096. Импорт показывает отчёт о преобразованиях. RAW, CMYK, плагины и редактирование смарт-объектов не поддерживаются. Шрифты Manrope и Unbounded распространяются по SIL OFL, зависимости — по разрешительным лицензиям.</p></div></div>
+      <p className="help-footnote">Версия 0.2.0 · Холст до 4096 × 4096 px · До 100 слоёв · История 30 действий<br />Независимая реализация снижает риски копирования, но не является юридической гарантией.</p>
     </div>}
     <footer className="dialog-footer"><span>Создавай то, чего ещё нет.</span><button className="primary-button" onClick={onClose}>Вернуться к идеям<ArrowUpRight size={15} /></button></footer>
   </Modal>

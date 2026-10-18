@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, Check, ChevronDown, Circle, CircleHelp, Copy, Crop, Download, Eraser, FilePlus2, FolderOpen, Hand, HardDrive, ImagePlus, Keyboard, LoaderCircle, Maximize, Minus, MousePointer2, Paintbrush, PanelRightClose, PanelRightOpen, Pipette, Plus, Redo2, Save, ScanLine, ShieldCheck, Sparkles, Square, SquareDashed, Trash2, Type, Undo2, WandSparkles, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { LayerStyleDialog } from './components/LayerStyleDialog'
+import { CompatibilityDialog } from './components/CompatibilityDialog'
+import type { CompatibilityReport } from './engine/psd'
 import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
@@ -43,7 +46,8 @@ export default function App() {
   const [selection, setSelection] = useState<Rect | null>(null)
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
-  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | null>(null)
+  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | 'styles' | null>(null)
+  const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
   const [ready, setReady] = useState(false)
@@ -62,7 +66,7 @@ export default function App() {
   const fitView = useCallback(() => { setZoom(null); setPan({ x: 0, y: 0 }) }, [])
   const openDocument = (next: EditorDocument) => {
     editor.reset(next); setSelectedId(next.layers.find(l => l.kind === 'image')?.id || next.layers.at(-1)?.id || null)
-    setSelection(null); setTool('move'); setModal(null); setPendingDocument(null); fitView()
+    setSelection(null); setTool('move'); setModal(null); setPendingDocument(null); setCompatibility(null); fitView()
   }
   useEffect(() => {
     let disposed = false
@@ -152,6 +156,14 @@ export default function App() {
     if (!files.length || busy) return
     setBusy('Открываем файлы…')
     try {
+      const layered = files.find(f => /\.(psd|psb)$/i.test(f.name))
+      if (layered) {
+        if (layered.size > 80 * 1024 * 1024) throw new Error('PSD/PSB: размер файла до 80 МБ')
+        setBusy('Читаем слои PSD/PSB…')
+        const { importPsd } = await import('./engine/psd')
+        const result = await importPsd(await layered.arrayBuffer(), layered.name)
+        setPendingDocument(result.document); setCompatibility(result.report); return
+      }
       const project = files.find(f => /\.(777|fsh777)$/i.test(f.name))
       if (project) {
         if (project.size > 50 * 1024 * 1024) throw new Error('Проект должен быть меньше 50 МБ')
@@ -160,7 +172,7 @@ export default function App() {
       const added: Layer[] = []
       for (const file of files.slice(0, 10)) {
         if (doc.layers.length + added.length >= MAX_LAYERS) throw new Error('В проекте может быть до 100 слоёв')
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Поддерживаются PNG, JPEG, WebP и проекты .777')
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Поддерживаются PNG, JPEG, WebP, PSD, PSB и проекты .777')
         if (file.size > 25 * 1024 * 1024) throw new Error('Изображение должно быть меньше 25 МБ')
         let src = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) })
         const image = await loadImage(src)
@@ -211,6 +223,13 @@ export default function App() {
     editor.change(d => ({ ...d, width, height, layers: d.layers.map(l => ({ ...l, x: l.x - x, y: l.y - y })) }), 'Кадрирование холста')
     setSelection(null); setTool('move'); fitView(); toastMessage(`Холст: ${width} × ${height} px. Слои сохранены.`)
   }
+  const extractText = () => {
+    if (!selected?.sourceText || selected.locked) return
+    if (doc.layers.length >= MAX_LAYERS) return toastMessage('В проекте уже 100 слоёв')
+    const layer = makeLayer({ kind: 'text', name: `${selected.name} · текст`, text: selected.sourceText, x: selected.x, y: selected.y, width: selected.width, height: selected.height, fontFamily: 'Manrope', fontSize: Math.max(12, Math.min(200, selected.height / Math.max(1, selected.sourceText.split('\n').length) / 1.3)), color: settings.color, fontWeight: 500 })
+    editor.change(d => ({ ...d, layers: [...d.layers.map(l => l.id === selected.id ? { ...l, visible: false } : l), layer] }), 'Извлечение текста PSD')
+    setSelectedId(layer.id); toastMessage('Текст извлечён. Шрифт заменён на Manrope; исходный растр скрыт и сохранён.')
+  }
   const fitLayer = () => {
     if (!selected || selected.locked) return
     const ratio = Math.min(doc.width / selected.width, doc.height / selected.height)
@@ -227,7 +246,7 @@ export default function App() {
           case 'KeyY': e.preventDefault(); editor.redo(); return
           case 'KeyS': e.preventDefault(); if (e.shiftKey) setModal('export'); else void saveProject(); return
           case 'KeyO': e.preventDefault(); input.current?.click(); return
-          case 'KeyN': e.preventDefault(); setModal('new'); return
+          case 'KeyN': e.preventDefault(); if (e.shiftKey) addEmpty(); else setModal('new'); return
           case 'KeyJ': e.preventDefault(); duplicate(); return
           case 'Digit0': e.preventDefault(); fitView(); return
           case 'Digit1': e.preventDefault(); setZoom(1); setPan({ x: 0, y: 0 }); return
@@ -281,12 +300,19 @@ export default function App() {
     { label: 'Умные направляющие', checked: settings.showGuides, action: () => setSettings({ showGuides: !settings.showGuides }) },
     { label: 'Панель свойств и слоёв', checked: inspector, action: () => setInspector(!inspector) },
   ]
+  const layerMenu: MenuItem[] = [
+    { label: 'Новый пустой слой', icon: Plus, shortcut: 'Ctrl ⇧ N', action: addEmpty },
+    { label: 'Новый текст', icon: Type, action: addText },
+    { label: 'Стиль слоя…', icon: Sparkles, action: () => setModal('styles'), disabled: !selected || selected.locked, divider: true },
+    { label: 'Дублировать', icon: Copy, action: () => duplicate(), disabled: !selected },
+    { label: 'Удалить', icon: Trash2, action: () => deleteLayer(), disabled: !selected || selected.locked },
+  ]
   const helpMenu: MenuItem[] = [{ label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') }, { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') }]
 
   return <div className="editor-app" onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDropping(true) } }} onDragLeave={e => { if (e.dataTransfer.types.includes('Files')) { dragCounter.current--; if (dragCounter.current <= 0) setDropping(false) } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }} onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); dragCounter.current = 0; setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
     <header className="app-header">
       <button className="brand" onClick={() => setModal('about')} aria-label="О редакторе ФШ 777"><span className="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 7h20v5L16 26H7l12-13H7z" fill="currentColor" /></svg></span><span className="brand-name">ФШ <b>777</b></span><span className="beta-badge">BETA</span></button>
-      <nav className="main-menu" aria-label="Меню редактора"><Dropdown label="Файл" items={fileMenu} /><Dropdown label="Правка" items={editMenu} /><Dropdown label="Вид" items={viewMenu} /><Dropdown label="Помощь" items={helpMenu} /></nav>
+      <nav className="main-menu" aria-label="Меню редактора"><Dropdown label="Файл" items={fileMenu} /><Dropdown label="Правка" items={editMenu} /><Dropdown label="Слой" items={layerMenu} /><Dropdown label="Вид" items={viewMenu} /><Dropdown label="Помощь" items={helpMenu} /></nav>
       <div className={`save-indicator ${saveStatus}`} title="Автосохранение последнего проекта в этом браузере">{saveStatus === 'saving' ? <LoaderCircle size={14} className="spin" /> : <HardDrive size={14} />}<span>{saveStatus === 'saved' ? 'Все изменения сохранены' : saveStatus === 'saving' ? 'Сохраняем на устройстве…' : 'Скачай проект для сохранения'}</span></div>
       <div className="header-actions"><span className="private-badge"><span />Локально. Приватно.</span><button className="export-button" onClick={() => setModal('export')} disabled={!!busy}><Download size={15} />Экспорт<ChevronDown size={13} /></button></div>
     </header>
@@ -308,13 +334,15 @@ export default function App() {
         <CanvasStage editor={editor} selectedId={selectedId} onSelect={setSelectedId} tool={tool} setTool={setTool} settings={settings} setColor={color => setSettings({ color })} zoom={zoom} setZoom={setZoom} onEffectiveZoom={setEffectiveZoom} pan={pan} setPan={setPan} selection={selection} setSelection={setSelection} onCrop={crop} onPixelAction={(op, point) => void pixelAction(op, point)} onToast={toastMessage} rulers={rulers} busy={!!busy} />
         <footer className="workspace-status"><span className="status-left"><span className="status-dot" />Все инструменты — на твоей стороне<span className="status-divider" />{selected ? selected.name : 'Холст'}</span><div className="zoom-controls"><IconButton icon={Minus} label="Уменьшить масштаб" disabled={effectiveZoom <= 0.05} onClick={() => setZoom(Math.max(0.05, effectiveZoom / 1.25))} /><Select aria-label="Масштаб холста" value={zoom === null ? 'fit' : String(zoom)} onChange={e => { if (e.target.value === 'fit') fitView(); else { setZoom(+e.target.value); setPan({ x: 0, y: 0 }) } }}><option value="fit">{zoom === null ? `${Math.round(effectiveZoom * 100)}%` : 'По размеру окна'}</option>{zoom !== null && ![0.25, 0.5, 0.75, 1, 1.5, 2, 4].includes(zoom) && <option value={String(zoom)}>{Math.round(zoom * 100)}%</option>}{[0.25, 0.5, 0.75, 1, 1.5, 2, 4].map(z => <option key={z} value={String(z)}>{z * 100}%</option>)}</Select><IconButton icon={Plus} label="Увеличить масштаб" disabled={effectiveZoom >= 4} onClick={() => setZoom(Math.min(4, effectiveZoom * 1.25))} /><div className="vertical-divider" /><IconButton icon={Maximize} label="Вписать холст (Ctrl+0)" onClick={fitView} /></div></footer>
       </main>
-      {inspector && <aside className="inspector" aria-label="Свойства и слои"><PropertiesPanel editor={editor} layer={selected} onRemoveBackground={() => void pixelAction('background')} onFitLayer={fitLayer} onImport={() => input.current?.click()} onAddText={addText} settings={settings} setSettings={setSettings} busy={!!busy} /><LayersPanel editor={editor} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEmpty} onDuplicate={duplicate} onDelete={deleteLayer} onReorder={reorder} /><div className="inspector-footer"><ShieldCheck size={12} /><span>Твои файлы остаются у тебя</span><span className="footer-777">777</span></div></aside>}
+      {inspector && <aside className="inspector" aria-label="Свойства и слои"><PropertiesPanel editor={editor} layer={selected} onStyle={() => setModal('styles')} onExtractText={extractText} onRemoveBackground={() => void pixelAction('background')} onFitLayer={fitLayer} onImport={() => input.current?.click()} onAddText={addText} settings={settings} setSettings={setSettings} busy={!!busy} /><LayersPanel editor={editor} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEmpty} onDuplicate={duplicate} onDelete={deleteLayer} onReorder={reorder} /><div className="inspector-footer"><ShieldCheck size={12} /><span>Твои файлы остаются у тебя</span><span className="footer-777">777</span></div></aside>}
     </div>
-    <input ref={input} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,.777,.fsh777" multiple aria-label="Открыть изображение или проект" onChange={e => { void importFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
+    <input ref={input} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb" multiple aria-label="Открыть изображение или проект" onChange={e => { void importFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
     {modal === 'new' && <NewDocumentDialog onClose={closeModal} onSave={() => void saveProject()} onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))} />}
     {modal === 'export' && <ExportDialog doc={doc} onClose={closeModal} onSave={() => void saveProject()} onToast={toastMessage} />}
     {(modal === 'help' || modal === 'about') && <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />}
-    {pendingDocument && <ReplaceDialog name={pendingDocument.name} onClose={closeReplace} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
+    {modal === 'styles' && selected && <LayerStyleDialog layer={selected} onClose={closeModal} onApply={styles => { editor.patchLayer(selected.id, { styles }, 'Стиль слоя'); closeModal() }} />}
+    {pendingDocument && compatibility && <CompatibilityDialog report={compatibility} onClose={() => { setPendingDocument(null); setCompatibility(null) }} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
+    {pendingDocument && !compatibility && <ReplaceDialog name={pendingDocument.name} onClose={closeReplace} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
     {busy && <div className="busy-overlay" role="status"><div><LoaderCircle className="spin" size={22} /><span>{busy}</span><small>Никаких загрузок на сервер</small></div></div>}
     {dropping && <div className="drop-overlay"><div><ImagePlus size={40} strokeWidth={1.3} /><h2>Дай идее место на холсте</h2><p>Отпусти изображение или проект .777 здесь</p><span>PNG · JPEG · WebP</span></div></div>}
     {toast && <div className="toast" role="status"><span className="toast-icon"><Check size={14} /></span><span>{toast}</span><button aria-label="Закрыть уведомление" onClick={() => setToast('')}><X size={14} /></button></div>}

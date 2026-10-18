@@ -38,6 +38,8 @@ export interface Layer {
   radius?: number
   strokeColor?: string
   strokeWidth?: number
+  styles?: LayerStyles
+  sourceText?: string
   flipX?: boolean
   flipY?: boolean
 }
@@ -68,3 +70,12 @@ export const DEFAULT_ADJUSTMENTS: Adjustments = {
 }
 export const MAX_DIMENSION = 4096
 export const MAX_LAYERS = 100
+
+export interface LayerStyles {
+  fillOpacity: number
+  stroke: { enabled: boolean; size: number; color: string; position: 'outside' | 'inside' | 'center' }
+  shadow: { enabled: boolean; color: string; blur: number; x: number; y: number; opacity: number }
+  glow: { enabled: boolean; color: string; blur: number; opacity: number }
+  overlay: { enabled: boolean; color: string; opacity: number }
+  gradient: { enabled: boolean; from: string; to: string; angle: number; opacity: number }
+}

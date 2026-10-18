@@ -7,6 +7,8 @@ import { ColorField, Field, IconButton, Select, Slider } from './ui'
 interface Props {
   editor: Editor
   layer?: Layer
+  onStyle: () => void
+  onExtractText: () => void
   onRemoveBackground: () => void
   onFitLayer: () => void
   onImport: () => void
@@ -24,7 +26,7 @@ const presets = [
   { name: 'Плёнка', filter: 'sepia(.25) contrast(.8)', values: { sepia: 25, contrast: -20, saturation: -15 } },
 ]
 
-export function PropertiesPanel({ editor, layer, onRemoveBackground, onFitLayer, onImport, onAddText, settings, setSettings, busy }: Props) {
+export function PropertiesPanel({ editor, layer, onStyle, onExtractText, onRemoveBackground, onFitLayer, onImport, onAddText, settings, setSettings, busy }: Props) {
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
   const [linked, setLinked] = useState(true)
   const [adjustOpen, setAdjustOpen] = useState(false)
@@ -52,6 +54,8 @@ export function PropertiesPanel({ editor, layer, onRemoveBackground, onFitLayer,
       </> : <>
         <div className="object-heading"><span className="object-icon">{layer.kind === 'text' ? <Type size={18} /> : layer.kind === 'image' ? <Image size={18} /> : <Maximize size={18} />}</span><div><strong>{layer.kind === 'text' ? 'Текстовый слой' : layer.kind === 'image' ? 'Изображение' : 'Фигура'}</strong><span>{layer.name}</span></div>{layer.locked ? <LockKeyhole size={14} /> : <span className="small-badge">{layer.kind === 'image' ? 'РАСТР' : 'ВЕКТОР'}</span>}</div>
         {layer.locked && <div className="locked-notice"><LockKeyhole size={13} />Сними замок слоя, чтобы редактировать</div>}
+        <button className="action-button style-open-button" disabled={layer.locked || busy} onClick={onStyle}><Sparkles size={14} />Стиль слоя<span>fx</span></button>
+        {layer.sourceText && <button className="action-button style-open-button" disabled={layer.locked || busy} onClick={onExtractText}><Type size={14} />Извлечь текст из PSD<span>↗</span></button>}
         <fieldset disabled={layer.locked || busy} className="properties-fieldset">
         {tab === 'properties' ? <>
           <div className="property-section transform-section"><div className="section-heading">Трансформация<IconButton icon={linked ? Link2 : Unlink2} label={linked ? 'Отключить сохранение пропорций' : 'Сохранять пропорции'} active={linked} onClick={() => setLinked(!linked)} /></div>

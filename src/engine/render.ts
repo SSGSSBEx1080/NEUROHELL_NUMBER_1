@@ -1,3 +1,4 @@
+import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
@@ -23,6 +24,7 @@ export async function prepareDocument(doc: EditorDocument) {
   await document.fonts.ready
 }
 export function pruneImageCache(documents: EditorDocument[]) {
+  clearStyleCache()
   const keep = new Set(documents.flatMap(d => d.layers.map(l => l.src)))
   for (const src of images.keys()) if (!keep.has(src)) images.delete(src)
 }
@@ -43,6 +45,10 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
   if (layer.flipX || layer.flipY) {
     ctx.translate(layer.flipX ? layer.width : 0, layer.flipY ? layer.height : 0)
     ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1)
+  }
+  if (!override && hasStyles(layer.styles) && (layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
+    renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, undefined, true))
+    ctx.restore(); return
   }
   ctx.filter = filterString(layer)
   if (override) ctx.drawImage(override, 0, 0, layer.width, layer.height)
@@ -87,7 +93,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   canvas.height = Math.max(1, Math.round(layer.height * scale))
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
   ctx.scale(canvas.width / layer.width, canvas.height / layer.height)
-  renderLayer(ctx, layer, undefined, true)
+  renderLayer(ctx, { ...layer, styles: undefined }, undefined, true)
   return canvas
 }
 export async function exportCanvas(doc: EditorDocument, scale = 1, background?: string) {
