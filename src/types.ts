@@ -9,6 +9,7 @@ export interface Adjustments {
   hue: number
   grayscale: number
   sepia: number
+  invert: number
 }
 export interface Layer {
   id: string
@@ -54,7 +55,7 @@ export interface EditorDocument {
 }
 export interface Point { x: number; y: number }
 export interface Rect extends Point { width: number; height: number }
-export interface HistoryEntry { document: EditorDocument; label: string; time: number }
+export interface HistoryEntry { document: EditorDocument; label: string; time: number; selectedId: string | null }
 export interface ToolSettings {
   color: string
   secondaryColor: string
@@ -66,7 +67,7 @@ export interface ToolSettings {
   shapeFill: boolean
 }
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
-  brightness: 0, contrast: 0, saturation: 0, blur: 0, hue: 0, grayscale: 0, sepia: 0,
+  brightness: 0, contrast: 0, saturation: 0, blur: 0, hue: 0, grayscale: 0, sepia: 0, invert: 0,
 }
 export const MAX_DIMENSION = 4096
 export const MAX_LAYERS = 100

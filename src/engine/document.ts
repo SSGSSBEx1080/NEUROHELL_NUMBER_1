@@ -79,7 +79,7 @@ export function parseProject(input: unknown): EditorDocument {
       adjustments: {
         brightness: finite(a.brightness, -100, 100, 0), contrast: finite(a.contrast, -100, 100, 0),
         saturation: finite(a.saturation, -100, 100, 0), blur: finite(a.blur, 0, 30, 0),
-        hue: finite(a.hue, -180, 180, 0), grayscale: finite(a.grayscale, 0, 100, 0), sepia: finite(a.sepia, 0, 100, 0),
+        hue: finite(a.hue, -180, 180, 0), grayscale: finite(a.grayscale, 0, 100, 0), sepia: finite(a.sepia, 0, 100, 0), invert: finite(a.invert, 0, 100, 0),
       },
     })
   })

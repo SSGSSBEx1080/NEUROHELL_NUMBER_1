@@ -1,3 +1,6 @@
+import { ActionsDialog } from './components/ActionsDialog'
+import { builtinActions, parseActionSet, runAction, type StudioAction } from './engine/actions'
+import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, Check, ChevronDown, Circle, CircleHelp, Copy, Crop, Download, Eraser, FilePlus2, FolderOpen, Hand, HardDrive, ImagePlus, Keyboard, LoaderCircle, Maximize, Minus, MousePointer2, Paintbrush, PanelRightClose, PanelRightOpen, Pipette, Plus, Redo2, Save, ScanLine, ShieldCheck, Sparkles, Square, SquareDashed, Trash2, Type, Undo2, WandSparkles, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { LayerStyleDialog } from './components/LayerStyleDialog'
@@ -35,7 +38,7 @@ export default function App() {
   const initial = useMemo(demoDocument, [])
   const editor = useEditor(initial)
   const doc = editor.document
-  const [selectedId, setSelectedId] = useState<string | null>(initial.layers[0].id)
+  const { selectedId, setSelectedId } = editor
   const selected = doc.layers.find(l => l.id === selectedId)
   const [tool, setTool] = useState<Tool>('move')
   const [settings, updateSettings] = useState<ToolSettings>({ color: '#b8a8ff', secondaryColor: '#ffffff', brushSize: 30, brushOpacity: 100, tolerance: 20, autoSelect: true, showGuides: true, shapeFill: true })
@@ -46,7 +49,10 @@ export default function App() {
   const [selection, setSelection] = useState<Rect | null>(null)
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
-  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | 'styles' | null>(null)
+  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | 'styles' | 'actions' | null>(null)
+  const [actions, setActions] = useState<StudioAction[]>(() => {
+    try { const stored = localStorage.getItem('fsh777-actions'); return stored ? parseActionSet(JSON.parse(stored)) : builtinActions } catch { return builtinActions }
+  })
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
@@ -63,6 +69,15 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(''), 5000)
   }, [])
+  useEffect(() => { try { localStorage.setItem('fsh777-actions', JSON.stringify({ version: 1, actions })) } catch { /* Manual export remains available. */ } }, [actions])
+  const executeAction = (action: StudioAction) => {
+    try { const result = runAction(editor.documentRef.current, selectedId, action); editor.change(() => result.document, `Операция: ${action.name}`); setSelectedId(result.selectedId); setModal(null); toastMessage(`Выполнено: ${action.name}. Ctrl+Z — отменить.`) } catch (error) { toastMessage(error instanceof Error ? error.message : 'Ошибка операции') }
+  }
+  const captureAction = () => {
+    if (!selected || actions.length >= 100) return toastMessage('Выбери слой; в наборе может быть до 100 операций')
+    const action: StudioAction = { id: uid(), name: `${selected.name} · цвет`, source: 'Мой набор', steps: [{ name: 'Цветокоррекция слоя', enabled: true, command: { type: 'adjust', values: { ...selected.adjustments } } }] }
+    setActions(a => [...a, action]); toastMessage('Цветокоррекция сохранена как операция')
+  }
   const fitView = useCallback(() => { setZoom(null); setPan({ x: 0, y: 0 }) }, [])
   const openDocument = (next: EditorDocument) => {
     editor.reset(next); setSelectedId(next.layers.find(l => l.kind === 'image')?.id || next.layers.at(-1)?.id || null)
@@ -156,6 +171,13 @@ export default function App() {
     if (!files.length || busy) return
     setBusy('Открываем файлы…')
     try {
+      const actionFile = files.find(f => /\.atn$|\.777actions\.json$/i.test(f.name))
+      if (actionFile) {
+        if (actionFile.size > 8 * 1024 * 1024) throw new Error('Набор операций должен быть меньше 8 МБ')
+        const imported = /\.atn$/i.test(actionFile.name) ? parseAtn(await actionFile.arrayBuffer()) : parseActionSet(JSON.parse(await actionFile.text()))
+        if (actions.length + imported.length > 100) throw new Error('До 100 операций в наборе. Удали ненужные перед импортом.')
+        setActions(a => [...a, ...imported]); setModal('actions'); toastMessage(`Импортировано операций: ${imported.length}. Проверь поддержку шагов.`); return
+      }
       const layered = files.find(f => /\.(psd|psb)$/i.test(f.name))
       if (layered) {
         if (layered.size > 80 * 1024 * 1024) throw new Error('PSD/PSB: размер файла до 80 МБ')
@@ -240,6 +262,8 @@ export default function App() {
     const keydown = (e: KeyboardEvent) => {
       if (typing(e.target) || busy || modal || pendingDocument) return
       const mod = e.ctrlKey || e.metaKey
+      const action = actions.find(a => a.shortcut?.key === e.code && a.shortcut.shift === e.shiftKey && a.shortcut.ctrl === mod)
+      if (action) { e.preventDefault(); executeAction(action); return }
       if (mod) {
         switch (e.code) {
           case 'KeyZ': e.preventDefault(); if (e.shiftKey) editor.redo(); else editor.undo(); return
@@ -312,7 +336,7 @@ export default function App() {
   return <div className="editor-app" onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDropping(true) } }} onDragLeave={e => { if (e.dataTransfer.types.includes('Files')) { dragCounter.current--; if (dragCounter.current <= 0) setDropping(false) } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }} onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); dragCounter.current = 0; setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
     <header className="app-header">
       <button className="brand" onClick={() => setModal('about')} aria-label="О редакторе ФШ 777"><span className="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 7h20v5L16 26H7l12-13H7z" fill="currentColor" /></svg></span><span className="brand-name">ФШ <b>777</b></span><span className="beta-badge">BETA</span></button>
-      <nav className="main-menu" aria-label="Меню редактора"><Dropdown label="Файл" items={fileMenu} /><Dropdown label="Правка" items={editMenu} /><Dropdown label="Слой" items={layerMenu} /><Dropdown label="Вид" items={viewMenu} /><Dropdown label="Помощь" items={helpMenu} /></nav>
+      <nav className="main-menu" aria-label="Меню редактора"><Dropdown label="Файл" items={fileMenu} /><Dropdown label="Правка" items={editMenu} /><Dropdown label="Слой" items={layerMenu} /><Dropdown label="Вид" items={viewMenu} /><button className="menu-trigger" onClick={() => setModal('actions')}>Операции</button><Dropdown label="Помощь" items={helpMenu} /></nav>
       <div className={`save-indicator ${saveStatus}`} title="Автосохранение последнего проекта в этом браузере">{saveStatus === 'saving' ? <LoaderCircle size={14} className="spin" /> : <HardDrive size={14} />}<span>{saveStatus === 'saved' ? 'Все изменения сохранены' : saveStatus === 'saving' ? 'Сохраняем на устройстве…' : 'Скачай проект для сохранения'}</span></div>
       <div className="header-actions"><span className="private-badge"><span />Локально. Приватно.</span><button className="export-button" onClick={() => setModal('export')} disabled={!!busy}><Download size={15} />Экспорт<ChevronDown size={13} /></button></div>
     </header>
@@ -336,10 +360,11 @@ export default function App() {
       </main>
       {inspector && <aside className="inspector" aria-label="Свойства и слои"><PropertiesPanel editor={editor} layer={selected} onStyle={() => setModal('styles')} onExtractText={extractText} onRemoveBackground={() => void pixelAction('background')} onFitLayer={fitLayer} onImport={() => input.current?.click()} onAddText={addText} settings={settings} setSettings={setSettings} busy={!!busy} /><LayersPanel editor={editor} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEmpty} onDuplicate={duplicate} onDelete={deleteLayer} onReorder={reorder} /><div className="inspector-footer"><ShieldCheck size={12} /><span>Твои файлы остаются у тебя</span><span className="footer-777">777</span></div></aside>}
     </div>
-    <input ref={input} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb" multiple aria-label="Открыть изображение или проект" onChange={e => { void importFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
+    <input ref={input} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json" multiple aria-label="Открыть изображение или проект" onChange={e => { void importFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
     {modal === 'new' && <NewDocumentDialog onClose={closeModal} onSave={() => void saveProject()} onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))} />}
     {modal === 'export' && <ExportDialog doc={doc} onClose={closeModal} onSave={() => void saveProject()} onToast={toastMessage} />}
     {(modal === 'help' || modal === 'about') && <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />}
+    {modal === 'actions' && <ActionsDialog actions={actions} onClose={closeModal} onImport={() => input.current?.click()} onRun={executeAction} onCapture={captureAction} onDelete={id => setActions(a => a.filter(v => v.id !== id))} canRun={!!selected && !selected.locked} />}
     {modal === 'styles' && selected && <LayerStyleDialog layer={selected} onClose={closeModal} onApply={styles => { editor.patchLayer(selected.id, { styles }, 'Стиль слоя'); closeModal() }} />}
     {pendingDocument && compatibility && <CompatibilityDialog report={compatibility} onClose={() => { setPendingDocument(null); setCompatibility(null) }} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
     {pendingDocument && !compatibility && <ReplaceDialog name={pendingDocument.name} onClose={closeReplace} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}

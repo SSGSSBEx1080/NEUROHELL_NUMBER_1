@@ -30,7 +30,7 @@ export function pruneImageCache(documents: EditorDocument[]) {
 }
 export function filterString(layer: Layer) {
   const a = layer.adjustments || DEFAULT_ADJUSTMENTS
-  return `brightness(${100 + a.brightness}%) contrast(${100 + a.contrast}%) saturate(${100 + a.saturation}%) blur(${a.blur}px) hue-rotate(${a.hue}deg) grayscale(${a.grayscale}%) sepia(${a.sepia}%)`
+  return `brightness(${100 + a.brightness}%) contrast(${100 + a.contrast}%) saturate(${100 + a.saturation}%) blur(${a.blur}px) hue-rotate(${a.hue}deg) grayscale(${a.grayscale}%) sepia(${a.sepia}%) invert(${a.invert || 0}%)`
 }
 export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, override?: HTMLCanvasElement, flat = false) {
   if (!flat && (!layer.visible || layer.opacity === 0)) return
