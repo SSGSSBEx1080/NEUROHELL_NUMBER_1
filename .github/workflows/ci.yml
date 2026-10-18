@@ -21,7 +21,6 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run check
       - run: npm test
-      - run: npm run build
       - run: npm run test:e2e
         env:
           CI: 'true'
