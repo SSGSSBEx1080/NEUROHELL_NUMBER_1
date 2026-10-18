@@ -1,3 +1,4 @@
+import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
 import { ActionsDialog } from './components/ActionsDialog'
 import { builtinActions, parseActionSet, runAction, type StudioAction } from './engine/actions'
@@ -184,6 +185,12 @@ export default function App() {
     } catch { toastMessage('Не удалось объединить слои') } finally { setBusy(null) }
   }
   const saveProject = async () => {
+    setBusy('Сохраняем настоящий PSD со слоями…')
+    try { await FileManager.save(editor.documentRef.current); toastMessage('PSD подготовлен. Выбери место сохранения файла.') }
+    catch (error) { toastMessage(error instanceof Error ? error.message : 'Ошибка сохранения PSD') }
+    finally { setBusy(null) }
+  }
+  const saveBackup = async () => {
     try {
       const current = editor.documentRef.current
       const layers = await Promise.all(current.layers.map(async l => {
@@ -341,7 +348,8 @@ export default function App() {
   const fileMenu: MenuItem[] = [
     { label: 'Новый проект', icon: FilePlus2, shortcut: 'Ctrl N', action: () => setModal('new') },
     { label: 'Открыть файл…', icon: FolderOpen, shortcut: 'Ctrl O', action: () => input.current?.click() },
-    { label: 'Сохранить проект .777', icon: Save, shortcut: 'Ctrl S', action: () => void saveProject(), divider: true },
+    { label: 'Сохранить PSD…', icon: Save, shortcut: 'Ctrl S', action: () => void saveProject(), divider: true },
+    { label: 'Резервная копия (старый .777)', icon: Save, action: () => void saveBackup() },
     { label: 'Экспорт изображения…', icon: Download, shortcut: 'Ctrl ⇧ S', action: () => setModal('export') },
     { label: 'Открыть демопроект', icon: Sparkles, action: () => setPendingDocument(demoDocument()), divider: true },
   ]
@@ -411,7 +419,7 @@ export default function App() {
     {pendingDocument && compatibility && <CompatibilityDialog report={compatibility} onClose={() => { setPendingDocument(null); setCompatibility(null) }} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
     {pendingDocument && !compatibility && <ReplaceDialog name={pendingDocument.name} onClose={closeReplace} onSave={() => void saveProject()} onConfirm={() => openDocument(pendingDocument)} />}
     {busy && <div className="busy-overlay" role="status"><div><LoaderCircle className="spin" size={22} /><span>{busy}</span><small>Никаких загрузок на сервер</small></div></div>}
-    {dropping && <div className="drop-overlay"><div><ImagePlus size={40} strokeWidth={1.3} /><h2>Дай идее место на холсте</h2><p>Отпусти изображение или проект .777 здесь</p><span>PNG · JPEG · WebP</span></div></div>}
+    {dropping && <div className="drop-overlay"><div><ImagePlus size={40} strokeWidth={1.3} /><h2>Дай идее место на холсте</h2><p>Отпусти изображение или PSD здесь</p><span>PNG · JPEG · WebP</span></div></div>}
     {toast && <div className="toast" role="status"><span className="toast-icon"><Check size={14} /></span><span>{toast}</span><button aria-label="Закрыть уведомление" onClick={() => setToast('')}><X size={14} /></button></div>}
     <div className="small-screen-note"><span className="brand-mark"><Sparkles size={22} /></span><h2>Идеям нужно чуть больше места</h2><p>Открой редактор на компьютере или поверни планшет. Для удобной работы нужен экран от 640 px.</p></div>
   </div>

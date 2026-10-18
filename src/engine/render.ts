@@ -1,6 +1,7 @@
-import { clearWarpCache, renderWarped } from './warpRenderer'
+import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
+import { renderWarped } from './warpRenderer'
 import { sourceDimensions } from './imageSafety'
-import { clearStyleCache, hasStyles, renderStyled } from './styles'
+import { hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
@@ -10,7 +11,7 @@ function rememberImage(src: string, image: HTMLImageElement | HTMLCanvasElement)
   images.delete(src); images.set(src, image)
   let total = [...images.values()].reduce((n, c) => n + c.width * c.height * 4, 0)
   for (const [key, value] of images) {
-    if (total <= 128 * 1024 * 1024 || key === src) break
+    if (total <= 256 * 1024 * 1024 || key === src) break
     total -= value.width * value.height * 4; images.delete(key)
   }
 }
@@ -31,22 +32,23 @@ export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasEle
   return promise
 }
 export function validateRasterBudget(doc: EditorDocument) {
-  const sources = [...new Set(doc.layers.map(l => l.src).filter((s): s is string => !!s))]
+  const sources = [...new Set(doc.layers.flatMap(l => [l.src, l.mask?.src]).filter((s): s is string => !!s))]
   let pixels = 0
   for (const src of sources) {
     const size = images.get(src) || sourceDimensions(src); pixels += size.width * size.height
-    if (pixels > 24_000_000) throw new Error('Слишком много растров в одном проекте: до 24 мегапикселей суммарно. Уменьши изображения или объедини слои.')
+    if (pixels > 48_000_000) throw new Error('Слишком много растров в одном проекте: до 48 мегапикселей суммарно. Уменьши изображения или объедини слои.')
   }
   return sources
 }
 export async function prepareDocument(doc: EditorDocument) {
-  const sources = validateRasterBudget(doc)
+  await prepareSource(doc)
+  const sources = validateRasterBudget(doc), composite = originalSource(doc)?.composite
+  if (composite) sources.push(composite)
   await Promise.all(sources.map(loadImage))
   await document.fonts.ready
 }
 export function pruneImageCache(documents: EditorDocument[]) {
-  clearStyleCache(); clearWarpCache()
-  const keep = new Set(documents.flatMap(d => d.layers.map(l => l.src)))
+  const keep = new Set(documents.flatMap(d => [...d.layers.flatMap(l => [l.src, l.mask?.src]), originalSource(d)?.composite]))
   for (const src of images.keys()) if (!keep.has(src)) images.delete(src)
 }
 export function filterString(layer: Layer) {
@@ -74,7 +76,8 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
     renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, override, true), !!override)
     ctx.restore(); return
   }
-  ctx.filter = filterString(layer)
+  if (layer.mask?.enabled && images.has(layer.mask.src)) { renderMasked(ctx, layer, override); ctx.restore(); return }
+  ctx.filter = Object.values(layer.adjustments).some(v => v !== 0) ? filterString(layer) : 'none'
   if (override) ctx.drawImage(override, 0, 0, layer.width, layer.height)
   else if (layer.kind === 'image' && layer.src) {
     const image = images.get(layer.src)
@@ -102,13 +105,69 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
   }
   ctx.restore()
 }
-export function renderDocument(ctx: CanvasRenderingContext2D, doc: EditorDocument, overrides?: Map<string, HTMLCanvasElement>, hideId?: string) {
-  ctx.clearRect(0, 0, doc.width, doc.height)
-  if (doc.background !== 'transparent') { ctx.fillStyle = doc.background; ctx.fillRect(0, 0, doc.width, doc.height) }
-  for (const layer of doc.layers) if (layer.id !== hideId) {
-    const override = overrides?.get(layer.id)
-    renderLayer(ctx, override ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false } : layer, override)
+export function isPrepared(doc: EditorDocument) {
+  return document.fonts.status === 'loaded' && (!doc.sourceId || !!originalSource(doc)) && doc.layers.every(l => (!l.src || images.has(l.src)) && (!l.mask || images.has(l.mask.src)))
+}
+export function renderDocument(ctx: CanvasRenderingContext2D, doc: EditorDocument, overrides?: Map<string, HTMLCanvasElement>, hideId?: string, clear = true) {
+  if (clear) ctx.clearRect(0, 0, doc.width, doc.height)
+  const original = originalSource(doc)
+  if (!overrides?.size && original?.composite && isOriginalAppearance(doc)) {
+    const image = images.get(original.composite); if (image) { ctx.drawImage(image, 0, 0, doc.width, doc.height); return }
   }
+  if (doc.background !== 'transparent') { ctx.fillStyle = doc.background; ctx.fillRect(0, 0, doc.width, doc.height) }
+  const surface = () => { const c = document.createElement('canvas'); c.width = doc.width; c.height = doc.height; return c }
+  const draw = (target: CanvasRenderingContext2D, parentId?: string, depth = 0) => {
+    if (depth > 32) return
+    let base: HTMLCanvasElement | undefined
+    const siblings = doc.layers.filter(l => l.parentId === parentId)
+    for (let i = 0; i < siblings.length; i++) {
+      const layer = siblings[i]
+      if (layer.id === hideId || !layer.visible) { if (!layer.clipping) base = undefined; continue }
+      const paint = (out: CanvasRenderingContext2D) => {
+        if (layer.kind === 'group') {
+          if (!layer.isolated && layer.opacity === 1 && !layer.mask && layer.blendMode === 'source-over') { draw(out, layer.id, depth + 1); return }
+          const c = surface(); draw(c.getContext('2d')!, layer.id, depth + 1)
+          renderLayer(out, { ...layer, kind: 'image', x: 0, y: 0, width: doc.width, height: doc.height }, c)
+        } else {
+          const override = overrides?.get(layer.id)
+          renderLayer(out, override ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false } : layer, override)
+        }
+      }
+      if (layer.clipping) {
+        if (!base) continue
+        const c = surface(), x = c.getContext('2d')!; paint(x); x.globalCompositeOperation = 'destination-in'; x.drawImage(base, 0, 0)
+        target.save(); target.globalCompositeOperation = layer.blendMode; target.drawImage(c, 0, 0); target.restore()
+      } else {
+        paint(target); base = undefined
+        if (siblings[i + 1]?.clipping) { base = surface(); paint(base.getContext('2d')!) }
+      }
+    }
+  }
+  draw(ctx)
+}
+const maskCache = new Map<string, { key: Layer; image: HTMLCanvasElement }>()
+function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HTMLCanvasElement) {
+  const m = layer.mask!, mask = images.get(m.src)!
+  const key = { ...layer, x: 0, y: 0, mask: { ...m, x: m.x - layer.x, y: m.y - layer.y } }
+  let cached = maskCache.get(layer.id)
+  if (override || !cached || !sameVisual(key, cached.key)) {
+    const scale = Math.min(1, 4096 / layer.width, 4096 / layer.height)
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(layer.width * scale)); c.height = Math.max(1, Math.ceil(layer.height * scale))
+    const x = c.getContext('2d')!; x.scale(c.width / layer.width, c.height / layer.height)
+    renderLayer(x, { ...layer, mask: undefined, flipX: false, flipY: false }, override, true)
+    const plane = document.createElement('canvas'); plane.width = c.width; plane.height = c.height
+    const p = plane.getContext('2d', { willReadFrequently: true })!
+    p.fillStyle = `rgb(${m.defaultColor},${m.defaultColor},${m.defaultColor})`; p.fillRect(0, 0, c.width, c.height)
+    if (m.feather) p.filter = `blur(${m.feather * scale}px)`
+    p.drawImage(mask, (m.x - layer.x) * scale, (m.y - layer.y) * scale, m.width * scale, m.height * scale)
+    const pixels = p.getImageData(0, 0, c.width, c.height)
+    for (let i = 0; i < pixels.data.length; i += 4) { pixels.data[i + 3] = Math.round(255 * (1 - m.density) + pixels.data[i] * m.density); pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = 255 }
+    p.putImageData(pixels, 0, 0); x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = 'destination-in'; x.drawImage(plane, 0, 0)
+    cached = { key, image: c }; maskCache.set(layer.id, cached)
+    let bytes = [...maskCache.values()].reduce((sum, v) => sum + v.image.width * v.image.height * 4, 0)
+    for (const [id, entry] of maskCache) { if (bytes <= 64 * 1024 * 1024) break; if (id !== layer.id) { bytes -= entry.image.width * entry.image.height * 4; maskCache.delete(id) } }
+  }
+  ctx.drawImage(cached.image, 0, 0, layer.width, layer.height)
 }
 export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   if (layer.src) await loadImage(layer.src)
@@ -119,7 +178,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   canvas.height = Math.max(1, Math.round(layer.height * scale))
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
   ctx.scale(canvas.width / layer.width, canvas.height / layer.height)
-  renderLayer(ctx, { ...layer, styles: undefined, warp: undefined }, undefined, true)
+  renderLayer(ctx, { ...layer, styles: undefined, warp: undefined, mask: undefined }, undefined, true)
   return canvas
 }
 export async function exportCanvas(doc: EditorDocument, scale = 1, background?: string) {
