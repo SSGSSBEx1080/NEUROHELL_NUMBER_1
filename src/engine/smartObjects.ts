@@ -1,12 +1,22 @@
 import { newDocument, uid, makeLayer } from './document'
 import { subtree } from './layerOperations'
-import { encodeBitmap, exportCanvas, validateRasterBudget } from './render'
-import { DEFAULT_ADJUSTMENTS, type EditorDocument } from '../types'
+import {
+  encodeBitmap,
+  exportCanvas,
+  prepareDocument,
+  rasterizeLayer,
+  rasterizedGeometry,
+  validateRasterBudget,
+} from './render'
+import { pixelBounds, rasterBounds } from './layerGeometry'
+import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 export async function makeSmartObject(doc: EditorDocument, id: string) {
   const selected = doc.layers.find((l) => l.id === id)
   if (!selected || selected.locked || selected.smart)
     throw new Error('Выбери незаблокированный обычный слой или группу')
+  await prepareDocument(doc)
   let inner: EditorDocument
+  let bitmap: Layer
   if (selected.kind === 'group') {
     const ids = subtree(doc, id)
     inner = {
@@ -20,26 +30,27 @@ export async function makeSmartObject(doc: EditorDocument, id: string) {
           l.id === id ? { ...l, parentId: undefined, visible: true, locked: false } : l,
         ),
     }
+    bitmap = await encodeBitmap(makeLayer({ kind: 'image' }), await exportCanvas(inner))
   } else {
-    if (selected.width > 4096 || selected.height > 4096)
-      throw new Error('Сначала уменьши слой до 4096 px по каждой стороне')
-    inner = newDocument(
-      Math.max(1, Math.ceil(selected.width)),
-      Math.max(1, Math.ceil(selected.height)),
-      selected.name,
-      'transparent',
+    const bounds = pixelBounds(
+      selected.kind === 'text' || selected.kind === 'shape'
+        ? rasterBounds(selected, false, true)
+        : { x: 0, y: 0, width: selected.width, height: selected.height },
     )
+    if (bounds.width > 4096 || bounds.height > 4096)
+      throw new Error('Сначала уменьши слой до 4096 px по каждой стороне')
+    inner = newDocument(bounds.width, bounds.height, selected.name, 'transparent')
     inner.dpi = doc.dpi
     inner.layers = [
       {
         ...selected,
         id: uid(),
-        x: 0,
-        y: 0,
+        x: -bounds.x,
+        y: -bounds.y,
         rotation: 0,
         warp: undefined,
-        flipX: false,
-        flipY: false,
+        // The editable child retains flips; the outer bitmap has them baked, like
+        // explicit rasterization, with rebased placement/warp/mask/style geometry.
         parentId: undefined,
         mask: undefined,
         styles: undefined,
@@ -50,12 +61,23 @@ export async function makeSmartObject(doc: EditorDocument, id: string) {
         sourcePath: undefined,
       },
     ]
+    const base = await rasterizeLayer(selected)
+    // Use the content document as canonical preview, just like Apply. The temporary
+    // raster supplies placement/warp/mask/style rebasing, not the editable contents.
+    bitmap = await encodeBitmap(
+      {
+        ...selected,
+        ...rasterizedGeometry(selected, base),
+        flipX: false,
+        flipY: false,
+        adjustments: { ...DEFAULT_ADJUSTMENTS },
+      },
+      await exportCanvas(inner),
+    )
   }
   const depth = (value: EditorDocument): number =>
     Math.max(0, ...value.layers.map((l) => (l.smart ? 1 + depth(l.smart) : 0)))
   if (depth(inner) > 2) throw new Error('Вложенность смарт-объектов ограничена тремя уровнями')
-  const pixels = await exportCanvas(inner)
-  const bitmap = await encodeBitmap(makeLayer({ kind: 'image' }), pixels)
   const outer =
     selected.kind === 'group'
       ? makeLayer({
@@ -72,12 +94,9 @@ export async function makeSmartObject(doc: EditorDocument, id: string) {
           visible: selected.visible,
         })
       : {
-          ...selected,
-          kind: 'image' as const,
-          src: bitmap.src,
+          ...bitmap,
           smart: inner,
           sourcePath: undefined,
-          adjustments: { ...DEFAULT_ADJUSTMENTS },
         }
   const ids = subtree(doc, id),
     result = {

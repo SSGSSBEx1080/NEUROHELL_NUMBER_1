@@ -1,4 +1,5 @@
 import { sealProject } from './psdIntegrity'
+import { gaussianSmartFilter, nativeSmartPlacement, translateNativePlacement } from './psdSmart'
 import { affineText, exportNativeText, importNativeText } from './psdText'
 import { exportVectorShape, importVectorShape, translateNativeVector } from './psdVector'
 import { rasterBounds, rectPoints, worldBounds } from './layerGeometry'
@@ -249,9 +250,16 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
     ]
   return effects
 }
+interface EmbeddedImport {
+  depth: number
+  budget: { documents: number; bytes: number; pixels: number }
+}
+const smartDepth = (doc: EditorDocument): number =>
+  Math.max(0, ...doc.layers.map((l) => (l.smart ? 1 + smartDepth(l.smart) : 0)))
 export async function importPsd(
   buffer: ArrayBuffer,
   name: string,
+  nested: EmbeddedImport = { depth: 0, budget: { documents: 0, bytes: 0, pixels: 0 } },
 ): Promise<{ document: EditorDocument; report: CompatibilityReport }> {
   const header = validatePsdHeader(buffer),
     original = buffer.slice(0)
@@ -323,7 +331,57 @@ export async function importPsd(
           : undefined
         if (editableText) Object.assign(layer, editableText)
         if (editableShape) Object.assign(layer, editableShape)
-        else if (src.vectorFill && src.vectorMask)
+        if (src.placedLayer) {
+          try {
+            const linked = psd.linkedFiles?.find((f) => f.id === src.placedLayer!.id)
+            const data = linked?.data
+            if (!data?.byteLength) throw new Error('внешняя связь или нет встроенных данных')
+            const bytes = data.slice().buffer as ArrayBuffer
+            const embeddedHeader = validatePsdHeader(bytes)
+            const placement = nativeSmartPlacement(
+              src,
+              embeddedHeader.width,
+              embeddedHeader.height,
+              layer.styles,
+            )
+            if (!placement)
+              throw new Error(
+                'неподдерживаемая внешняя маска, деформация, композиция, FX или smart filter',
+              )
+            const budget = nested.budget
+            if (
+              nested.depth >= 3 ||
+              budget.documents >= 8 ||
+              budget.bytes + bytes.byteLength > 32 * 1024 * 1024 ||
+              budget.pixels + embeddedHeader.width * embeddedHeader.height > 32_000_000
+            )
+              throw new Error('достигнут бюджет раскрытия: 3 уровня, 8 PSD, 32 МиБ / 32 Мп')
+            budget.documents++
+            budget.bytes += bytes.byteLength
+            budget.pixels += embeddedHeader.width * embeddedHeader.height
+            const contents = await importPsd(bytes, linked?.name || layer.name + '.psd', {
+              depth: nested.depth + 1,
+              budget,
+            })
+            if (nested.depth + 1 + smartDepth(contents.document) > 3)
+              throw new Error('более трёх уровней содержимого')
+            const smart = { ...contents.document, id: uid() },
+              pixels = await exportCanvas(smart),
+              preview = pixels.toDataURL('image/png')
+            cacheImage(preview, pixels)
+            Object.assign(layer, placement, { kind: 'image', smart, src: preview })
+            warnings.add(
+              'Встроенные поддерживаемые PSD открываются как редактируемое смарт-содержимое без собственного XMP. После изменения предпросмотр и поддерживаемый Gaussian Blur пересчитываются движком ФШ777.',
+            )
+            for (const warning of contents.report.warnings)
+              warnings.add(`Вложенный PSD «${layer.name.slice(0, 100)}»: ${warning}`)
+          } catch (error) {
+            warnings.add(
+              `Смарт-объект «${layer.name.slice(0, 100)}» оставлен исходным с растровым предпросмотром: ${error instanceof Error ? error.message : 'не удалось раскрыть PSD'}. Native-данные сохраняются, пока содержимое не заменено.`,
+            )
+          }
+        }
+        if (!editableShape && src.vectorFill && src.vectorMask)
           warnings.add(
             'Часть векторных фигур использует неподдерживаемую заливку или логические операции контуров: исходная структура сохраняется, предпросмотр растровый.',
           )
@@ -352,10 +410,6 @@ export async function importPsd(
         if (src.text && !editableText)
           warnings.add(
             'Сложный, вертикальный или неоднородно оформленный текст сохранён с исходными native-данными и пиксельным предпросмотром. «Извлечь текст» создаст редактируемую упрощённую копию; оригинал остаётся в PSD.',
-          )
-        if (src.placedLayer)
-          warnings.add(
-            'Исходные смарт-объекты и вложенные данные сохраняются при неизменённом содержимом. Поддерживаемый вложенный PSD можно открыть отдельно.',
           )
         if (
           (src.vectorMask && !editableShape) ||
@@ -484,8 +538,9 @@ export async function exportPsd(
     const copy = source.bytes.slice(0)
     original = (await runCodec<{ psd: Psd }>({ operation: 'read', buffer: copy }, [copy])).psd
   }
+  const appearanceUnchanged = !!source && isOriginalAppearance(doc)
   const imageData =
-    original?.imageData && isOriginalAppearance(doc)
+    original?.imageData && appearanceUnchanged
       ? original.imageData
       : (await exportCanvas(doc)).getContext('2d')!.getImageData(0, 0, doc.width, doc.height)
   let budget = doc.width * doc.height * 4
@@ -494,6 +549,25 @@ export async function exportPsd(
     if (budget > 192 * 1024 * 1024)
       throw new Error('PSD: более 192 МиБ растров. Объедини часть слоёв.')
     return canvas(width, height)
+  }
+  const rasterPreview = (layer: Layer, embeddedAppearance = false): PsdLayer => {
+    const bounds = worldBounds(layer, true, embeddedAppearance)
+    const left = Math.floor(bounds.x),
+      top = Math.floor(bounds.y)
+    const right = Math.ceil(bounds.x + bounds.width),
+      bottom = Math.ceil(bounds.y + bounds.height)
+    const c = allocate(right - left, bottom - top),
+      ctx = c.getContext('2d')!
+    ctx.translate(-left, -top)
+    renderLayer(ctx, {
+      ...layer,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      styles: embeddedAppearance ? layer.styles : undefined,
+      mask: embeddedAppearance ? layer.mask : undefined,
+    })
+    return { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
   }
   const notes: string[] = []
   let editableContents = 0
@@ -534,28 +608,13 @@ export async function exportPsd(
           out.text = { ...out.text, transform }
         }
         if (out.placedLayer && (dx || dy))
-          out.placedLayer = {
-            ...out.placedLayer,
-            transform: out.placedLayer.transform.map((n, i) => n + (i % 2 ? dy : dx)),
-          }
+          out.placedLayer = translateNativePlacement(out.placedLayer, dx, dy)
+        // Once the document has visual edits, native cached previews must match
+        // the working renderer as well as the merged image. Keep the original
+        // placement/linked PSD/metadata; refresh pixels only, never flatten contents.
+        if (layer.smart && !appearanceUnchanged) Object.assign(out, rasterPreview(layer))
       } else if (layer.kind !== 'group') {
-        const bounds = worldBounds(layer, true, embeddedAppearance)
-        const left = Math.floor(bounds.x),
-          top = Math.floor(bounds.y)
-        const right = Math.ceil(bounds.x + bounds.width),
-          bottom = Math.ceil(bounds.y + bounds.height)
-        const c = allocate(right - left, bottom - top),
-          ctx = c.getContext('2d')!
-        ctx.translate(-left, -top)
-        renderLayer(ctx, {
-          ...layer,
-          visible: true,
-          opacity: 1,
-          blendMode: 'source-over',
-          styles: embeddedAppearance ? layer.styles : undefined,
-          mask: embeddedAppearance ? layer.mask : undefined,
-        })
-        out = { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
+        out = rasterPreview(layer, embeddedAppearance)
         if (layer.kind === 'shape' || layer.kind === 'text') {
           const native = nativePaint(layer)
           if (Object.entries(layer.adjustments).some(([k, v]) => k !== 'blur' && v !== 0))
@@ -652,30 +711,7 @@ export async function exportPsd(
               transform: corners,
               nonAffineTransform: corners,
               resolution: { units: 'Density', value: inner.dpi },
-              ...(!embeddedAppearance && layer.adjustments.blur
-                ? {
-                    filter: {
-                      enabled: true,
-                      validAtPosition: true,
-                      maskEnabled: false,
-                      maskLinked: false,
-                      maskExtendWithWhite: true,
-                      list: [
-                        {
-                          type: 'gaussian blur' as const,
-                          filter: { radius: px(layer.adjustments.blur) },
-                          name: 'Gaussian Blur',
-                          opacity: 1,
-                          blendMode: 'normal' as const,
-                          enabled: true,
-                          hasOptions: true,
-                          foregroundColor: rgb('#000000'),
-                          backgroundColor: rgb('#ffffff'),
-                        },
-                      ],
-                    },
-                  }
-                : {}),
+              filter: gaussianSmartFilter(embeddedAppearance ? 0 : layer.adjustments.blur),
             }
             editableContents++
             notes.push(
@@ -790,7 +826,7 @@ export async function exportPsd(
         }
       } else out.mask = undefined
       if (layer.smart && !preserved) {
-        const nested = await exportPsd({ ...layer.smart, sourceId: undefined }, false, depth + 1),
+        const nested = await exportPsd(layer.smart, false, depth + 1),
           id = uid()
         linkedFiles.push({
           id,
@@ -829,7 +865,9 @@ export async function exportPsd(
           width: layer.smart.width,
           height: layer.smart.height,
           transform: corners,
+          nonAffineTransform: corners,
           resolution: { units: 'Density', value: layer.smart.dpi || 72 },
+          filter: gaussianSmartFilter(layer.adjustments.blur),
         }
       }
       output.push(out)
@@ -902,7 +940,7 @@ export async function exportPsd(
     project: portable,
   })
   const bytes =
-    source && isOriginalAppearance(doc)
+    source && appearanceUnchanged
       ? preserveMergedPixels(source.bytes, preserveUnknownResources(source.bytes, buffer))
       : buffer
   if (bytes.byteLength > 80 * 1024 * 1024)

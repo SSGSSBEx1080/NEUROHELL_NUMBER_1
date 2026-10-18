@@ -1,5 +1,5 @@
 import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
-import { rasterBounds, rectPoints } from './layerGeometry'
+import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { homography, project, validQuad } from './projection'
 import { renderShape } from './shapeRenderer'
@@ -112,12 +112,10 @@ export function renderLayer(
 ) {
   if (!flat && (!layer.visible || layer.opacity === 0)) return
   ctx.save()
+  ctx.imageSmoothingQuality = 'high'
   if (!flat) {
     ctx.globalAlpha = layer.opacity
     ctx.globalCompositeOperation = layer.blendMode
-    ctx.translate(layer.x + layer.width / 2, layer.y + layer.height / 2)
-    ctx.rotate((layer.rotation * Math.PI) / 180)
-    ctx.translate(-layer.width / 2, -layer.height / 2)
   }
   if (layer.warp && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
     renderWarped(
@@ -125,9 +123,15 @@ export function renderLayer(
       layer,
       (base) => renderLayer(base, { ...layer, warp: undefined }, override, true),
       !!override || !!layer.mask?.src.startsWith('mask-preview:'),
+      !flat,
     )
     ctx.restore()
     return
+  }
+  if (!flat) {
+    ctx.translate(layer.x + layer.width / 2, layer.y + layer.height / 2)
+    ctx.rotate((layer.rotation * Math.PI) / 180)
+    ctx.translate(-layer.width / 2, -layer.height / 2)
   }
   if (layer.flipX || layer.flipY) {
     ctx.translate(layer.flipX ? layer.width : 0, layer.flipY ? layer.height : 0)
@@ -393,10 +397,11 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
     await document.fonts.load(textFont(layer), (layer.text || 'AaБб').slice(0, 256))
     clearTextGeometryCache()
   }
-  const bounds =
+  const bounds = pixelBounds(
     layer.kind === 'text' || layer.kind === 'shape'
       ? rasterBounds(layer, false, true)
-      : { x: 0, y: 0, width: layer.width, height: layer.height }
+      : { x: 0, y: 0, width: layer.width, height: layer.height },
+  )
   const canvas = document.createElement('canvas')
   const scale = Math.min(1, 4096 / bounds.width, 4096 / bounds.height)
   canvas.width = Math.max(1, Math.ceil(bounds.width * scale))
@@ -471,7 +476,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   })
   return canvas
 }
-const bitmapGeometry = (layer: Layer, canvas: HTMLCanvasElement): Partial<Layer> => {
+export const rasterizedGeometry = (layer: Layer, canvas: HTMLCanvasElement): Partial<Layer> => {
   const metadata = rasterGeometry.get(canvas)
   return metadata?.source === layer ? metadata.patch : { mask: rasterMask(layer) }
 }
@@ -538,7 +543,7 @@ export function bitmapLayer(layer: Layer, canvas: HTMLCanvasElement): Layer {
     ...layer,
     kind: 'image',
     src,
-    ...bitmapGeometry(layer, canvas),
+    ...rasterizedGeometry(layer, canvas),
     flipX: false,
     flipY: false,
     adjustments: { ...DEFAULT_ADJUSTMENTS },
@@ -558,7 +563,7 @@ export async function encodeBitmap(layer: Layer, canvas: HTMLCanvasElement): Pro
     ...layer,
     kind: 'image',
     src,
-    ...bitmapGeometry(layer, canvas),
+    ...rasterizedGeometry(layer, canvas),
     flipX: false,
     flipY: false,
     adjustments: { ...DEFAULT_ADJUSTMENTS },

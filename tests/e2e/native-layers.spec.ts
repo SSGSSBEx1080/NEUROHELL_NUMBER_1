@@ -32,9 +32,12 @@ async function open(page: Page, name: string, bytes: Buffer) {
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 async function png(page: Page) {
-  const data = await page
-    .getByTestId('editor-canvas')
-    .evaluate((c: HTMLCanvasElement) => c.toDataURL().split(',')[1])
+  const data = await page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    )
+    return c.toDataURL().split(',')[1]
+  })
   return Buffer.from(data, 'base64')
 }
 test('native shape controls, PSD vector data, groups and XMP-free editable reimport', async ({
@@ -208,7 +211,11 @@ test('stroke-only shapes are hollow and new shape subtools create actual editabl
 })
 
 async function alphaBounds(page: Page) {
-  return page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => {
+  return page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+    // React switches tabs before the RAF renderer paints; never inspect the old tab.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    )
     const p = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
     let left = c.width,
       top = c.height,
@@ -714,4 +721,198 @@ test('warped strokes, local effects and masks stay editable inside placed PSD co
   expect(nested(typeContents, 'Warped type FX').children![0].text!.text).toBe('Эффекты')
   await writeFile('test-results/native-warped-paint.psd', bytes)
   await writeFile('test-results/native-warped-paint.png', await png(page))
+
+  // Remove EVERY private project, including nested PSDs: editability must come
+  // from actual placed files and native layers, not our supplemental JSON.
+  const removePrivate = (document: typeof psd) => {
+    if (document.imageResources) delete document.imageResources.xmpMetadata
+    for (const linked of document.linkedFiles || []) {
+      if (!linked.data) continue
+      const contents = readPsd(linked.data, { useImageData: true, skipThumbnail: true })
+      removePrivate(contents)
+      linked.data = new Uint8Array(
+        writePsd(contents, { noBackground: true, invalidateTextLayers: false }),
+      )
+    }
+  }
+  removePrivate(psd)
+  const nativeOnly = Buffer.from(writePsd(psd, { noBackground: true, invalidateTextLayers: false }))
+  await open(page, 'native-contents-only.psd', nativeOnly)
+  expect((await save(page)).equals(nativeOnly)).toBe(true)
+  await expect(page.locator('.smart-thumbnail-mark')).toHaveCount(3)
+  await page
+    .getByRole('button', { name: 'Открыть содержимое: Warped stroke', exact: true })
+    .dblclick()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.getByLabel('Верхний левый угол', { exact: true })).toHaveValue('12')
+  await page.getByLabel('Верхний левый угол', { exact: true }).fill('18')
+  await page.getByLabel('Верхний левый угол', { exact: true }).press('Enter')
+  await page.getByRole('button', { name: 'Применить в документ · Ctrl+S', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page
+    .getByRole('button', { name: 'Открыть содержимое: Warped type FX', exact: true })
+    .dblclick()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.locator('.smart-thumbnail-mark')).toHaveCount(1)
+  await page
+    .getByRole('button', { name: 'Открыть содержимое: Warped type FX', exact: true })
+    .dblclick()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const text = page.getByLabel('Текст слоя', { exact: true })
+  await expect(text).toHaveValue('Эффекты')
+  await text.fill('Живой текст')
+  await text.press('Control+Enter')
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('button', { name: 'Применить в документ · Ctrl+S', exact: true }).click()
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+  }
+  const updatedBytes = await save(page),
+    updated = readPsd(updatedBytes, { useImageData: true, skipThumbnail: true })
+  expect(
+    nested(updated, 'Warped stroke').children![0].vectorOrigination!.keyDescriptorList[0]
+      .keyOriginRRectRadii!.topLeft.value,
+  ).toBe(18)
+  const updatedMiddle = nested(updated, 'Warped type FX')
+  expect(updatedMiddle.children![0].placedLayer!.filter!.list[0].type).toBe('gaussian blur')
+  expect(nested(updatedMiddle, 'Warped type FX').children![0].text!.text).toBe('Живой текст')
+  await writeFile('test-results/native-smart-edited.psd', updatedBytes)
+  await writeFile('test-results/native-smart-edited.png', await png(page))
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  const undone = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  expect(nested(nested(undone, 'Warped type FX'), 'Warped type FX').children![0].text!.text).toBe(
+    'Эффекты',
+  )
 })
+
+test('converting short-box point text to a smart object preserves complete glyphs and editable flipped contents', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(640, 240, 'Smart point geometry', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'Full point',
+      text: 'Редактор 777',
+      x: 540,
+      y: 45,
+      width: 18,
+      height: 9,
+      fontFamily: 'Manrope',
+      fontSize: 54,
+      fontWeight: 700,
+      italic: true,
+      flipX: true,
+      rotation: -6,
+      color: '#20263d',
+    }),
+  ]
+  await open(page, 'smart-bounds.777', Buffer.from(JSON.stringify(doc)))
+  await expect.poll(async () => (await alphaBounds(page)).width).toBeGreaterThan(300)
+  const before = await alphaBounds(page)
+  await page.getByRole('button', { name: 'Слой', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Преобразовать в смарт-объект', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const after = await alphaBounds(page)
+  expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(2)
+  expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(2)
+  expect(Math.abs(after.width - before.width)).toBeLessThanOrEqual(2)
+  expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(2)
+  await page.getByRole('button', { name: 'Редактировать содержимое', exact: false }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Редактор 777')
+  await expect.poll(async () => (await alphaBounds(page)).width).toBeGreaterThan(300)
+  await page.getByRole('button', { name: 'Применить в документ · Ctrl+S', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  expect(await alphaBounds(page)).toEqual(after)
+  const saved = readPsd(await save(page), { useImageData: true, skipThumbnail: true }),
+    inner = readPsd(
+      saved.linkedFiles!.find((l) => l.id === saved.children![0].placedLayer!.id)!.data!,
+      { useImageData: true, skipThumbnail: true },
+    )
+  expect(inner.width).toBeGreaterThan(300)
+  expect(inner.children![0].text!.text).toBe('Редактор 777')
+  expect(inner.children![0].text!.transform![0]).toBeLessThan(0)
+})
+
+for (const cpu of [false, true]) {
+  test(`translucent perspective has no alpha accumulation (${cpu ? 'forced CPU' : 'automatic backend'})`, async ({
+    page,
+  }) => {
+    await page.addInitScript((forceCpu) => {
+      let draws = 0
+      Object.defineProperty(window, '__projectionDraws', { get: () => draws })
+      if (forceCpu) {
+        const original = HTMLCanvasElement.prototype.getContext
+        HTMLCanvasElement.prototype.getContext = function (kind: string, ...args: unknown[]) {
+          if (kind === 'webgl' || kind === 'webgl2') return null
+          return Reflect.apply(original, this, [kind, ...args])
+        } as typeof original
+      } else {
+        const original = WebGLRenderingContext.prototype.drawElements
+        WebGLRenderingContext.prototype.drawElements = function (
+          ...args: Parameters<typeof original>
+        ) {
+          draws++
+          return Reflect.apply(original, this, args)
+        }
+      }
+    }, cpu)
+    await page.goto('/')
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    const source = await page.evaluate(() => {
+      const c = document.createElement('canvas')
+      c.width = 400
+      c.height = 60
+      const x = c.getContext('2d')!
+      x.fillStyle = '#b8a8ff'
+      x.globalAlpha = 0.5
+      x.fillRect(0, 0, c.width, c.height)
+      return { src: c.toDataURL(), rgba: [...x.getImageData(20, 20, 1, 1).data] }
+    })
+    const doc = newDocument(500, 180, 'Transparent projection', 'transparent')
+    doc.layers = [
+      makeLayer({
+        kind: 'image',
+        name: 'Half alpha',
+        src: source.src,
+        x: 50,
+        y: 60,
+        width: 400,
+        height: 60,
+        warp: [
+          { x: 0.05, y: -0.1 },
+          { x: 0.92, y: 0.15 },
+          { x: 1.05, y: 1.15 },
+          { x: -0.04, y: 0.92 },
+        ],
+      }),
+    ]
+    await open(page, 'translucent.777', Buffer.from(JSON.stringify(doc)))
+    await alphaBounds(page)
+    const result = await page
+      .getByTestId('editor-canvas')
+      .evaluate((c: HTMLCanvasElement, rgba) => {
+        const p = c.getContext('2d')!.getImageData(90, 85, 330, 15).data
+        let alphaError = 0,
+          colourError = 0
+        for (let i = 0; i < p.length; i += 4) {
+          alphaError = Math.max(alphaError, Math.abs(p[i + 3] - rgba[3]))
+          for (let k = 0; k < 3; k++)
+            colourError = Math.max(colourError, Math.abs(p[i + k] - rgba[k]))
+        }
+        return { alphaError, colourError }
+      }, source.rgba)
+    expect(result.alphaError).toBeLessThanOrEqual(1)
+    expect(result.colourError).toBeLessThanOrEqual(1)
+    const draws = await page.evaluate(
+      () => (window as typeof window & { __projectionDraws: number }).__projectionDraws,
+    )
+    if (cpu) expect(draws).toBe(0)
+    await writeFile(
+      `test-results/projection-${cpu ? 'cpu' : 'automatic'}.json`,
+      JSON.stringify({ ...result, gpuDraws: draws, sourceAlpha: source.rgba[3] }),
+    )
+  })
+}

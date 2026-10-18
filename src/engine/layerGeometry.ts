@@ -14,6 +14,17 @@ export const expandBounds = (r: Rect, p: number): Rect => ({
   width: r.width + p * 2,
   height: r.height + p * 2,
 })
+/** Outward integer bounds avoid a scale/unscale resampling just to store a bitmap. */
+export function pixelBounds(r: Rect): Rect {
+  const x = Math.floor(r.x),
+    y = Math.floor(r.y)
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.ceil(r.x + r.width) - x),
+    height: Math.max(1, Math.ceil(r.y + r.height) - y),
+  }
+}
 export function localBounds(layer: Layer, flipped = false): Rect {
   const r =
     layer.kind === 'text'

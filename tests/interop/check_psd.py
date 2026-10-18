@@ -135,4 +135,15 @@ for source, image in [("merged", document.topil()), ("native layers", document.c
     assert float(delta.max()) <= 2.0, ("warped editable paint", source, float(delta.max()))
     print(f"PASS warped editable paint, {source}: max premultiplied RGBA error {delta.max():.4f}/255; nested shapes/type/mask retained, no duplicate outer effects")
 
-print("Scope: RGB/8, these eighteen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+document = PSDImage.open(RESULTS / "native-smart-edited.psd")
+reference = premultiplied(Image.open(RESULTS / "native-smart-edited.png"))
+contents = {layer.name: PSDImage.open(BytesIO(layer.smart_object.data)) for layer in document}
+assert contents["Warped stroke"][0].kind == "shape"
+type_contents = PSDImage.open(BytesIO(contents["Warped type FX"][0].smart_object.data))
+assert type_contents[0].kind == "type" and type_contents[0].text == "Живой текст"
+for source, image in [("merged", document.topil()), ("native layers", document.composite(ignore_preview=True, force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2.0, ("native smart edit", source, float(delta.max()))
+    print(f"PASS XMP-free smart edit, {source}: max premultiplied RGBA error {delta.max():.4f}/255; edited nested native shape and type retained")
+
+print("Scope: RGB/8, these nineteen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
