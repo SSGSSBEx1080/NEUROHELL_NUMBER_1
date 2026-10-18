@@ -246,7 +246,9 @@ export default function App() {
     )
   })
   const openDocument = (next: EditorDocument) => {
-    if (workspace.open(next)) {
+    // Imported IDs are data, not permission to reuse a former tab's native save path.
+    // Recovery uses workspace.openRecent instead and intentionally keeps its session ID.
+    if (workspace.open({ ...next, id: uid() })) {
       setModal(null)
       setPendingDocument(null)
       setCompatibility(null)

@@ -207,6 +207,9 @@ test('portable project saves layers and restores autosaved edits after reload', 
   await expect(
     page.getByRole('button', { name: 'Разблокировать: subject', exact: true }),
   ).toBeVisible()
+  await page.keyboard.press('Control+w')
+  await page.getByRole('button', { name: 'Закрыть вкладку', exact: true }).click()
+  await expect(page.getByTestId('home-screen')).toBeVisible()
   await page.getByLabel('Открыть изображение или проект').setInputFiles({
     name: 'saved.777',
     mimeType: 'application/json',
@@ -216,6 +219,12 @@ test('portable project saves layers and restores autosaved edits after reload', 
   await expect(
     page.getByRole('button', { name: 'Заблокировать: subject', exact: true }),
   ).toBeVisible()
+  const copyDownload = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Файл', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click()
+  const copy = await copyDownload
+  const reopened = JSON.parse(await readFile((await copy.path())!, 'utf8'))
+  expect(reopened.id).not.toBe(project.id)
 })
 
 for (const format of ['PSD', 'PSB'])

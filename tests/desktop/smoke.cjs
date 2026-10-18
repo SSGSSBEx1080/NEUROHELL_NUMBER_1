@@ -59,10 +59,14 @@ watchdog.unref()
     progress('sandbox and custom protocol OK; intercept native save paths')
     // Do not return Session (a native, non-serializable object) from evaluate.
     await app.evaluate(({ session, dialog }, directory) => {
-      dialog.showSaveDialog = async (_window, options) => ({
-        canceled: false,
-        filePath: directory + '/' + options.defaultPath.split(/[\\/]/).pop(),
-      })
+      globalThis.__fshSaveDialogCount = 0
+      dialog.showSaveDialog = async (_window, options) => {
+        globalThis.__fshSaveDialogCount++
+        return {
+          canceled: false,
+          filePath: directory + '/' + options.defaultPath.split(/[\\/]/).pop(),
+        }
+      }
       session.defaultSession.on('will-download', (_event, item) => {
         item.setSavePath(directory + '/' + item.getFilename())
       })
@@ -122,6 +126,10 @@ watchdog.unref()
     const project = (await fs.readdir(temp)).find((file) => file.endsWith('.777'))
     assert.ok(project)
     assert.equal(JSON.parse(await fs.readFile(path.join(temp, project), 'utf8')).layers.length, 7)
+    progress('close original tab before reimporting its PSD')
+    await page.keyboard.press('Control+w')
+    await page.getByRole('button', { name: 'Закрыть вкладку', exact: true }).click()
+    await expect(page.getByTestId('home-screen')).toBeVisible()
     progress('reimport PSD through production worker')
     const psd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd'))
     await page.getByLabel('Открыть изображение или проект').setInputFiles(path.join(temp, psd))
@@ -132,6 +140,15 @@ watchdog.unref()
     await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена', {
       timeout: 15000,
     })
+    progress('reopened copy must prompt once, not inherit the closed tab save permission')
+    const dialogs = await app.evaluate(() => globalThis.__fshSaveDialogCount)
+    await page.keyboard.press('Control+s')
+    await expect.poll(() => app.evaluate(() => globalThis.__fshSaveDialogCount)).toBe(dialogs + 1)
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/)
+    await page.keyboard.press('Control+s')
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    assert.equal(await app.evaluate(() => globalThis.__fshSaveDialogCount), dialogs + 1)
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
