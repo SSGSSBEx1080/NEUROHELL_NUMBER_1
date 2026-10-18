@@ -40,6 +40,7 @@ async function exportFile(page: Page, format: string) {
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: `Скачать ${format}`, exact: true }).click()
   const download = await downloadPromise
+  await expect(page.getByRole('dialog')).toBeHidden()
   return { bytes: await readFile((await download.path())!), name: download.suggestedFilename() }
 }
 
@@ -218,4 +219,36 @@ test('Ctrl corner distortion changes real pixels and survives PSD export', async
   await page.getByRole('button', { name: 'Открыть рабочую копию' }).click()
   await expect.poll(async () => (await pixel(page, 140, 60))[3]).toBe(0)
   await expect.poll(async () => (await pixel(page, 80, 100))[3]).toBe(255)
+})
+
+async function decodedFile(page: Page, bytes: Buffer, mime: string) {
+  return page.evaluate(async ({ data, mime }) => {
+    const image = new Image(); image.src = `data:${mime};base64,${data}`; await image.decode()
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height
+    const ctx = canvas.getContext('2d')!; ctx.drawImage(image, 0, 0)
+    return { width: image.width, height: image.height, corner: [...ctx.getImageData(5, 5, 1, 1).data], subject: [...ctx.getImageData(image.width / 2, image.height / 2, 1, 1).data] }
+  }, { data: bytes.toString('base64'), mime })
+}
+for (const format of ['JPG', 'WEBP']) test(`${format} export writes decodable pixels, dimensions and correct background`, async ({ page }) => {
+  await ready(page); await blank(page); await importTestImage(page)
+  const file = await exportFile(page, format)
+  const decoded = await decodedFile(page, file.bytes, format === 'JPG' ? 'image/jpeg' : 'image/webp')
+  expect(decoded.width).toBe(300); expect(decoded.height).toBe(200)
+  expect(decoded.subject[0]).toBeGreaterThan(245); expect(decoded.subject[1]).toBeLessThan(10); expect(decoded.subject[3]).toBe(255)
+  if (format === 'JPG') { expect(file.bytes.readUInt16BE(0)).toBe(0xffd8); expect(decoded.corner).toEqual([255, 255, 255, 255]) }
+  else { expect(file.bytes.toString('ascii', 8, 12)).toBe('WEBP'); expect(decoded.corner[3]).toBe(0) }
+})
+
+test('opaque PNG option really flattens transparency and 2x export doubles dimensions', async ({ page }) => {
+  await ready(page); await blank(page); await importTestImage(page)
+  await page.getByRole('button', { name: 'Экспорт', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Прозрачный холст' }).uncheck()
+  await page.getByLabel('Масштаб экспорта').selectOption('2')
+  const promise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
+  const download = await promise
+  await expect(page.getByRole('dialog')).toBeHidden()
+  const decoded = await decodedFile(page, await readFile((await download.path())!), 'image/png')
+  expect(decoded.width).toBe(600); expect(decoded.height).toBe(400)
+  expect(decoded.corner).toEqual([255, 255, 255, 255]); expect(decoded.subject).toEqual([255, 0, 0, 255])
 })

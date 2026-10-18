@@ -26,13 +26,15 @@ export function ColorField({ label, value, onChange, onCommit }: { label: string
 }
 export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   useEffect(() => {
     const previous = document.activeElement as HTMLElement
     const node = ref.current!
     const focusable = () => Array.from(node.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea, a[href], [tabindex="0"]'))
     focusable()[0]?.focus()
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeRef.current() }
       if (e.key === 'Tab') {
         const targets = focusable(); const first = targets[0], last = targets.at(-1)
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
@@ -40,8 +42,8 @@ export function Modal({ title, subtitle, children, onClose, wide = false }: { ti
       }
     }
     node.addEventListener('keydown', handler)
-    return () => { node.removeEventListener('keydown', handler); previous?.focus() }
-  }, [onClose])
+    return () => { node.removeEventListener('keydown', handler); if (previous?.isConnected) previous.focus() }
+  }, [])
   return <div className="modal-backdrop" onPointerDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
       <header className="modal-heading"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton icon={X} label="Закрыть окно" onClick={onClose} /></header>

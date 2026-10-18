@@ -7,6 +7,8 @@ const { resolveAsset, mime, CSP } = require('./security.cjs');
 
 app.setName('FSH777');
 app.setAppUserModelId('app.fsh777.editor');
+const profile = app.commandLine.getSwitchValue('user-data-dir');
+if (profile) { fs.mkdirSync(path.resolve(profile), { recursive: true }); app.setPath('userData', path.resolve(profile)); }
 protocol.registerSchemesAsPrivileged([{ scheme: 'fsh777', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 const single = app.requestSingleInstanceLock();
 let window;
@@ -40,6 +42,10 @@ else {
       const width = Math.min(area.width, Math.max(900, Number(saved.width) || 1440));
       const height = Math.min(area.height, Math.max(640, Number(saved.height) || 940));
       window = new BrowserWindow({ width, height, minWidth: Math.min(900, area.width), minHeight: Math.min(640, area.height), show: false, title: 'ФШ 777 — независимая студия', backgroundColor: '#19191e', icon: path.join(__dirname, 'icon.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, spellcheck: false } });
+      window.webContents.on('will-prevent-unload', event => {
+        const response = dialog.showMessageBoxSync(window, { type: 'question', title: 'ФШ 777 — закрыть проект?', message: 'Автосохранение ещё не завершено или недоступно.', detail: 'Останься в редакторе и сохрани проект через Ctrl+S, чтобы не потерять изменения.', buttons: ['Остаться', 'Закрыть без ожидания'], defaultId: 0, cancelId: 0, noLink: true });
+        if (response === 1) event.preventDefault();
+      });
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       window.webContents.on('will-navigate', (event, url) => { if (!resolveAsset(root, url)) event.preventDefault(); });
       window.once('ready-to-show', () => { if (saved.maximized) window.maximize(); window.show(); });

@@ -1,8 +1,7 @@
 name: Editor checks
 on:
-  push:
-    branches: [main, 'arena/**']
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -11,6 +10,8 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -24,3 +25,9 @@ jobs:
       - run: npm run test:e2e
         env:
           CI: 'true'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-diagnostics
+          path: test-results/
+          retention-days: 7

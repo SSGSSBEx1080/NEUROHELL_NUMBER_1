@@ -9,11 +9,16 @@ concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
   build:
+    needs: verify
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -24,9 +29,19 @@ jobs:
       - run: npm run test:desktop-security
       - run: npm run build
       - run: npm run test:desktop
+        timeout-minutes: 4
       - run: npm run desktop:windows
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Test the packaged Windows executable
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem release/win-unpacked -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'Packaged executable missing' }
+          $env:FSH777_SMOKE_EXECUTABLE = $exe.FullName
+          npm run test:desktop
+          exit $LASTEXITCODE
       - name: Checksums
         shell: pwsh
         run: |
@@ -41,10 +56,35 @@ jobs:
             release/*.exe
             release/*.zip
             release/SHA256SUMS.txt
+          if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: desktop-test-diagnostics
           path: test-results/
           retention-days: 7
+  draft-release:
+    needs: build
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[windows-release]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: FSH777-Windows-x64
+          path: release
+      - name: Stage release for manual review (never overwrite an existing release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::notice::Release v$VERSION already exists; it was not changed."
+            exit 0
+          fi
+          gh release create "v$VERSION" release/*.exe release/*.zip release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "ФШ 777 · $VERSION Desktop" --notes-file docs/RELEASE_NOTES_RU.md --draft --prerelease

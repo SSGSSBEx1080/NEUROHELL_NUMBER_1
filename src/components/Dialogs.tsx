@@ -31,12 +31,13 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
   const [preview, setPreview] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const background = layered ? doc.background : transparent && format !== 'jpeg' ? 'transparent' : doc.background === 'transparent' ? '#ffffff' : doc.background
   useEffect(() => {
     let disposed = false
-    exportCanvas({ ...doc, background: transparent && format !== 'jpeg' ? 'transparent' : doc.background }, Math.min(1, 500 / doc.width, 310 / doc.height), format === 'jpeg' ? '#ffffff' : undefined)
+    exportCanvas({ ...doc, background }, Math.min(1, 500 / doc.width, 310 / doc.height), format === 'jpeg' ? '#ffffff' : undefined)
       .then(c => { if (!disposed) setPreview(c.toDataURL()) }).catch(() => { if (!disposed) setError('Не удалось подготовить предпросмотр') })
     return () => { disposed = true }
-  }, [doc, transparent, format])
+  }, [doc, background, format])
   const runExport = async () => {
     setBusy(true); setError('')
     try {
@@ -46,7 +47,7 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
         downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format}`)
         onToast(`${format.toUpperCase()} со слоями готов к скачиванию`); onClose(); return
       }
-      const output = await exportCanvas({ ...doc, background: transparent && format !== 'jpeg' ? 'transparent' : doc.background }, scale, format === 'jpeg' ? '#ffffff' : undefined)
+      const output = await exportCanvas({ ...doc, background }, scale, format === 'jpeg' ? '#ffffff' : undefined)
       const blob = await canvasBlob(output, `image/${format}`, quality / 100)
       downloadBlob(blob, `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format === 'jpeg' ? 'jpg' : format}`)
       onToast(`Готово! ${format.toUpperCase()} · ${Math.round(doc.width * scale)} × ${Math.round(doc.height * scale)} · ${(blob.size / 1024 / 1024).toFixed(2)} МБ`)
@@ -67,15 +68,15 @@ export function ExportDialog({ doc, onClose, onSave, onToast }: { doc: EditorDoc
 }
 
 const shortcuts = [
-  ['Перемещение', 'V'], ['Выделение', 'M'], ['Кадрирование', 'C'], ['Кисть / ластик', 'B / E'], ['Волшебный ластик', 'W'], ['Текст', 'T'], ['Прямоугольник / эллипс', 'U / O'], ['Пипетка', 'I'], ['Рука', 'H / Пробел'], ['Отменить', 'Ctrl Z'], ['Повторить', 'Ctrl Shift Z'], ['Дублировать слой', 'Ctrl J'], ['Копировать / вставить слой', 'Ctrl C / V'], ['Новый пустой слой', 'Ctrl Shift N'], ['Объединить видимые', 'Ctrl Shift E'], ['Инверсия', 'Ctrl I'], ['Обесцветить', 'Ctrl Shift U'], ['Показать трансформацию', 'Ctrl T'], ['Удалить слой', 'Delete'], ['Открыть файл', 'Ctrl O'], ['Сохранить проект', 'Ctrl S'], ['Экспортировать', 'Ctrl Shift S'], ['По размеру окна', 'Ctrl 0'], ['Масштаб 100%', 'Ctrl 1'], ['Снять выделение', 'Esc'], ['Двигать слой', '← ↑ ↓ →'], ['Шаг 10 пикселей', 'Shift + стрелка'], ['Размер кисти', '[ / ]'],
+  ['Перемещение', 'V'], ['Выделение', 'M'], ['Кадрирование', 'C'], ['Кисть / ластик', 'B / E'], ['Волшебный ластик', 'W'], ['Текст', 'T'], ['Прямоугольник / эллипс', 'U / O'], ['Пипетка', 'I'], ['Рука', 'H / Пробел'], ['Отменить', 'Ctrl Z'], ['Повторить', 'Ctrl Shift Z'], ['Дублировать слой', 'Ctrl J'], ['Копия перетаскиванием', 'Alt + мышь'], ['Свободное растяжение', 'Shift + угол'], ['Перспектива / скос', 'Ctrl + маркер'], ['Копировать / вставить слой', 'Ctrl C / V'], ['Новый пустой слой', 'Ctrl Shift N'], ['Объединить видимые', 'Ctrl Shift E'], ['Инверсия', 'Ctrl I'], ['Обесцветить', 'Ctrl Shift U'], ['Показать трансформацию', 'Ctrl T'], ['Удалить слой', 'Delete'], ['Открыть файл', 'Ctrl O'], ['Сохранить проект', 'Ctrl S'], ['Экспортировать', 'Ctrl Shift S'], ['По размеру окна', 'Ctrl 0'], ['Масштаб 100%', 'Ctrl 1'], ['Снять выделение', 'Esc'], ['Двигать слой', '← ↑ ↓ →'], ['Шаг 10 пикселей', 'Shift + стрелка'], ['Размер кисти', '[ / ]'],
 ]
 export function HelpDialog({ onClose, initialTab = 'shortcuts' }: { onClose: () => void; initialTab?: 'shortcuts' | 'about' }) {
   const [tab, setTab] = useState(initialTab)
   return <Modal title="Твоя студия. Твои правила." subtitle="ФШ 777 / независимый графический редактор" onClose={onClose} wide>
     <div className="help-tabs"><button className={tab === 'shortcuts' ? 'selected' : ''} onClick={() => setTab('shortcuts')}><Keyboard size={15} />Горячие клавиши</button><button className={tab === 'about' ? 'selected' : ''} onClick={() => setTab('about')}><Sparkles size={15} />О редакторе</button></div>
-    {tab === 'shortcuts' ? <><div className="shortcut-grid">{shortcuts.map(([name, key]) => <div key={name}><span>{name}</span><kbd>{key}</kbd></div>)}</div><p className="help-footnote">На macOS используй ⌘ вместо Ctrl. Двойной клик по тексту — редактирование. Shift сохраняет пропорции фигур и ограничивает перемещение. Файлы можно перетаскивать и вставлять из буфера обмена.</p></> : <div className="about-content">
+    {tab === 'shortcuts' ? <><div className="shortcut-grid">{shortcuts.map(([name, key]) => <div key={name}><span>{name}</span><kbd>{key}</kbd></div>)}</div><p className="help-footnote">На macOS используй ⌘ вместо Ctrl. Двойной клик по тексту — редактирование. Угловые маркеры сохраняют пропорции без Shift; Shift даёт свободное растяжение. Ctrl + угол — перспектива, Ctrl + боковой маркер — скос. При рисовании фигур Shift задаёт квадрат/круг; при перемещении ограничивает ось. Файлы можно перетаскивать и вставлять из буфера обмена.</p></> : <div className="about-content">
       <div className="about-hero"><div className="about-777">777</div><div><span className="eyebrow">МЕНЬШЕ ЛИШНЕГО. БОЛЬШЕ ТВОЕГО.</span><h3>Идеи не должны<br />ждать загрузки.</h3></div></div>
-      <div className="about-feature"><LockKeyhole size={20} /><div><strong>Твои файлы остаются у тебя</strong><p>Редактирование происходит в браузере. Изображения не загружаются на сервер. Последний проект автоматически сохраняется в IndexedDB на этом устройстве. Для надёжного хранения скачай файл .777.</p></div></div>
+      <div className="about-feature"><LockKeyhole size={20} /><div><strong>Твои файлы остаются у тебя</strong><p>Редактирование происходит локально на устройстве — в приложении или браузере. Изображения не загружаются на сервер. Последний проект автоматически сохраняется в IndexedDB на этом устройстве. Для надёжного хранения скачай файл .777.</p></div></div>
       <div className="about-feature"><Sparkles size={20} /><div><strong>Честно о возможностях</strong><p>Это первая версия: слои, трансформации, текст, кисти, фигуры, цветокоррекция и экспорт. Удаление фона использует цвета краёв, а заливка окружением — диффузию; это не нейросетевые инструменты. Сложные волосы, фактуры и большие объекты потребуют ручной доработки.</p></div></div>
       <div className="about-feature"><ShieldCheck size={20} /><div><strong>Независимый редактор</strong><p>Собственные интерфейс, код и формат проекта. Не связан с Adobe. PSD/PSB поддерживаются частично: RGB / 8 бит, до 4096 × 4096. Импорт показывает отчёт о преобразованиях. RAW, CMYK, плагины и редактирование смарт-объектов не поддерживаются. Шрифты Manrope и Unbounded распространяются по SIL OFL, зависимости — по разрешительным лицензиям.</p></div></div>
       <p className="help-footnote">Версия 0.2.0 · Холст до 4096 × 4096 px · До 100 слоёв · История 30 действий<br />Независимая реализация снижает риски копирования, но не является юридической гарантией.</p>

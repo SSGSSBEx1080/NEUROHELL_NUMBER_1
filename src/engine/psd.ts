@@ -32,7 +32,7 @@ export async function importPsd(buffer: ArrayBuffer, name: string): Promise<{ do
   const header = validatePsdHeader(buffer)
   const { psd, messages } = await runCodec<{ psd: Psd; messages: string[] }>({ operation: 'read', buffer }, [buffer])
   const doc = newDocument(psd.width, psd.height, name.replace(/\.(psd|psb)$/i, ''), 'transparent')
-  const warnings = new Set<string>()
+  const warnings = new Set<string>(['Рабочая копия использует sRGB. Исходные ICC-профили не применяются и не сохраняются: цвета могут отличаться.'])
   const visit = (items: PsdLayer[], parent = '', opacity = 1, hidden = false) => {
     for (const src of items) {
       if (src.children?.length) {
@@ -83,8 +83,10 @@ export async function importPsd(buffer: ArrayBuffer, name: string): Promise<{ do
   visit(psd.children || [])
   if (psd.imageData) {
     const canvas = imageCanvas(psd.imageData), src = canvas.toDataURL('image/png'); cacheImage(src, canvas)
-    if (doc.layers.length < 100) doc.layers.push(makeLayer({ kind: 'image', name: 'Оригинал · композит для сравнения', width: doc.width, height: doc.height, src, visible: !doc.layers.length, locked: true }))
-    warnings.add('Вверху добавлен композит оригинала. Включи его глаз для сравнения; выключи, чтобы видеть редактируемые слои.')
+    if (doc.layers.length < 100) {
+      doc.layers.push(makeLayer({ kind: 'image', name: 'Оригинал · композит для сравнения', width: doc.width, height: doc.height, src, visible: !doc.layers.length, locked: true }))
+      warnings.add('Вверху добавлен композит оригинала. Включи его глаз для сравнения; выключи, чтобы видеть редактируемые слои.')
+    } else warnings.add('Композит для сравнения не добавлен: достигнут лимит 100 слоёв.')
   }
   if (!doc.layers.length) throw new Error('В файле не найдено доступных растровых слоёв или композита')
   if (messages.length) warnings.add('Декодер обнаружил неподдерживаемые метаданные. Это рабочая копия, а не сохранение исходного файла без потерь.')

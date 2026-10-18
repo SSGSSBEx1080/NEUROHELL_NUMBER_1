@@ -135,7 +135,7 @@ export async function exportCanvas(doc: EditorDocument, scale = 1, background?: 
   return canvas
 }
 export function canvasBlob(canvas: HTMLCanvasElement, mime: string, quality = 0.95): Promise<Blob> {
-  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Не удалось сформировать файл')), mime, quality))
+  return new Promise((resolve, reject) => canvas.toBlob(blob => !blob ? reject(new Error('Не удалось сформировать файл')) : blob.type !== mime ? reject(new Error('Этот формат экспорта не поддерживается. Выбери PNG.')) : resolve(blob), mime, quality))
 }
 export function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob)
