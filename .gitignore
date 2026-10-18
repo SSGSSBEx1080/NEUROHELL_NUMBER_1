@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.playwright/
+playwright-report/
+test-results/
+*.local
+.DS_Store
+
+.venv/
+
+*.tsbuildinfo
