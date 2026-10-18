@@ -1,10 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Circle, Copy, Eye, EyeOff, History, Layers, LockKeyhole, Plus, Square, Trash2, Type, UnlockKeyhole } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Copy,
+  Eye,
+  EyeOff,
+  Folder,
+  FolderPlus,
+  History,
+  Layers,
+  LockKeyhole,
+  Plus,
+  Square,
+  SquareDashed,
+  SquareStack,
+  Trash2,
+  Type,
+  UnlockKeyhole,
+} from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
 import type { BlendMode, Layer } from '../types'
+import { visibleLayerRows } from '../engine/layerOperations'
 import { Field, IconButton, Select } from './ui'
-
 interface Props {
   editor: Editor
   selectedId: string | null
@@ -13,61 +35,555 @@ interface Props {
   onDuplicate: (id?: string) => void
   onDelete: (id?: string) => void
   onReorder: (id: string, target: string | number) => void
+  onGroup: (ids?: string[]) => void
+  onUngroup: (id?: string) => void
+  onMask: (id?: string) => void
+  onSmart: () => void
+  onOpenSmart: (id: string) => void
+  editingMask: boolean
+  onPixels: () => void
 }
-const modes: [BlendMode, string][] = [['source-over', 'Обычный'], ['multiply', 'Умножение'], ['screen', 'Экран'], ['overlay', 'Перекрытие'], ['darken', 'Темнее'], ['lighten', 'Светлее'], ['soft-light', 'Мягкий свет'], ['difference', 'Разница']]
+const modes: [BlendMode, string][] = [
+  ['source-over', 'Обычный'],
+  ['multiply', 'Умножение'],
+  ['screen', 'Экран'],
+  ['overlay', 'Перекрытие'],
+  ['darken', 'Темнее'],
+  ['lighten', 'Светлее'],
+  ['color-dodge', 'Осветление основы'],
+  ['lighter', 'Линейное осветление (сложение)'],
+  ['color-burn', 'Затемнение основы'],
+  ['hard-light', 'Жёсткий свет'],
+  ['soft-light', 'Мягкий свет'],
+  ['difference', 'Разница'],
+  ['exclusion', 'Исключение'],
+  ['hue', 'Цветовой тон'],
+  ['saturation', 'Насыщенность'],
+  ['color', 'Цветность'],
+  ['luminosity', 'Яркость'],
+]
 export function LayerThumbnail({ layer }: { layer: Layer }) {
-  return <span className={`layer-thumbnail ${layer.kind === 'image' ? 'checkerboard' : ''}`}>{layer.kind === 'image' ? layer.src && <img src={layer.src} alt="" draggable={false} /> : layer.kind === 'text' ? <Type size={18} /> : layer.shape === 'ellipse' ? <Circle size={19} style={{ color: layer.color }} /> : <Square size={19} style={{ color: layer.color }} />}</span>
+  return (
+    <span className={`layer-thumbnail ${layer.kind === 'image' ? 'checkerboard' : ''}`}>
+      {layer.kind === 'group' ? (
+        <Folder size={19} />
+      ) : layer.kind === 'image' ? (
+        layer.src && <img src={layer.src} alt="" draggable={false} />
+      ) : layer.kind === 'text' ? (
+        <Type size={18} />
+      ) : layer.shape === 'ellipse' ? (
+        <Circle size={19} style={{ color: layer.color }} />
+      ) : (
+        <Square size={19} style={{ color: layer.color }} />
+      )}
+      {layer.smart && <SquareStack className="smart-thumbnail-mark" size={11} />}
+    </span>
+  )
 }
-export function LayersPanel({ editor, selectedId, onSelect, onAdd, onDuplicate, onDelete, onReorder }: Props) {
-  const [tab, setTab] = useState<'layers' | 'history'>('layers')
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [name, setName] = useState('')
-  const [dragId, setDragId] = useState<string | null>(null)
-  const [dropId, setDropId] = useState<string | null>(null)
-  const [context, setContext] = useState<{ id: string; x: number; y: number } | null>(null)
-  const contextRef = useRef<HTMLDivElement>(null)
-  const layer = editor.document.layers.find(l => l.id === selectedId)
-  const contextual = editor.document.layers.find(l => l.id === context?.id)
-  const rename = (l: Layer) => { setRenaming(l.id); setName(l.name); setContext(null) }
+export function LayersPanel({
+  editor,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDuplicate,
+  onDelete,
+  onReorder,
+  onGroup,
+  onUngroup,
+  onMask,
+  onSmart,
+  onOpenSmart,
+  editingMask,
+  onPixels,
+}: Props) {
+  const [tab, setTab] = useState<'layers' | 'history'>('layers'),
+    [renaming, setRenaming] = useState<string | null>(null),
+    [name, setName] = useState('')
+  const [dragId, setDragId] = useState<string | null>(null),
+    [dropId, setDropId] = useState<string | null>(null),
+    [marked, setMarked] = useState<string[]>([])
+  const [context, setContext] = useState<{ id: string; x: number; y: number } | null>(null),
+    contextRef = useRef<HTMLDivElement>(null)
+  const layer = editor.document.layers.find((l) => l.id === selectedId),
+    contextual = editor.document.layers.find((l) => l.id === context?.id),
+    rows = visibleLayerRows(editor.document)
+  const rename = (l: Layer) => {
+    setRenaming(l.id)
+    setName(l.name)
+    setContext(null)
+  }
   const commitRename = () => {
-    if (renaming && name.trim()) editor.patchLayer(renaming, { name: name.trim().slice(0, 100) }, 'Название слоя')
+    if (renaming && name.trim())
+      editor.patchLayer(renaming, { name: name.trim().slice(0, 100) }, 'Название слоя')
     setRenaming(null)
   }
+  const group = () => {
+    onGroup(marked.length > 1 ? marked : selectedId ? [selectedId] : [])
+    setMarked([])
+    setContext(null)
+  }
+  useEffect(() => {
+    setMarked([])
+  }, [editor.document.id])
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (
+        marked.length > 1 &&
+        (e.ctrlKey || e.metaKey) &&
+        e.code === 'KeyG' &&
+        !e.shiftKey &&
+        !(e.target as HTMLElement)?.closest('input,textarea,select,[role=dialog]')
+      ) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        group()
+      }
+    }
+    window.addEventListener('keydown', key, true)
+    return () => window.removeEventListener('keydown', key, true)
+  })
   useEffect(() => {
     if (!context) return
-    const close = (e: PointerEvent) => { if (!contextRef.current?.contains(e.target as Node)) setContext(null) }
-    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setContext(null) }
-    window.addEventListener('pointerdown', close); window.addEventListener('keydown', escape)
-    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape) }
+    const close = (e: PointerEvent) => {
+      if (!contextRef.current?.contains(e.target as Node)) setContext(null)
+    }
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        setContext(null)
+      }
+    }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', escape, true)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', escape, true)
+    }
   }, [context])
-  return <section className="layers-panel">
-    <div className="layers-heading"><div className="panel-tabs"><button className={tab === 'layers' ? 'selected' : ''} onClick={() => setTab('layers')}>Слои<span className="count-badge">{editor.document.layers.length}</span></button><button className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}>История</button></div><IconButton icon={Plus} label="Добавить пустой слой" onClick={onAdd} /></div>
-    {tab === 'layers' ? <>
-      <div className="layer-compositing"><Select aria-label="Режим наложения" disabled={!layer || layer.locked} value={layer?.blendMode || 'source-over'} onChange={e => layer && editor.patchLayer(layer.id, { blendMode: e.target.value as BlendMode }, 'Режим наложения')}>{modes.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Select><Field label="Непр." value={Math.round((layer?.opacity ?? 1) * 100)} min={0} max={100} suffix="%" disabled={!layer || layer.locked} onChange={v => layer && editor.patchLayer(layer.id, { opacity: v / 100 }, '', true)} onCommit={() => editor.finish('Непрозрачность')} /></div>
-      <div className="layer-list" aria-label="Слои документа">
-        {editor.document.layers.length === 0 && <div className="empty-layers"><Layers size={26} strokeWidth={1.3} /><span>Пока чистый лист</span><p>Добавь изображение, текст<br />или нарисуй что-нибудь.</p><button className="text-button" onClick={onAdd}>Создать первый слой</button></div>}
-        {[...editor.document.layers].reverse().map(l => <div key={l.id} className={`layer-row ${selectedId === l.id ? 'selected' : ''} ${!l.visible ? 'hidden-layer' : ''} ${dragId === l.id ? 'dragging' : ''} ${dropId === l.id ? 'drop-target' : ''}`} role="option" aria-selected={selectedId === l.id} aria-label={l.name} tabIndex={0}
-          draggable={!renaming} onDragStart={e => { e.dataTransfer.setData('application/x-fsh-layer', l.id); e.dataTransfer.effectAllowed = 'move'; setDragId(l.id) }} onDragEnd={() => { setDragId(null); setDropId(null) }}
-          onDragOver={e => { if (dragId && dragId !== l.id) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropId(l.id) } }}
-          onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('application/x-fsh-layer'); if (id && id !== l.id) onReorder(id, l.id); setDragId(null); setDropId(null) }}
-          onClick={() => onSelect(l.id)} onKeyDown={e => { if (e.key === 'Enter' && !renaming) onSelect(l.id); if (e.key === 'F2') rename(l) }}
-          onContextMenu={e => { e.preventDefault(); onSelect(l.id); setContext({ id: l.id, x: Math.min(e.clientX, window.innerWidth - 216), y: Math.min(e.clientY, window.innerHeight - 266) }) }}>
-          <button className="layer-visibility" title={l.visible ? `Скрыть: ${l.name}` : `Показать: ${l.name}`} aria-label={l.visible ? `Скрыть: ${l.name}` : `Показать: ${l.name}`} onClick={e => { e.stopPropagation(); editor.patchLayer(l.id, { visible: !l.visible }, l.visible ? 'Скрытие слоя' : 'Показ слоя') }}>{l.visible ? <Eye size={14} /> : <EyeOff size={14} />}</button>
-          <LayerThumbnail layer={l} />
-          {renaming === l.id ? <input autoFocus className="layer-rename" aria-label="Название слоя" value={name} maxLength={100} onChange={e => setName(e.target.value)} onClick={e => e.stopPropagation()} onBlur={commitRename} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null) }} /> : <span className="layer-name" onDoubleClick={() => rename(l)} title={l.name}>{l.name}</span>}
-          <button className={`layer-lock ${l.locked ? 'locked' : ''}`} aria-label={l.locked ? `Разблокировать: ${l.name}` : `Заблокировать: ${l.name}`} title={l.locked ? 'Разблокировать слой' : 'Заблокировать слой'} onClick={e => { e.stopPropagation(); editor.patchLayer(l.id, { locked: !l.locked }, l.locked ? 'Разблокировка слоя' : 'Блокировка слоя') }}>{l.locked ? <LockKeyhole size={12} /> : <UnlockKeyhole size={12} />}</button>
-        </div>)}
+  return (
+    <section className="layers-panel">
+      <div className="layers-heading">
+        <div className="panel-tabs">
+          <button className={tab === 'layers' ? 'selected' : ''} onClick={() => setTab('layers')}>
+            Слои<span className="count-badge">{editor.document.layers.length}</span>
+          </button>
+          <button className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}>
+            История
+          </button>
+        </div>
+        <IconButton icon={Plus} label="Добавить пустой слой" onClick={onAdd} />
       </div>
-      <footer className="layers-footer"><span><Layers size={13} />{editor.document.layers.length} слоёв</span><div><IconButton icon={ArrowUp} label="Поднять слой" disabled={!layer || editor.document.layers.at(-1)?.id === layer.id} onClick={() => layer && onReorder(layer.id, 1)} /><IconButton icon={ArrowDown} label="Опустить слой" disabled={!layer || editor.document.layers[0]?.id === layer.id} onClick={() => layer && onReorder(layer.id, -1)} /><IconButton icon={Copy} label="Дублировать слой (Ctrl+J)" disabled={!layer} onClick={() => onDuplicate()} /><IconButton icon={Trash2} label="Удалить слой (Delete)" disabled={!layer || layer.locked} onClick={() => onDelete()} /></div></footer>
-    </> : <div className="history-list"><p className="history-note">Последние 30 действий. Нажми на шаг,<br />чтобы вернуться к нему.</p>{[...editor.entries].map((entry, i) => <button key={`${entry.time}-${i}`} className={`history-entry ${i === editor.index ? 'current' : ''} ${i > editor.index ? 'future' : ''}`} onClick={() => editor.travel(i)}><span className="history-entry-icon">{i === editor.index ? <Check size={13} /> : <History size={13} />}</span><span>{entry.label}</span><span>{new Date(entry.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span></button>)}</div>}
-    {context && contextual && createPortal(<div ref={contextRef} className="context-menu" style={{ left: context.x, top: context.y }} role="menu">
-      <button onClick={() => rename(contextual)}><Type size={14} />Переименовать<span>F2</span></button>
-      <button onClick={() => { onDuplicate(context.id); setContext(null) }}><Copy size={14} />Дублировать<span>Ctrl J</span></button>
-      <button onClick={() => { editor.patchLayer(context.id, { locked: !contextual.locked }, 'Блокировка слоя'); setContext(null) }}><LockKeyhole size={14} />{contextual.locked ? 'Разблокировать' : 'Заблокировать'}</button>
-      <div className="menu-divider" />
-      <button onClick={() => { onReorder(context.id, 1); setContext(null) }}><ArrowUp size={14} />Поднять слой</button>
-      <button onClick={() => { onReorder(context.id, -1); setContext(null) }}><ArrowDown size={14} />Опустить слой</button>
-      <div className="menu-divider" /><button className="danger" disabled={contextual.locked} onClick={() => { onDelete(context.id); setContext(null) }}><Trash2 size={14} />Удалить<span>Del</span></button>
-    </div>, document.body)}
-  </section>
+      {tab === 'layers' ? (
+        <>
+          <div className="layer-compositing">
+            <Select
+              aria-label="Режим наложения"
+              disabled={!layer || layer.locked}
+              value={layer?.blendMode || 'source-over'}
+              onChange={(e) =>
+                layer &&
+                editor.patchLayer(
+                  layer.id,
+                  {
+                    blendMode: e.target.value as BlendMode,
+                    ...(layer.kind === 'group'
+                      ? { isolated: e.target.value !== 'source-over' }
+                      : {}),
+                  },
+                  'Режим наложения',
+                )
+              }
+            >
+              {modes.map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+            <Field
+              label="Непр."
+              value={Math.round((layer?.opacity ?? 1) * 100)}
+              min={0}
+              max={100}
+              suffix="%"
+              disabled={!layer || layer.locked}
+              onChange={(v) => layer && editor.patchLayer(layer.id, { opacity: v / 100 }, '', true)}
+              onCommit={() => editor.finish('Непрозрачность')}
+            />
+          </div>
+          {marked.length > 1 && (
+            <div className="group-selection-note">
+              <span>{marked.length} слоёв для группы</span>
+              <button onClick={group}>Группировать · Ctrl G</button>
+            </div>
+          )}
+          <div className="layer-list" aria-label="Слои документа">
+            {!rows.length && (
+              <div className="empty-layers">
+                <Layers size={26} strokeWidth={1.3} />
+                <span>Пока чистый лист</span>
+                <p>
+                  Добавь изображение, текст
+                  <br />
+                  или нарисуй что-нибудь.
+                </p>
+                <button className="text-button" onClick={onAdd}>
+                  Создать первый слой
+                </button>
+              </div>
+            )}
+            {rows.map(({ layer: l, depth }) => (
+              <div
+                key={l.id}
+                className={`layer-row ${selectedId === l.id ? 'selected' : ''} ${marked.includes(l.id) && marked.length > 1 ? 'group-marked' : ''} ${!l.visible ? 'hidden-layer' : ''} ${dragId === l.id ? 'dragging' : ''} ${dropId === l.id ? 'drop-target' : ''}`}
+                style={{ paddingLeft: 8 + Math.min(depth, 5) * 12 }}
+                role="option"
+                aria-selected={selectedId === l.id}
+                aria-label={l.name}
+                tabIndex={0}
+                draggable={!renaming}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-fsh-layer', l.id)
+                  e.dataTransfer.effectAllowed = 'move'
+                  setDragId(l.id)
+                }}
+                onDragEnd={() => {
+                  setDragId(null)
+                  setDropId(null)
+                }}
+                onDragOver={(e) => {
+                  if (dragId && dragId !== l.id) {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    setDropId(l.id)
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const id = e.dataTransfer.getData('application/x-fsh-layer')
+                  if (id && id !== l.id) onReorder(id, l.id)
+                  setDragId(null)
+                  setDropId(null)
+                }}
+                onClick={(e) => {
+                  if (e.ctrlKey || e.metaKey)
+                    setMarked((ids) => {
+                      const before = ids.length ? ids : selectedId ? [selectedId] : []
+                      return before.includes(l.id)
+                        ? before.filter((id) => id !== l.id)
+                        : [...before, l.id]
+                    })
+                  else setMarked([])
+                  onSelect(l.id)
+                  onPixels()
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !renaming) onSelect(l.id)
+                  if (e.key === 'F2') rename(l)
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  onSelect(l.id)
+                  setContext({
+                    id: l.id,
+                    x: Math.min(e.clientX, window.innerWidth - 260),
+                    y: Math.max(8, Math.min(e.clientY, window.innerHeight - 425)),
+                  })
+                }}
+              >
+                <button
+                  className="layer-visibility"
+                  aria-label={l.visible ? `Скрыть: ${l.name}` : `Показать: ${l.name}`}
+                  title={l.visible ? 'Скрыть слой' : 'Показать слой'}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    editor.patchLayer(
+                      l.id,
+                      { visible: !l.visible },
+                      l.visible ? 'Скрытие слоя' : 'Показ слоя',
+                    )
+                  }}
+                >
+                  {l.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                {l.kind === 'group' && (
+                  <button
+                    className="group-toggle"
+                    aria-label={
+                      l.expanded === false
+                        ? `Раскрыть группу: ${l.name}`
+                        : `Свернуть группу: ${l.name}`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      editor.patchLayer(
+                        l.id,
+                        { expanded: l.expanded === false },
+                        'Состояние группы',
+                      )
+                    }}
+                  >
+                    {l.expanded === false ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                )}
+                <button
+                  className="layer-pixels-button"
+                  aria-label={l.smart ? `Открыть содержимое: ${l.name}` : `Пиксели слоя: ${l.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelect(l.id)
+                    onPixels()
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    if (l.smart) onOpenSmart(l.id)
+                  }}
+                >
+                  <LayerThumbnail layer={l} />
+                </button>
+                {l.mask && (
+                  <button
+                    className={`layer-mask-thumbnail ${editingMask && selectedId === l.id ? 'selected' : ''} ${!l.mask.enabled ? 'disabled-mask' : ''}`}
+                    aria-label={`Редактировать маску: ${l.name}`}
+                    title="Клик — рисовать по маске. Shift+клик — включить / выключить"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (e.shiftKey)
+                        editor.patchLayer(
+                          l.id,
+                          { mask: { ...l.mask!, enabled: !l.mask!.enabled } },
+                          'Включение маски',
+                        )
+                      else {
+                        onSelect(l.id)
+                        onMask(l.id)
+                      }
+                    }}
+                  >
+                    {!l.mask.src.startsWith('mask-preview:') && <img src={l.mask.src} alt="" />}
+                  </button>
+                )}
+                {renaming === l.id ? (
+                  <input
+                    autoFocus
+                    className="layer-rename"
+                    aria-label="Название слоя"
+                    value={name}
+                    maxLength={100}
+                    onChange={(e) => setName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') commitRename()
+                      if (e.key === 'Escape') setRenaming(null)
+                    }}
+                  />
+                ) : (
+                  <span className="layer-name" onDoubleClick={() => rename(l)} title={l.name}>
+                    {l.name}
+                  </span>
+                )}
+                {l.styles && (
+                  <span className="layer-fx-mark" title="Эффекты слоя">
+                    fx
+                  </span>
+                )}
+                <button
+                  className={`layer-lock ${l.locked ? 'locked' : ''}`}
+                  aria-label={l.locked ? `Разблокировать: ${l.name}` : `Заблокировать: ${l.name}`}
+                  title={l.locked ? 'Разблокировать слой' : 'Заблокировать слой'}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    editor.patchLayer(
+                      l.id,
+                      { locked: !l.locked },
+                      l.locked ? 'Разблокировка слоя' : 'Блокировка слоя',
+                    )
+                  }}
+                >
+                  {l.locked ? <LockKeyhole size={12} /> : <UnlockKeyhole size={12} />}
+                </button>
+              </div>
+            ))}
+          </div>
+          <footer className="layers-footer">
+            <span>{editor.document.layers.length} слоёв</span>
+            <div>
+              <IconButton icon={FolderPlus} label="Группировать слои (Ctrl+G)" onClick={group} />
+              <IconButton
+                icon={SquareDashed}
+                label="Добавить маску слоя"
+                disabled={!layer || layer.locked || !!layer.mask}
+                onClick={() => onMask()}
+              />
+              <IconButton
+                icon={ArrowUp}
+                label="Поднять слой"
+                disabled={!layer}
+                onClick={() => layer && onReorder(layer.id, 1)}
+              />
+              <IconButton
+                icon={ArrowDown}
+                label="Опустить слой"
+                disabled={!layer}
+                onClick={() => layer && onReorder(layer.id, -1)}
+              />
+              <IconButton
+                icon={Copy}
+                label="Дублировать слой (Ctrl+J)"
+                disabled={!layer}
+                onClick={() => onDuplicate()}
+              />
+              <IconButton
+                icon={Trash2}
+                label="Удалить слой (Delete)"
+                disabled={!layer || layer.locked}
+                onClick={() => onDelete()}
+              />
+            </div>
+          </footer>
+        </>
+      ) : (
+        <div className="history-list">
+          <p className="history-note">
+            История текущей вкладки · {editor.entries.length - 1} действий.
+            <br />
+            Нажми на шаг, чтобы вернуться к нему.
+          </p>
+          {editor.entries.map((entry, i) => (
+            <button
+              key={`${entry.time}-${i}`}
+              className={`history-entry ${i === editor.index ? 'current' : ''} ${i > editor.index ? 'future' : ''}`}
+              onClick={() => editor.travel(i)}
+            >
+              <span className="history-entry-icon">
+                {i === editor.index ? <Check size={13} /> : <History size={13} />}
+              </span>
+              <span>{entry.label}</span>
+              <span>
+                {new Date(entry.time).toLocaleTimeString('ru-RU', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {context &&
+        contextual &&
+        createPortal(
+          <div
+            ref={contextRef}
+            className="context-menu"
+            style={{ left: context.x, top: context.y }}
+            role="menu"
+          >
+            <button onClick={() => rename(contextual)}>
+              <Type size={14} />
+              Переименовать<span>F2</span>
+            </button>
+            <button
+              onClick={() => {
+                onDuplicate(context.id)
+                setContext(null)
+              }}
+            >
+              <Copy size={14} />
+              Дублировать<span>Ctrl J</span>
+            </button>
+            <button onClick={group}>
+              <FolderPlus size={14} />
+              Группировать<span>Ctrl G</span>
+            </button>
+            {contextual.kind === 'group' && (
+              <button
+                onClick={() => {
+                  onUngroup(context.id)
+                  setContext(null)
+                }}
+              >
+                <Folder size={14} />
+                Разгруппировать
+              </button>
+            )}
+            <div className="menu-divider" />
+            <button
+              disabled={contextual.locked}
+              onClick={() => {
+                onMask(context.id)
+                setContext(null)
+              }}
+            >
+              <SquareDashed size={14} />
+              {contextual.mask ? 'Редактировать маску' : 'Добавить маску'}
+            </button>
+            <button
+              disabled={contextual.locked || !!contextual.smart}
+              onClick={() => {
+                onSmart()
+                setContext(null)
+              }}
+            >
+              <SquareStack size={14} />
+              Создать смарт-объект
+            </button>
+            {contextual.smart && (
+              <button
+                onClick={() => {
+                  onOpenSmart(context.id)
+                  setContext(null)
+                }}
+              >
+                <SquareStack size={14} />
+                Открыть содержимое
+              </button>
+            )}
+            <button
+              onClick={() => {
+                editor.patchLayer(context.id, { locked: !contextual.locked }, 'Блокировка слоя')
+                setContext(null)
+              }}
+            >
+              <LockKeyhole size={14} />
+              {contextual.locked ? 'Разблокировать' : 'Заблокировать'}
+            </button>
+            <div className="menu-divider" />
+            <button
+              onClick={() => {
+                onReorder(context.id, 1)
+                setContext(null)
+              }}
+            >
+              <ArrowUp size={14} />
+              Поднять слой
+            </button>
+            <button
+              onClick={() => {
+                onReorder(context.id, -1)
+                setContext(null)
+              }}
+            >
+              <ArrowDown size={14} />
+              Опустить слой
+            </button>
+            <div className="menu-divider" />
+            <button
+              className="danger"
+              disabled={contextual.locked}
+              onClick={() => {
+                onDelete(context.id)
+                setContext(null)
+              }}
+            >
+              <Trash2 size={14} />
+              Удалить<span>Del</span>
+            </button>
+          </div>,
+          document.body,
+        )}
+    </section>
+  )
 }

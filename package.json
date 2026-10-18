@@ -1,17 +1,27 @@
 {
   "name": "fsh-777",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/generate-notices.cjs && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "start": "vite --host 127.0.0.1 --port 5173 --strictPort --open",
+    "check": "tsc -b --pretty false",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:windows": "npm run build && electron-builder --win --publish never",
+    "test:desktop-security": "node --test tests/desktop/security.test.cjs tests/desktop/files.test.cjs",
+    "test:desktop": "node tests/desktop/smoke.cjs",
+    "format": "prettier --write src desktop tests/unit tests/e2e tests/desktop scripts *.ts *.json",
+    "format:check": "prettier --check src desktop tests/unit tests/e2e tests/desktop scripts *.ts *.json"
   },
   "dependencies": {
+    "ag-psd": "^31.0.3",
     "lucide-react": "^0.468.0",
+    "pako": "^2.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -19,11 +29,26 @@
     "@playwright/test": "^1.56.0",
     "@sparticuz/chromium": "^153.0.0",
     "@types/node": "^22.10.0",
+    "@types/pako": "^2.0.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "fake-indexeddb": "^6.2.6",
+    "prettier": "^3.9.10",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
     "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "desktop/main.cjs",
+  "description": "Independent local-first graphics editor with layers, text and PSD/PSB interchange",
+  "author": "FSH 777 contributors",
+  "license": "MIT",
+  "overrides": {
+    "global-agent": "^4.1.3"
   }
 }
