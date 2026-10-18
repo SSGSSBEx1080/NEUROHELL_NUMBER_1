@@ -48,5 +48,20 @@ describe('Workspace geometry and explicit manga layer placement', () => {
     const doc = { ...newDocument(), layers: [oldText, scan, group, text] }
     expect(repairPlacement(doc, true).source).toBe(doc)
     expect(repairPlacement(doc, true).index).toBe(doc.layers.length)
+    const clipped = makeLayer({ kind: 'text', clipping: true }),
+      base = makeLayer({ kind: 'text' }),
+      top = makeLayer({ kind: 'text', clipping: true })
+    const bound = { ...newDocument(), layers: [scan, clipped] }
+    expect(repairPlacement(bound, true).source).toBe(bound)
+    expect(insertRepairLayer(bound, group, true).layers).toEqual([scan, clipped, group])
+    const chained = { ...bound, layers: [scan, clipped, base, top] }
+    expect(repairPlacement(chained, true).source.layers).toEqual([scan, clipped])
+    expect(insertRepairLayer(chained, group, true).layers).toEqual([
+      scan,
+      clipped,
+      group,
+      base,
+      top,
+    ])
   })
 })
