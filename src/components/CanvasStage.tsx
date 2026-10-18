@@ -1,3 +1,11 @@
+import {
+  distortVisual,
+  localBounds,
+  resizePointText,
+  rotateVisual,
+  selectionQuad,
+  visualCenter,
+} from '../engine/layerGeometry'
 import { shapeNames, shapeTools } from '../engine/shapeGeometry'
 import { defaultTextFrame } from '../engine/textLayout'
 import { duplicateLayers, subtree } from '../engine/layerOperations'
@@ -5,7 +13,7 @@ import { FrameScheduler, SceneRenderer } from '../engine/scene'
 import { magneticPoint, polygonSelection, selectionMask, selectionPath } from '../engine/selection'
 import { brushStamp, strokeStamps } from '../engine/brush'
 import { selectionTools } from './ToolRail'
-import { rectangleQuad, validQuad } from '../engine/projection'
+import { validQuad } from '../engine/projection'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Crosshair, Eraser, ScanLine, Sparkles, X } from 'lucide-react'
 import type { Editor } from '../hooks/useEditor'
@@ -13,7 +21,6 @@ import {
   type EditorDocument,
   type Layer,
   type Point,
-  type Quad,
   type Rect,
   type Selection,
   type Tool,
@@ -23,6 +30,7 @@ import {
 import { hitTest, localPoint, makeLayer, effectiveLayers, isLayerLocked } from '../engine/document'
 import {
   encodeBitmap,
+  bitmapLayer,
   prepareDocument,
   isPrepared,
   rasterizeLayer,
@@ -611,8 +619,11 @@ export function CanvasStage({
           return
         }
         if (activePointer.current !== e.pointerId) return
-        if (layer.kind !== 'image' && !maskMode)
+        if (layer.kind !== 'image' && !maskMode) {
+          layer = bitmapLayer(layer, buffer)
+          editor.patchLayer(layer.id, layer, '', true)
           onToast('Слой растрирован для работы ластиком. Это можно отменить.')
+        }
       }
       let targetMask: Layer['mask']
       if (settings.editMask && layer.mask) {
@@ -789,33 +800,56 @@ export function CanvasStage({
       setGuides({ x: gx, y: gy })
       editor.patchLayer(d.layer.id, { x, y }, '', true)
     } else if (d.type === 'rotate') {
-      const angle = (q: Point) =>
-        Math.atan2(q.y - d.layer.y - d.layer.height / 2, q.x - d.layer.x - d.layer.width / 2)
+      const center = visualCenter(d.layer)
+      const angle = (q: Point) => Math.atan2(q.y - center.y, q.x - center.x)
       let rotation = d.layer.rotation + ((angle(p) - angle(d.start)) * 180) / Math.PI
       if (e.shiftKey) rotation = Math.round(rotation / 15) * 15
-      editor.patchLayer(d.layer.id, { rotation: (rotation + 360) % 360 }, '', true)
+      editor.patchLayer(d.layer.id, rotateVisual(d.layer, (rotation + 360) % 360), '', true)
     } else if (d.type === 'distort') {
       const current = localPoint(d.layer, p, false),
         start = localPoint(d.layer, d.start, false)
-      const dx = (current.x - start.x) / d.layer.width,
-        dy = (current.y - start.y) / d.layer.height
-      const quad = (d.layer.warp || rectangleQuad()).map((v) => ({ ...v })) as Quad
-      const indices: Record<string, number[]> = {
-        nw: [0],
-        ne: [1],
-        se: [2],
-        sw: [3],
-        n: [0, 1],
-        e: [1, 2],
-        s: [2, 3],
-        w: [3, 0],
-      }
-      for (const i of indices[d.handle!] || []) {
-        quad[i].x += dx
-        quad[i].y += dy
-      }
+      const quad = distortVisual(d.layer, d.handle!, current.x - start.x, current.y - start.y)
       if (validQuad(quad)) editor.patchLayer(d.layer.id, { warp: quad }, '', true)
     } else if (d.type === 'resize') {
+      if (d.layer.kind === 'text' && !d.layer.textFrame) {
+        const b = localBounds(d.layer, true),
+          pLocal = localPoint(d.layer, p),
+          h = d.handle!
+        const startLocal = localPoint(d.layer, d.start)
+        pLocal.x =
+          (h.includes('w') ? b.x : h.includes('e') ? b.x + b.width : b.x + b.width / 2) +
+          pLocal.x -
+          startLocal.x
+        pLocal.y =
+          (h.includes('n') ? b.y : h.includes('s') ? b.y + b.height : b.y + b.height / 2) +
+          pLocal.y -
+          startLocal.y
+        let x1 = h.includes('w') ? Math.min(pLocal.x, b.x + b.width - 4) : b.x
+        let y1 = h.includes('n') ? Math.min(pLocal.y, b.y + b.height - 4) : b.y
+        let x2 = h.includes('e') ? Math.max(pLocal.x, b.x + 4) : b.x + b.width
+        let y2 = h.includes('s') ? Math.max(pLocal.y, b.y + 4) : b.y + b.height
+        if (h.length === 2 && !e.shiftKey) {
+          const ratio = Math.max((x2 - x1) / b.width, (y2 - y1) / b.height)
+          if (h.includes('w')) x1 = x2 - b.width * ratio
+          else x2 = x1 + b.width * ratio
+          if (h.includes('n')) y1 = y2 - b.height * ratio
+          else y2 = y1 + b.height * ratio
+        }
+        editor.patchLayer(
+          d.layer.id,
+          resizePointText(
+            d.layer,
+            { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
+            {
+              x: h.includes('w') ? 1 : h.includes('e') ? 0 : 0.5,
+              y: h.includes('n') ? 1 : h.includes('s') ? 0 : 0.5,
+            },
+          ),
+          '',
+          true,
+        )
+        return
+      }
       let local = localPoint(d.layer, p, false)
       const h = d.handle!
       if (d.layer.warp) {
@@ -1053,12 +1087,10 @@ export function CanvasStage({
     window.addEventListener('keydown', cancel, true)
     return () => window.removeEventListener('keydown', cancel, true)
   })
-  const quad = selected
-    ? (selected.warp || rectangleQuad()).map((p) => ({
-        x: p.x * selected.width,
-        y: p.y * selected.height,
-      }))
-    : []
+  const quad = selected ? selectionQuad(selected) : []
+  const rotationHandle = quad.length
+    ? { x: (quad[0].x + quad[1].x) / 2, y: (quad[0].y + quad[1].y) / 2 }
+    : { x: 0, y: 0 }
   const handles: [string, number, number][] = quad.length
     ? [
         ['nw', quad[0].x, quad[0].y],
@@ -1171,23 +1203,24 @@ export function CanvasStage({
               transform={`translate(${selected.x + selected.width / 2} ${selected.y + selected.height / 2}) rotate(${selected.rotation}) translate(${-selected.width / 2} ${-selected.height / 2})`}
             >
               <polygon
+                data-testid="transform-outline"
                 points={quad.map((p) => `${p.x},${p.y}`).join(' ')}
                 fill="none"
                 stroke="#b3a0ff"
                 strokeWidth={1 / scale}
               />
               <line
-                x1={selected.width / 2}
-                y1={0}
-                x2={selected.width / 2}
-                y2={-24 / scale}
+                x1={rotationHandle.x}
+                y1={rotationHandle.y}
+                x2={rotationHandle.x}
+                y2={rotationHandle.y - 24 / scale}
                 stroke="#b3a0ff"
                 strokeWidth={1 / scale}
               />
               <circle
                 data-handle="rotate"
-                cx={selected.width / 2}
-                cy={-24 / scale}
+                cx={rotationHandle.x}
+                cy={rotationHandle.y - 24 / scale}
                 r={4 / scale}
                 fill="#25212e"
                 stroke="#b3a0ff"

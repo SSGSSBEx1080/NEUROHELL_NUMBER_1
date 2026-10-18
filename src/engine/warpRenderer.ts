@@ -1,6 +1,6 @@
 import type { Layer, Point } from '../types'
 import { homography, project } from './projection'
-import { hasStyles } from './styles'
+import { rasterBounds } from './layerGeometry'
 const cache = new Map<
   string,
   {
@@ -74,20 +74,20 @@ export function renderWarped(
   let entry = cache.get(layer.id)
   if (volatile || !entry || !same(entry.layer, layer)) {
     const matrix = homography(layer.warp!),
-      pad = hasStyles(layer.styles) ? 200 : 0
-    const sourceW = layer.width + pad * 2,
-      sourceH = layer.height + pad * 2,
+      bounds = rasterBounds(layer, true, true)
+    const sourceW = bounds.width,
+      sourceH = bounds.height,
       sourceScale = Math.min(1, 4096 / sourceW, 4096 / sourceH)
     const source = canvas(sourceW * sourceScale, sourceH * sourceScale),
       s = source.getContext('2d')!
     s.scale(source.width / sourceW, source.height / sourceH)
-    s.translate(pad, pad)
+    s.translate(-bounds.x, -bounds.y)
     drawBase(s)
     const mapped = (u: number, v: number) => {
       const p = project(
         matrix,
-        (u * sourceW - pad) / layer.width,
-        (v * sourceH - pad) / layer.height,
+        (u * sourceW + bounds.x) / layer.width,
+        (v * sourceH + bounds.y) / layer.height,
       )
       return {
         x: Math.max(-32768, Math.min(32768, p.x * layer.width)),

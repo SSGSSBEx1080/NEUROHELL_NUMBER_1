@@ -244,6 +244,7 @@ export function getTextLayout(layer: Layer): TextLayout {
   measureCanvas ||= document.createElement('canvas')
   const ctx = measureCanvas.getContext('2d')!
   const result = layoutText(layer, (text, size) => {
+    ctx.canvas.style.fontSynthesis = 'weight style'
     ctx.font = textFont(layer, size)
     ctx.letterSpacing = `${layer.letterSpacing || 0}px`
     return ctx.measureText(text).width * (layer.textScaleX || 1)
@@ -255,7 +256,7 @@ export function getTextLayout(layer: Layer): TextLayout {
 
 export const textPresets: { name: string; values: Partial<Layer> }[] = [
   {
-    name: 'Реплика',
+    name: 'Центрированный',
     values: {
       fontFamily: 'Manrope',
       fontWeight: 600,
@@ -269,7 +270,7 @@ export const textPresets: { name: string; values: Partial<Layer> }[] = [
     },
   },
   {
-    name: 'Рассказчик',
+    name: 'Подпись',
     values: {
       fontFamily: 'Manrope',
       fontWeight: 500,
@@ -283,7 +284,7 @@ export const textPresets: { name: string; values: Partial<Layer> }[] = [
     },
   },
   {
-    name: 'Мысль',
+    name: 'Курсив',
     values: {
       fontFamily: 'Manrope',
       fontWeight: 500,
@@ -297,7 +298,7 @@ export const textPresets: { name: string; values: Partial<Layer> }[] = [
     },
   },
   {
-    name: 'SFX',
+    name: 'Заголовок',
     values: {
       fontFamily: 'Unbounded',
       fontWeight: 800,

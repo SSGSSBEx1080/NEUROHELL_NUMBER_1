@@ -38,7 +38,7 @@ export function TextFrameSettings({
       >
         <option value="point">Свободный текст · без переносов</option>
         <option value="rectangle">Прямоугольная рамка</option>
-        <option value="ellipse">Овальный пузырь</option>
+        <option value="ellipse">Овальная рамка</option>
       </Select>
       {frame && (
         <>
@@ -109,7 +109,7 @@ export function TextFrameSettings({
           </p>
         </>
       )}
-      <div className="layout-presets" aria-label="Пресеты тайпсета">
+      <div className="layout-presets" aria-label="Пресеты типографики">
         {textPresets.map((preset) => (
           <button
             key={preset.name}

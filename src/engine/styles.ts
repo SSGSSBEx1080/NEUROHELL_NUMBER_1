@@ -1,3 +1,4 @@
+import { rasterBounds } from './layerGeometry'
 import type { Layer, LayerStyles } from '../types'
 
 export function defaultStyles(): LayerStyles {
@@ -59,7 +60,7 @@ export const hasStyles = (s?: LayerStyles) =>
     s.gradient.enabled)
 const cache = new Map<
   string,
-  { layer: Layer; image: HTMLCanvasElement; pad: number; scale: number }
+  { layer: Layer; image: HTMLCanvasElement; left: number; top: number; scale: number }
 >()
 const ignored = new Set([
   'x',
@@ -96,28 +97,14 @@ export function renderStyled(
   let entry = cache.get(layer.id)
   if (volatile || !entry || !equalContent(entry.layer, layer)) {
     const s = layer.styles!,
-      padding =
-        Math.ceil(
-          Math.max(
-            s.stroke.enabled ? s.stroke.size : 0,
-            s.shadow.enabled
-              ? s.shadow.blur * 2 + Math.max(Math.abs(s.shadow.x), Math.abs(s.shadow.y))
-              : 0,
-            s.glow.enabled ? s.glow.blur * 2 : 0,
-          ),
-        ) + 2
-    const scale = Math.min(
-      1,
-      4096 / (layer.width + padding * 2),
-      4096 / (layer.height + padding * 2),
-    )
-    const pad = Math.ceil(padding * scale),
-      w = Math.max(1, Math.ceil(layer.width * scale) + pad * 2),
-      h = Math.max(1, Math.ceil(layer.height * scale) + pad * 2)
+      bounds = rasterBounds(layer, true)
+    const scale = Math.min(1, 4096 / bounds.width, 4096 / bounds.height)
+    const w = Math.max(1, Math.ceil(bounds.width * scale)),
+      h = Math.max(1, Math.ceil(bounds.height * scale))
     const base = surface(w, h),
       b = base.getContext('2d')!
-    b.translate(pad, pad)
     b.scale(scale, scale)
+    b.translate(-bounds.x, -bounds.y)
     draw(b)
     const output = surface(w, h),
       o = output.getContext('2d')!
@@ -198,7 +185,7 @@ export function renderStyled(
       r.drawImage(inner, 0, 0)
       o.drawImage(ring, 0, 0)
     }
-    entry = { layer, image: output, pad, scale }
+    entry = { layer, image: output, left: bounds.x, top: bounds.y, scale }
     cache.set(layer.id, entry)
     let bytes = [...cache.values()].reduce((n, e) => n + e.image.width * e.image.height * 4, 0)
     for (const [key, value] of cache) {
@@ -210,8 +197,8 @@ export function renderStyled(
   }
   ctx.drawImage(
     entry.image,
-    -entry.pad / entry.scale,
-    -entry.pad / entry.scale,
+    entry.left,
+    entry.top,
     entry.image.width / entry.scale,
     entry.image.height / entry.scale,
   )

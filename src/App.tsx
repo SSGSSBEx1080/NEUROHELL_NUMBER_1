@@ -1,3 +1,5 @@
+import { PsdReportDialog } from './components/PsdReportDialog'
+import type { PsdExportReport } from './engine/psdReport'
 import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
 import { insertRepairLayer } from './engine/repairPlacement'
 import { ActionsPanel } from './components/ActionsPanel'
@@ -172,12 +174,18 @@ export default function App() {
     | 'image-size'
     | 'canvas-size'
     | 'repair'
+    | 'psd-report'
     | null
   >(null)
   const recorder = useActionRecorder(editor)
   const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
   const [actionsError, setActionsError] = useState('')
   const [clipboardLayer, setClipboardLayer] = useState<Layer | null>(null)
+  const [lastExport, setLastExport] = useState<{
+    documentId: string
+    filename: string
+    report: PsdExportReport
+  } | null>(null)
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
@@ -694,11 +702,14 @@ export default function App() {
     }
     setBusy('Сохраняем настоящий PSD со слоями…')
     try {
-      const result = await FileManager.save(editor.documentRef.current)
+      const saving = editor.documentRef.current
+      const result = await FileManager.save(saving)
+      if (result.report)
+        setLastExport({ documentId: saving.id, filename: result.filename, report: result.report })
       toastMessage(
         window.fsh777?.saveFile
           ? `Файл сохранён: ${result.filename}`
-          : 'PSD подготовлен к скачиванию.',
+          : 'PSD подготовлен к скачиванию. Структура — в «Отчёт PSD».',
       )
     } catch (error) {
       toastMessage(error instanceof Error ? error.message : 'Ошибка сохранения PSD')
@@ -1299,15 +1310,24 @@ export default function App() {
       icon: Save,
       action: () => {
         setBusy('Сохраняем PSD…')
-        void FileManager.save(editor.documentRef.current, false, true)
-          .then((r) =>
+        const saving = editor.documentRef.current
+        void FileManager.save(saving, false, true)
+          .then((r) => {
+            if (r.report)
+              setLastExport({ documentId: saving.id, filename: r.filename, report: r.report })
             toastMessage(
               window.fsh777?.saveFile ? `Файл сохранён: ${r.filename}` : 'PSD готов к скачиванию',
-            ),
-          )
+            )
+          })
           .catch((e) => toastMessage(e.message))
           .finally(() => setBusy(null))
       },
+    },
+    {
+      label: 'Отчёт последнего PSD',
+      icon: Save,
+      disabled: lastExport?.documentId !== doc.id,
+      action: () => setModal('psd-report'),
     },
     { label: 'Резервная копия (старый .777)', icon: Save, action: () => void saveBackup() },
     {
@@ -2083,10 +2103,15 @@ export default function App() {
             <footer className="workspace-status">
               <span className="status-left">
                 <span className="status-dot" />
-                Все инструменты — на твоей стороне
+                {doc.width} × {doc.height} px · {doc.layers.length} слоёв · RGB/8
                 <span className="status-divider" />
                 {selected ? selected.name : 'Холст'}
               </span>
+              {lastExport?.documentId === doc.id && (
+                <button className="psd-report-button" onClick={() => setModal('psd-report')}>
+                  Отчёт PSD
+                </button>
+              )}
               <div className="zoom-controls">
                 <IconButton
                   icon={Minus}
@@ -2342,6 +2367,13 @@ export default function App() {
             editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
             closeModal()
           }}
+        />
+      )}
+      {modal === 'psd-report' && lastExport && (
+        <PsdReportDialog
+          report={lastExport.report}
+          filename={lastExport.filename}
+          onClose={closeModal}
         />
       )}
       {pendingDocument && compatibility && (

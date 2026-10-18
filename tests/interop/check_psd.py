@@ -4,6 +4,7 @@ Run after the complete browser suite: .venv/bin/python tests/interop/check_psd.p
 This does NOT substitute for testing XnConvert or Adobe Photoshop.
 """
 from pathlib import Path
+from io import BytesIO
 
 import numpy as np
 from PIL import Image
@@ -52,7 +53,7 @@ for source, image in [("merged", document.topil()), ("native layers", document.c
     assert worst <= 2.0, ("layout workflow", source, worst)
     print(f"PASS layout J → typeset, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
 
-print("Scope: RGB/8, these nine fixtures only. No XnConvert/Photoshop execution, ICC conversion, or arbitrary Adobe FX validation.")
+
 
 # Native fill/path/stroke structure, read and redrawn by a completely independent library.
 # aggdraw and Canvas2D use different edge AA/cap rasterizers: do not reuse the 2/255
@@ -72,3 +73,26 @@ assert float((delta.max(axis=2) > 2).mean()) < .015
 for x, y in [(100, 80), (360, 80), (120, 290), (370, 290), (20, 20)]:
     assert np.max(np.abs(redrawn[y, x] - reference[y, x])) <= 2, (x, y)
 print(f"PASS native vectors: five actual ShapeLayers, groups, merged exact; independent path redraw mean {delta.mean():.6f}/255. Edge/cap rasterizers differ; not an Adobe visual-fidelity claim.")
+
+
+for fixture in ["native-point", "native-text-transforms"]:
+    document = PSDImage.open(RESULTS / f"{fixture}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"{fixture}.png"))
+    types = [layer for layer in document.descendants() if layer.kind == "type"]
+    assert len(types) == (1 if fixture == "native-point" else 3)
+    if fixture == "native-point":
+        assert types[0].text == "Редактор 777"
+        assert types[0].width > 400, "Point type's native raster cache must not clip to its old 22px box"
+    else:
+        smart = [layer for layer in document.descendants() if layer.kind == "smartobject"]
+        assert len(smart) == 2
+        for layer in smart:
+            assert layer.smart_object.kind == "data"
+            nested = PSDImage.open(BytesIO(layer.smart_object.data))
+            assert nested[0].kind == "type" and nested[0].text == "Текст 777"
+    for source, image in [("merged", document.topil()), ("native layers", document.composite(ignore_preview=True, force=True, apply_icc=False))]:
+        delta = np.abs(premultiplied(image) - reference)
+        assert float(delta.max()) <= 2.0, (fixture, source, float(delta.max()))
+        print(f"PASS {fixture}, {source}: max premultiplied RGBA error {delta.max():.4f}/255; native type and editable embedded PSD verified")
+
+print("Scope: RGB/8, these twelve fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")

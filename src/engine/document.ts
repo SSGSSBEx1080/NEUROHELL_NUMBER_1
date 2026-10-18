@@ -1,3 +1,4 @@
+import { localBounds } from './layerGeometry'
 import { parseShapePaths, shapeNames } from './shapeGeometry'
 import { hitShape } from './shapeRenderer'
 import { parseScript } from './scriptFormat'
@@ -163,7 +164,14 @@ export function hitTest(layer: Layer, point: Point): boolean {
   if (layer.flipX) p.x = layer.width - p.x
   if (layer.flipY) p.y = layer.height - p.y
   if (layer.kind === 'shape') return hitShape(layer, p.x, p.y)
-  if (p.x < 0 || p.y < 0 || p.x > layer.width || p.y > layer.height) return false
+  const bounds = localBounds(layer)
+  if (
+    p.x < bounds.x ||
+    p.y < bounds.y ||
+    p.x > bounds.x + bounds.width ||
+    p.y > bounds.y + bounds.height
+  )
+    return false
   return true
 }
 
@@ -245,6 +253,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : 'source-over',
       warp: validQuad(l.warp) ? l.warp : undefined,
       textScaleX: finite(l.textScaleX, 0.01, 100, 1),
+      textBaseline: l.textBaseline === 'alphabetic' ? 'alphabetic' : 'top',
       textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
       styles: normalizeStyles(l.styles),
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,

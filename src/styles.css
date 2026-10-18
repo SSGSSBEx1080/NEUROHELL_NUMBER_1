@@ -4101,7 +4101,7 @@ kbd {
   justify-content: center;
   min-height: 230px;
   height: 340px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -4791,4 +4791,49 @@ kbd {
 }
 .shape-properties .panel-note {
   margin-top: 8px;
+}
+
+.psd-report-button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 5px;
+  font: inherit;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.psd-report-button:hover {
+  color: #e7e6ed;
+  border-color: var(--accent);
+}
+.psd-report-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 18px 0;
+}
+.psd-report-grid > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #ffffff06;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.psd-report-grid dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.psd-report-grid dd {
+  margin: 0;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Canvas font synthesis must match detached export/measurement canvases. The UI disables
+   faux fonts globally; inheriting that setting used to make visible italic text differ from PSD/PNG. */
+canvas {
+  font-synthesis: weight style;
 }

@@ -1,3 +1,4 @@
+import { localBounds, worldBounds, resizePointText, rotateVisual } from '../engine/layerGeometry'
 import { ShapeProperties } from './ShapeProperties'
 import { TextFrameSettings } from './TextFrameSettings'
 import { descendants } from '../engine/document'
@@ -95,6 +96,9 @@ export function PropertiesPanel({
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
   const [linked, setLinked] = useState(true)
   const [adjustOpen, setAdjustOpen] = useState(false)
+  const pointText = layer?.kind === 'text' && !layer.textFrame
+  const inkBounds = layer ? localBounds(layer, true) : undefined
+  const position = layer && pointText ? worldBounds(layer) : layer
   const doc = editor.document
   const patch = (values: Partial<Layer>, label = 'Свойства слоя', temporary = false) => {
     if (layer && !layer.locked) editor.patchLayer(layer.id, values, label, temporary)
@@ -104,6 +108,25 @@ export function PropertiesPanel({
   const finish = () => editor.finish('Свойства слоя')
   const setDimension = (key: 'width' | 'height', value: number) => {
     if (!layer) return
+    if (pointText) {
+      const b = localBounds(layer, true),
+        ratio = value / b[key]
+      patch(
+        resizePointText(layer, {
+          ...b,
+          [key]: value,
+          ...(linked
+            ? {
+                [key === 'width' ? 'height' : 'width']:
+                  b[key === 'width' ? 'height' : 'width'] * ratio,
+              }
+            : {}),
+        }),
+        '',
+        true,
+      )
+      return
+    }
     const ratio = value / layer[key]
     const other = key === 'width' ? 'height' : 'width'
     patch(
@@ -251,7 +274,9 @@ export function PropertiesPanel({
                       ? 'ГРУППА'
                       : layer.kind === 'image'
                         ? 'РАСТР'
-                        : 'ВЕКТОР'}
+                        : layer.kind === 'text'
+                          ? 'ТЕКСТ'
+                          : 'ВЕКТОР'}
                 </span>
               )}
             </div>
@@ -366,19 +391,19 @@ export function PropertiesPanel({
                     <div className="field-grid">
                       <Field
                         label="X"
-                        value={layer.x}
-                        onChange={(x) => patch({ x }, '', true)}
+                        value={position!.x}
+                        onChange={(x) => patch({ x: layer.x + x - position!.x }, '', true)}
                         onCommit={finish}
                       />
                       <Field
                         label="Y"
-                        value={layer.y}
-                        onChange={(y) => patch({ y }, '', true)}
+                        value={position!.y}
+                        onChange={(y) => patch({ y: layer.y + y - position!.y }, '', true)}
                         onCommit={finish}
                       />
                       <Field
                         label="Ш"
-                        value={layer.width}
+                        value={inkBounds!.width}
                         disabled={layer.kind === 'group'}
                         min={1}
                         onChange={(v) => setDimension('width', v)}
@@ -386,7 +411,7 @@ export function PropertiesPanel({
                       />
                       <Field
                         label="В"
-                        value={layer.height}
+                        value={inkBounds!.height}
                         disabled={layer.kind === 'group'}
                         min={1}
                         onChange={(v) => setDimension('height', v)}
@@ -399,7 +424,9 @@ export function PropertiesPanel({
                         min={-360}
                         max={360}
                         suffix="°"
-                        onChange={(rotation) => patch({ rotation }, '', true)}
+                        onChange={(rotation) =>
+                          patch(pointText ? rotateVisual(layer, rotation) : { rotation }, '', true)
+                        }
                         onCommit={finish}
                       />
                       <div className="transform-buttons">
@@ -433,6 +460,12 @@ export function PropertiesPanel({
                       </button>
                     )}
                   </div>
+                  {pointText && (
+                    <p className="panel-note text-geometry-note">
+                      Размер — по глифам выбранного шрифта. X/Y — край выделения на холсте. Обычный
+                      текст не переносится по ширине; для переноса используй текстовую рамку.
+                    </p>
+                  )}
                   <div className="property-section layer-structure">
                     <div className="section-heading">Структура слоя</div>
                     <Select
@@ -487,14 +520,6 @@ export function PropertiesPanel({
                           patch(
                             {
                               text: e.target.value,
-                              height: layer.textFrame
-                                ? layer.height
-                                : Math.max(
-                                    layer.height,
-                                    e.target.value.split('\n').length *
-                                      (layer.fontSize || 48) *
-                                      (layer.lineHeight || 1.2),
-                                  ),
                             },
                             '',
                             true,

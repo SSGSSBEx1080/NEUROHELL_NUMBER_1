@@ -1,10 +1,11 @@
+import { verifyProject } from './psdIntegrity'
 import { decodeProject, encodeProject } from './psdMetadata'
 import { initializeCanvas, readPsd, writePsd, type Psd } from 'ag-psd'
 import { validatePsdHeader } from './psdHeader'
 initializeCanvas(
   (width, height) => new OffscreenCanvas(width, height) as unknown as HTMLCanvasElement,
 )
-self.onmessage = (
+self.onmessage = async (
   e: MessageEvent<
     | { operation: 'read'; buffer: ArrayBuffer }
     | { operation: 'write'; psd: Psd; psb: boolean; project?: unknown }
@@ -24,6 +25,17 @@ self.onmessage = (
           if (messages.length < 30) messages.push(args.map(String).join(' ').slice(0, 400))
         },
       })
+      let project: unknown
+      try {
+        const integrity = await verifyProject(e.data.buffer)
+        if (integrity === 'modified') messages.push('FSH777_STALE_XMP')
+        else {
+          project = decodeProject(psd.imageResources?.xmpMetadata)
+          if (project && integrity === 'legacy') messages.push('FSH777_LEGACY_XMP')
+        }
+      } catch {
+        messages.push('FSH777_INVALID_XMP')
+      }
       const transfer = new Set<ArrayBuffer>()
       const collect = (v: unknown) => {
         if (ArrayBuffer.isView(v)) {
@@ -33,10 +45,7 @@ self.onmessage = (
         if (v && typeof v === 'object') for (const value of Object.values(v)) collect(value)
       }
       collect(psd)
-      self.postMessage(
-        { psd, messages, project: decodeProject(psd.imageResources?.xmpMetadata) },
-        { transfer: [...transfer] },
-      )
+      self.postMessage({ psd, messages, project }, { transfer: [...transfer] })
     } else {
       if (e.data.project)
         e.data.psd.imageResources = {

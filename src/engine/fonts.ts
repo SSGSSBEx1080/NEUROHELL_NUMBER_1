@@ -261,3 +261,41 @@ export function nativeFontStyle(family: string, weight = 400, italic = false) {
     fauxItalic: italic && fallback?.style !== 'italic',
   }
 }
+
+/** Resolve actual PostScript face names back to editable CSS families, without network access. */
+export function resolveNativeFont(postscript: string) {
+  const record = records.find((r) => r.postscriptName === postscript)
+  if (record)
+    return {
+      family: record.family,
+      weight: Number(record.weight.split(' ')[0]) || 400,
+      italic: record.style === 'italic',
+      substituted: false,
+    }
+  for (const [family, value] of Object.entries(names)) {
+    for (const [weight, native] of Object.entries(value.weights))
+      if (native === postscript)
+        return {
+          family,
+          weight: Number(weight),
+          italic: /italic|oblique/i.test(postscript),
+          substituted: false,
+        }
+    if (value.default === postscript)
+      return { family, weight: 400, italic: /italic|oblique/i.test(postscript), substituted: false }
+  }
+  const normalized = postscript
+    .replace(/MT$|PSMT$/g, '')
+    .replace(/-(Regular|BoldItalic|Bold|Italic|Oblique|Medium)$/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+  const family = families.find((f) => f.replace(/[^a-z0-9]/gi, '').toLowerCase() === normalized)
+  if (family)
+    return {
+      family,
+      weight: /bold/i.test(postscript) ? 700 : 400,
+      italic: /italic|oblique/i.test(postscript),
+      substituted: false,
+    }
+  return { family: 'Manrope', weight: 400, italic: false, substituted: true }
+}

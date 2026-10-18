@@ -107,6 +107,7 @@ export interface Layer {
   strokeWidth?: number
   warp?: Quad
   textScaleX?: number
+  textBaseline?: 'top' | 'alphabetic'
   textFrame?: TextFrame
   styles?: LayerStyles
   parentId?: string
