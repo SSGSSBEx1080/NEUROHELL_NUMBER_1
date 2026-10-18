@@ -1,0 +1,142 @@
+[
+  {
+    "id": "inter",
+    "family": "Inter",
+    "path": "ofl/inter/Inter[opsz,wght].ttf",
+    "licensePath": "ofl/inter/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "roboto",
+    "family": "Roboto",
+    "path": "ofl/roboto/Roboto[wdth,wght].ttf",
+    "licensePath": "ofl/roboto/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "montserrat",
+    "family": "Montserrat",
+    "path": "ofl/montserrat/Montserrat[wght].ttf",
+    "licensePath": "ofl/montserrat/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "oswald",
+    "family": "Oswald",
+    "path": "ofl/oswald/Oswald[wght].ttf",
+    "licensePath": "ofl/oswald/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "playfairdisplay",
+    "family": "Playfair Display",
+    "path": "ofl/playfairdisplay/PlayfairDisplay[wght].ttf",
+    "licensePath": "ofl/playfairdisplay/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "caveat",
+    "family": "Caveat",
+    "path": "ofl/caveat/Caveat[wght].ttf",
+    "licensePath": "ofl/caveat/OFL.txt",
+    "bundled": true
+  },
+  {
+    "id": "rubik",
+    "family": "Rubik",
+    "path": "ofl/rubik/Rubik[wght].ttf",
+    "licensePath": "ofl/rubik/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "robotomono",
+    "family": "Roboto Mono",
+    "path": "ofl/robotomono/RobotoMono[wght].ttf",
+    "licensePath": "ofl/robotomono/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "opensans",
+    "family": "Open Sans",
+    "path": "ofl/opensans/OpenSans[wdth,wght].ttf",
+    "licensePath": "ofl/opensans/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "raleway",
+    "family": "Raleway",
+    "path": "ofl/raleway/Raleway[wght].ttf",
+    "licensePath": "ofl/raleway/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "nunito",
+    "family": "Nunito",
+    "path": "ofl/nunito/Nunito[wght].ttf",
+    "licensePath": "ofl/nunito/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "lobster",
+    "family": "Lobster",
+    "path": "ofl/lobster/Lobster-Regular.ttf",
+    "licensePath": "ofl/lobster/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "pacifico",
+    "family": "Pacifico",
+    "path": "ofl/pacifico/Pacifico-Regular.ttf",
+    "licensePath": "ofl/pacifico/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "comfortaa",
+    "family": "Comfortaa",
+    "path": "ofl/comfortaa/Comfortaa[wght].ttf",
+    "licensePath": "ofl/comfortaa/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "cormorantgaramond",
+    "family": "Cormorant Garamond",
+    "path": "ofl/cormorantgaramond/CormorantGaramond[wght].ttf",
+    "licensePath": "ofl/cormorantgaramond/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "sourcesans3",
+    "family": "Source Sans 3",
+    "path": "ofl/sourcesans3/SourceSans3[wght].ttf",
+    "licensePath": "ofl/sourcesans3/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "greatvibes",
+    "family": "Great Vibes",
+    "path": "ofl/greatvibes/GreatVibes-Regular.ttf",
+    "licensePath": "ofl/greatvibes/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "bebasneue",
+    "family": "Bebas Neue",
+    "path": "ofl/bebasneue/BebasNeue-Regular.ttf",
+    "licensePath": "ofl/bebasneue/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "jetbrainsmono",
+    "family": "JetBrains Mono",
+    "path": "ofl/jetbrainsmono/JetBrainsMono[wght].ttf",
+    "licensePath": "ofl/jetbrainsmono/OFL.txt",
+    "bundled": false
+  },
+  {
+    "id": "russoone",
+    "family": "Russo One",
+    "path": "ofl/russoone/RussoOne-Regular.ttf",
+    "licensePath": "ofl/russoone/OFL.txt",
+    "bundled": false
+  }
+]

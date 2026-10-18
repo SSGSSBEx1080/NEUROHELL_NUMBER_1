@@ -1,7 +1,7 @@
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
-import { renderWarped } from './warpRenderer'
+import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions } from './imageSafety'
-import { hasStyles, renderStyled } from './styles'
+import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
@@ -66,14 +66,14 @@ export function renderLayer(ctx: CanvasRenderingContext2D, layer: Layer, overrid
     ctx.translate(-layer.width / 2, -layer.height / 2)
   }
   if (layer.warp && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
-    renderWarped(ctx, layer, base => renderLayer(base, { ...layer, warp: undefined }, override, true), !!override); ctx.restore(); return
+    renderWarped(ctx, layer, base => renderLayer(base, { ...layer, warp: undefined }, override, true), !!override || !!layer.mask?.src.startsWith('mask-preview:')); ctx.restore(); return
   }
   if (layer.flipX || layer.flipY) {
     ctx.translate(layer.flipX ? layer.width : 0, layer.flipY ? layer.height : 0)
     ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1)
   }
   if (hasStyles(layer.styles) && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
-    renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, override, true), !!override)
+    renderStyled(ctx, layer, base => renderLayer(base, { ...layer, styles: undefined, flipX: false, flipY: false }, override, true), !!override || !!layer.mask?.src.startsWith('mask-preview:'))
     ctx.restore(); return
   }
   if (layer.mask?.enabled && images.has(layer.mask.src)) { renderMasked(ctx, layer, override); ctx.restore(); return }
@@ -150,7 +150,7 @@ function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HT
   const m = layer.mask!, mask = images.get(m.src)!
   const key = { ...layer, x: 0, y: 0, mask: { ...m, x: m.x - layer.x, y: m.y - layer.y } }
   let cached = maskCache.get(layer.id)
-  if (override || !cached || !sameVisual(key, cached.key)) {
+  if (override || m.src.startsWith('mask-preview:') || !cached || !sameVisual(key, cached.key)) {
     const scale = Math.min(1, 4096 / layer.width, 4096 / layer.height)
     const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(layer.width * scale)); c.height = Math.max(1, Math.ceil(layer.height * scale))
     const x = c.getContext('2d')!; x.scale(c.width / layer.width, c.height / layer.height)
@@ -204,5 +204,24 @@ export function downloadBlob(blob: Blob, name: string) {
 export function bitmapLayer(layer: Layer, canvas: HTMLCanvasElement): Layer {
   const src = canvas.toDataURL('image/png')
   cacheImage(src, canvas)
-  return { ...layer, kind: 'image', src, flipX: false, flipY: false, adjustments: { ...DEFAULT_ADJUSTMENTS } }
+  return { ...layer, kind: 'image', src, mask: rasterMask(layer), flipX: false, flipY: false, adjustments: { ...DEFAULT_ADJUSTMENTS } }
+}
+
+export async function encodeBitmap(layer: Layer, canvas: HTMLCanvasElement): Promise<Layer> {
+  const blob = await canvasBlob(canvas, 'image/png')
+  const src = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob) })
+  cacheImage(src, canvas)
+  return { ...layer, kind: 'image', src, mask: rasterMask(layer), flipX: false, flipY: false, adjustments: { ...DEFAULT_ADJUSTMENTS } }
+}
+
+export function clearRenderCaches() { maskCache.clear(); clearStyleCache(); clearWarpCache() }
+
+function rasterMask(layer: Layer): Layer['mask'] {
+  const m = layer.mask
+  if (!m || (!layer.flipX && !layer.flipY)) return m
+  const image = images.get(m.src); if (!image) return m
+  const c = document.createElement('canvas'); c.width = image.width; c.height = image.height
+  const x = c.getContext('2d')!; x.translate(layer.flipX ? c.width : 0, layer.flipY ? c.height : 0); x.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1); x.drawImage(image, 0, 0)
+  const src = c.toDataURL(); cacheImage(src, c)
+  return { ...m, src, x: layer.flipX ? layer.x + layer.width - (m.x - layer.x) - m.width : m.x, y: layer.flipY ? layer.y + layer.height - (m.y - layer.y) - m.height : m.y }
 }

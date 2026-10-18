@@ -6,6 +6,6 @@ export function CompatibilityDialog({ report, onClose, onConfirm, onSave }: { re
     <div className="compatibility-summary"><span><Layers size={18} /><strong>{report.layerCount}</strong> слоёв</span><span><Check size={15} />RGB / 8 бит</span><span><Check size={15} />Обработка на устройстве</span></div>
     <div className="info-note"><AlertTriangle size={19} /><span>Это импорт рабочей копии, а не полная совместимость с Photoshop. Исходный файл не изменяется. Текущий проект в редакторе будет заменён.</span></div>
     <h3 className="report-title">Что важно знать</h3><ul className="compatibility-list">{report.warnings.length ? report.warnings.map((w, i) => <li key={i}>{w}</li>) : <li>Поддерживаемые растровые слои прочитаны. Проверь документ после открытия.</li>}</ul>
-    <footer className="dialog-footer"><button className="text-button" onClick={onSave}><FileJson size={14} />Сохранить текущий .777</button><button className="primary-button" onClick={onConfirm}>Открыть рабочую копию<ArrowUpRight size={15} /></button></footer>
+    <footer className="dialog-footer"><button className="text-button" onClick={onSave}><FileJson size={14} />Сохранить текущий PSD</button><button className="primary-button" onClick={onConfirm}>Открыть рабочую копию<ArrowUpRight size={15} /></button></footer>
   </Modal>
 }

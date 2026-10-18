@@ -20,6 +20,6 @@ export function runPixelOperation(request: PixelRequest): Promise<Uint8ClampedAr
   return new Promise((resolve, reject) => {
     const id = nextId++
     pending.set(id, { resolve, reject })
-    worker!.postMessage({ ...request, id }, [request.pixels.buffer])
+    worker!.postMessage({ ...request, id }, [request.pixels.buffer, ...(request.mask ? [request.mask.buffer] : [])])
   })
 }

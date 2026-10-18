@@ -3,6 +3,8 @@ import chromium from '@sparticuz/chromium'
 import { inflate } from './node_modules/@sparticuz/chromium/build/lambdafs.js'
 let executablePath: string | undefined
 if (process.platform === 'linux') {
+  // Headless Chromium needs a UTF-8 OS locale to keep Cyrillic download filenames.
+  process.env.LANG ||= 'C.UTF-8'; process.env.LC_ALL ||= 'C.UTF-8'
   await inflate(new URL('./node_modules/@sparticuz/chromium/bin/al2023.tar.br', import.meta.url).pathname)
   process.env.LD_LIBRARY_PATH = `/tmp/al2023/lib:${process.env.LD_LIBRARY_PATH || ''}`
   executablePath = await chromium.executablePath()

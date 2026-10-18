@@ -58,7 +58,7 @@ test('editable text, properties, keyboard duplicate, undo and redo', async ({ pa
   await ready(page); await blank(page)
   await page.getByRole('button', { name: 'Текст', exact: true }).click()
   const b = await artboard(page); await page.mouse.click(b.x + 30, b.y + 30)
-  const editor = page.getByLabel('Редактировать текст на холсте')
+  const editor = page.getByLabel('Текст слоя', { exact: true })
   await expect(editor).toBeVisible(); await editor.fill('ФШ 777'); await editor.press('Control+Enter')
   await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('ФШ 777')
   await page.getByLabel('Размер', { exact: true }).fill('36'); await page.getByLabel('Размер', { exact: true }).press('Enter')
@@ -116,7 +116,10 @@ test('crop is undoable and changes export dimensions', async ({ page }) => {
 
 test('portable project saves layers and restores autosaved edits after reload', async ({ page }) => {
   await ready(page); await blank(page); await importTestImage(page)
-  const promise = page.waitForEvent('download'); await page.keyboard.press('Control+s'); const download = await promise
+  const standard = page.waitForEvent('download'); await page.keyboard.press('Control+s'); const psd = await standard
+  expect(psd.suggestedFilename()).toMatch(/\.psd$/); expect((await readFile((await psd.path())!)).subarray(0, 4).toString()).toBe('8BPS')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const promise = page.waitForEvent('download'); await page.getByRole('button', { name: 'Файл', exact: true }).click(); await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click(); const download = await promise
   const project = JSON.parse(await readFile((await download.path())!, 'utf8'))
   expect(project.version).toBe(1); expect(project.layers).toHaveLength(1); expect(project.layers[0].src).toMatch(/^data:image\/png/)
   await page.getByRole('button', { name: 'Заблокировать: subject', exact: true }).click()
@@ -134,7 +137,7 @@ for (const format of ['PSD', 'PSB']) test(`${format} export, header, reimport an
   await page.getByLabel('Открыть изображение или проект').setInputFiles({ name: `roundtrip.${format.toLowerCase()}`, mimeType: 'application/octet-stream', buffer: file.bytes })
   await expect(page.locator('.busy-overlay')).toBeHidden(); await expect(page.getByRole('dialog')).toContainText('импорт рабочей копии')
   await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
-  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(page.locator('.layer-row')).toHaveCount(1)
   await expect.poll(async () => await pixel(page, 150, 100)).toEqual([255, 0, 0, 255])
 })
 

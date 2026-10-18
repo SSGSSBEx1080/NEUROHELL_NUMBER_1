@@ -1,10 +1,16 @@
+import { FontsDialog } from './components/FontsDialog'
+import { SettingsDialog } from './components/SettingsDialog'
+import { restoreFonts } from './engine/fonts'
+import { ToolRail, TOOLS as tools, cycleTool, selectionTools } from './components/ToolRail'
+import { selectionMask } from './engine/selection'
+import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
 import { ActionsDialog } from './components/ActionsDialog'
 import { builtinActions, parseActionSet, runAction, type StudioAction } from './engine/actions'
 import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, Check, ChevronDown, Circle, CircleHelp, Copy, Crop, Download, Eraser, FilePlus2, FolderOpen, Hand, HardDrive, ImagePlus, Keyboard, LoaderCircle, Maximize, Minus, MousePointer2, Paintbrush, PanelRightClose, PanelRightOpen, Pipette, Plus, Redo2, Save, ScanLine, ShieldCheck, Sparkles, Square, SquareDashed, Trash2, Type, Undo2, WandSparkles, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { ArrowLeftRight, Check, ChevronDown, CircleHelp, Copy, Download, FilePlus2, FolderOpen, HardDrive, ImagePlus, Keyboard, LoaderCircle, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, Redo2, Save, ScanLine, SlidersHorizontal, ShieldCheck, Sparkles, SquareDashed, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { LayerStyleDialog } from './components/LayerStyleDialog'
 import { CompatibilityDialog } from './components/CompatibilityDialog'
 import type { CompatibilityReport } from './engine/psd'
@@ -16,24 +22,11 @@ import { Dropdown, type MenuItem } from './components/Dropdown'
 import { Field, IconButton, Select } from './components/ui'
 import { useEditor } from './hooks/useEditor'
 import { demoDocument, localPoint, makeLayer, newDocument, parseProject, uid } from './engine/document'
-import { bitmapLayer, downloadBlob, exportCanvas, loadImage, prepareDocument, validateRasterBudget, rasterizeLayer } from './engine/render'
+import { encodeBitmap, bitmapLayer, downloadBlob, exportCanvas, loadImage, prepareDocument, validateRasterBudget, rasterizeLayer } from './engine/render'
 import { loadDocument, saveDocument } from './engine/storage'
 import { runPixelOperation } from './engine/processing'
-import { MAX_LAYERS, type EditorDocument, type Layer, type Point, type Rect, type Tool, type ToolSettings } from './types'
+import { MAX_LAYERS, type EditorDocument, type Layer, type Point, type Selection, type Tool, type ToolSettings } from './types'
 
-const tools = [
-  { id: 'move', icon: MousePointer2, name: 'Перемещение', key: 'V' },
-  { id: 'select', icon: SquareDashed, name: 'Выделение', key: 'M' },
-  { id: 'crop', icon: Crop, name: 'Кадрирование', key: 'C' },
-  { id: 'brush', icon: Paintbrush, name: 'Кисть', key: 'B', divider: true },
-  { id: 'eraser', icon: Eraser, name: 'Ластик', key: 'E' },
-  { id: 'wand', icon: WandSparkles, name: 'Волшебный ластик', key: 'W' },
-  { id: 'text', icon: Type, name: 'Текст', key: 'T', divider: true },
-  { id: 'rectangle', icon: Square, name: 'Прямоугольник', key: 'U' },
-  { id: 'ellipse', icon: Circle, name: 'Эллипс', key: 'O' },
-  { id: 'eyedropper', icon: Pipette, name: 'Пипетка', key: 'I' },
-  { id: 'hand', icon: Hand, name: 'Рука', key: 'H', divider: true },
-] as const
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && !!target.closest('input,textarea,select,[contenteditable="true"]')
 
 export default function App() {
@@ -48,10 +41,12 @@ export default function App() {
   const [zoom, setZoom] = useState<number | null>(null)
   const [effectiveZoom, setEffectiveZoom] = useState(0.5)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [selection, setSelection] = useState<Rect | null>(null)
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const [preferences, setPreferences] = useState(loadPreferences)
+  useEffect(() => { savePreferences(preferences); document.documentElement.dataset.theme = preferences.theme; document.documentElement.dataset.motion = preferences.reduceMotion ? 'reduced' : 'full'; document.documentElement.style.setProperty('--checker-size', `${preferences.checker}px`) }, [preferences])
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
-  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | 'styles' | 'actions' | 'color' | null>(null)
+  const [modal, setModal] = useState<'new' | 'export' | 'help' | 'about' | 'styles' | 'actions' | 'color' | 'settings' | 'fonts' | null>(null)
   const [actions, setActions] = useState<StudioAction[]>(() => {
     try { const stored = localStorage.getItem('fsh777-actions'); return stored ? parseActionSet(JSON.parse(stored)) : builtinActions } catch { return builtinActions }
   })
@@ -93,6 +88,7 @@ export default function App() {
       let restored: EditorDocument | null = null
       try { restored = await loadDocument() } catch { /* A blocked database must not block editing. */ }
       try {
+        await restoreFonts()
         await Promise.all([document.fonts.load('700 128px Unbounded'), document.fonts.load('500 14px Manrope')])
         await prepareDocument(restored || initial)
       } catch { if (!disposed) toastMessage('Один из ресурсов не загрузился. Можно открыть своё изображение.') }
@@ -113,9 +109,9 @@ export default function App() {
       saveDocument(doc).then(() => { if (saveVersion.current === version) setSaveStatus('saved') }).catch(() => {
         if (saveVersion.current === version) { setSaveStatus('error'); toastMessage('Автосохранение недоступно. Скачай проект через Ctrl+S.') }
       })
-    }, 700)
+    }, preferences.autosave)
     return () => clearTimeout(timer)
-  }, [doc, ready, editor.entries, editor.index, toastMessage])
+  }, [doc, ready, editor.entries, editor.index, toastMessage, preferences.autosave])
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (saveStatus !== 'saved') { e.preventDefault(); e.returnValue = '' } }
     window.addEventListener('beforeunload', handler)
@@ -251,8 +247,9 @@ export default function App() {
     } catch (error) { toastMessage(error instanceof Error ? error.message : 'Не удалось открыть файл') }
     finally { setBusy(null) }
   }
-  const pixelAction = async (operation: 'background' | 'wand' | 'erase' | 'fill', point?: Point) => {
+  const pixelAction = async (operation: 'background' | 'wand' | 'erase' | 'fill' | 'bucket', point?: Point) => {
     if (!selected) return toastMessage('Сначала выбери слой с изображением')
+    if (selected.kind === 'group' || selected.smart) return toastMessage('Выбери растровый слой или открой содержимое смарт-объекта')
     if (selected.locked) return toastMessage('Сначала разблокируй слой')
     if (operation === 'background' && selected.kind !== 'image') return toastMessage('Удаление фона работает с изображениями')
     if ((operation === 'erase' || operation === 'fill') && !selection) return toastMessage('Сначала выдели область инструментом M')
@@ -262,26 +259,25 @@ export default function App() {
     try {
       const buffer = await rasterizeLayer(selected), ctx = buffer.getContext('2d', { willReadFrequently: true })!
       const sx = buffer.width / selected.width, sy = buffer.height / selected.height
-      let rect: Rect | undefined
+      let rect: Selection | undefined
       if (selection && (operation === 'erase' || operation === 'fill')) {
         const points = [localPoint(selected, selection), localPoint(selected, { x: selection.x + selection.width, y: selection.y }), localPoint(selected, { x: selection.x, y: selection.y + selection.height }), localPoint(selected, { x: selection.x + selection.width, y: selection.y + selection.height })]
         const x = Math.min(...points.map(p => p.x)), y = Math.min(...points.map(p => p.y))
         rect = { x: x * sx, y: y * sy, width: (Math.max(...points.map(p => p.x)) - x) * sx, height: (Math.max(...points.map(p => p.y)) - y) * sy }
       }
-      const pixels = await runPixelOperation({ operation, width: buffer.width, height: buffer.height, pixels: ctx.getImageData(0, 0, buffer.width, buffer.height).data, tolerance: settings.tolerance, x: local ? local.x * sx : 0, y: local ? local.y * sy : 0, rect })
+      const pixels = await runPixelOperation({ operation, width: buffer.width, height: buffer.height, pixels: ctx.getImageData(0, 0, buffer.width, buffer.height).data, mask: selection ? selectionMask(selection, buffer.width, buffer.height, selected).getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data : undefined, color: [1, 3, 5].map(i => parseInt(settings.color.slice(i, i + 2), 16)).concat(Math.round(settings.brushOpacity * 2.55)), tolerance: settings.tolerance, x: local ? local.x * sx : 0, y: local ? local.y * sy : 0, rect })
       ctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), buffer.width, buffer.height), 0, 0)
-      const layer = bitmapLayer(selected, buffer)
+      const layer = await encodeBitmap(selected, buffer)
       validateRasterBudget({ ...doc, layers: doc.layers.map(l => l.id === selected.id ? layer : l) })
-      editor.change(d => ({ ...d, background: operation === 'background' ? 'transparent' : d.background, layers: d.layers.map(l => l.id === selected.id ? layer : l) }), operation === 'background' ? 'Удаление фона' : operation === 'fill' ? 'Заливка окружением' : 'Удаление области')
-      setSelection(null)
-      toastMessage(operation === 'background' ? 'Фон обработан по цвету краёв. Допуск можно изменить. Ctrl+Z — отменить.' : operation === 'fill' ? 'Область заполнена цветами окружения. Для фактур может понадобиться доработка.' : 'Область стёрта. Ctrl+Z — отменить.')
+      editor.change(d => ({ ...d, background: operation === 'background' ? 'transparent' : d.background, layers: d.layers.map(l => l.id === selected.id ? layer : l) }), operation === 'background' ? 'Удаление фона' : operation === 'bucket' ? 'Заливка цветом' : operation === 'fill' ? 'Заливка окружением' : 'Удаление области')
+      toastMessage(operation === 'background' ? 'Фон обработан по цвету краёв. Допуск можно изменить. Ctrl+Z — отменить.' : operation === 'bucket' ? 'Область залита выбранным цветом.' : operation === 'fill' ? 'Область заполнена цветами окружения. Для фактур может понадобиться доработка.' : 'Область стёрта. Ctrl+Z — отменить.')
     } catch (error) { toastMessage(error instanceof Error ? error.message : 'Не удалось обработать изображение') }
     finally { setBusy(null) }
   }
   const crop = () => {
     if (!selection || selection.width < 1 || selection.height < 1) return
     const x = Math.round(selection.x), y = Math.round(selection.y), width = Math.max(1, Math.round(selection.width)), height = Math.max(1, Math.round(selection.height))
-    editor.change(d => ({ ...d, width, height, layers: d.layers.map(l => ({ ...l, x: l.x - x, y: l.y - y })) }), 'Кадрирование холста')
+    editor.change(d => ({ ...d, width, height, layers: d.layers.map(l => ({ ...l, x: l.x - x, y: l.y - y, mask: l.mask ? { ...l.mask, x: l.mask.x - x, y: l.mask.y - y } : undefined })) }), 'Кадрирование холста')
     setSelection(null); setTool('move'); fitView(); toastMessage(`Холст: ${width} × ${height} px. Слои сохранены.`)
   }
   const extractText = () => {
@@ -299,8 +295,10 @@ export default function App() {
   }
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS' && typing(e.target) && !busy && !modal) { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); editor.finish('Редактирование'); void saveProject(); return }
       if (typing(e.target) || busy || modal || pendingDocument) return
       const mod = e.ctrlKey || e.metaKey
+      if (mod && e.code === 'Comma') { e.preventDefault(); setModal('settings'); return }
       const action = actions.find(a => a.shortcut?.key === e.code && a.shortcut.shift === e.shiftKey && a.shortcut.ctrl === mod)
       if (action) { e.preventDefault(); executeAction(action); return }
       if (mod) {
@@ -325,7 +323,7 @@ export default function App() {
         return
       }
       if (e.key === 'Escape') { setSelection(null); setSelectedId(null); return }
-      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (selection && tool === 'select') void pixelAction('erase'); else deleteLayer(); return }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (selection) void pixelAction('erase'); else deleteLayer(); return }
       if (e.key.startsWith('Arrow') && selected && !selected.locked) {
         e.preventDefault(); const amount = e.shiftKey ? 10 : 1
         editor.patchLayer(selected.id, { x: selected.x + (e.key === 'ArrowLeft' ? -amount : e.key === 'ArrowRight' ? amount : 0), y: selected.y + (e.key === 'ArrowUp' ? -amount : e.key === 'ArrowDown' ? amount : 0) }, 'Перемещение слоя'); return
@@ -334,8 +332,8 @@ export default function App() {
       if (e.code === 'KeyX') { setSettings({ color: settings.secondaryColor, secondaryColor: settings.color }); return }
       if (e.code === 'KeyD') { setSettings({ color: '#000000', secondaryColor: '#ffffff' }); return }
       if (e.key === '?') { setModal('help'); return }
-      const match = tools.find(t => `Key${t.key}` === e.code)
-      if (match) { e.preventDefault(); setTool(match.id); if (match.id !== 'select' && match.id !== 'crop') setSelection(null) }
+      const nextTool = cycleTool(tool, e.code.replace('Key', ''), e.shiftKey)
+      if (nextTool) { e.preventDefault(); setTool(nextTool) }
     }
     const paste = (e: ClipboardEvent) => { if (typing(e.target) || modal || busy) return; const files = Array.from(e.clipboardData?.files || []); if (files.length) { e.preventDefault(); void importFiles(files) } else if (clipboardLayer) { e.preventDefault(); pasteLayer() } }
     window.addEventListener('keydown', keydown); window.addEventListener('paste', paste)
@@ -354,6 +352,7 @@ export default function App() {
     { label: 'Открыть демопроект', icon: Sparkles, action: () => setPendingDocument(demoDocument()), divider: true },
   ]
   const editMenu: MenuItem[] = [
+    { label: 'Настройки…', icon: SlidersHorizontal, shortcut: 'Ctrl ,', action: () => setModal('settings') },
     { label: 'Отменить', icon: Undo2, shortcut: 'Ctrl Z', action: editor.undo, disabled: !editor.canUndo },
     { label: 'Повторить', icon: Redo2, shortcut: 'Ctrl ⇧ Z', action: editor.redo, disabled: !editor.canRedo },
     { label: 'Копировать слой', icon: Copy, shortcut: 'Ctrl C', action: copyLayer, disabled: !selected, divider: true },
@@ -380,7 +379,7 @@ export default function App() {
     { label: 'Дублировать', icon: Copy, action: () => duplicate(), disabled: !selected },
     { label: 'Удалить', icon: Trash2, action: () => deleteLayer(), disabled: !selected || selected.locked },
   ]
-  const helpMenu: MenuItem[] = [{ label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') }, { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') }]
+  const helpMenu: MenuItem[] = [{ label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') }, { label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') }, { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') }]
 
   return <div className="editor-app" onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dragCounter.current++; setDropping(true) } }} onDragLeave={e => { if (e.dataTransfer.types.includes('Files')) { dragCounter.current--; if (dragCounter.current <= 0) setDropping(false) } }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }} onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); dragCounter.current = 0; setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
     <header className="app-header">
@@ -393,23 +392,25 @@ export default function App() {
       <div className="history-buttons"><IconButton icon={Undo2} label="Отменить (Ctrl+Z)" disabled={!editor.canUndo || !!busy} onClick={editor.undo} /><IconButton icon={Redo2} label="Повторить (Ctrl+Shift+Z)" disabled={!editor.canRedo || !!busy} onClick={editor.redo} /></div>
       <div className="vertical-divider" /><div className="current-tool"><activeTool.icon size={16} /><span>{activeTool.name}</span></div><div className="vertical-divider" />
       <div className="tool-options">
-        {tool === 'move' ? <><label className="checkbox-row"><input type="checkbox" checked={settings.autoSelect} onChange={e => setSettings({ autoSelect: e.target.checked })} />Автовыбор слоя</label><label className="checkbox-row guides-option"><input type="checkbox" checked={settings.showGuides} onChange={e => setSettings({ showGuides: e.target.checked })} />Направляющие</label></> : tool === 'brush' || tool === 'eraser' ? <><Field label="Размер" value={settings.brushSize} min={1} max={500} suffix="px" onChange={brushSize => setSettings({ brushSize })} /><Field label="Непр." value={settings.brushOpacity} min={1} max={100} suffix="%" onChange={brushOpacity => setSettings({ brushOpacity })} /></> : tool === 'wand' ? <><Field label="Допуск" value={settings.tolerance} min={1} max={75} suffix="%" onChange={tolerance => setSettings({ tolerance })} /><span className="tool-instruction">Кликни по области, которую хочешь стереть</span></> : <span className="tool-instruction">{tool === 'text' ? 'Нажми на холст и напиши свою историю' : tool === 'crop' ? 'Выдели область, которую хочешь оставить' : tool === 'select' ? 'Выдели область для стирания или заливки' : tool === 'eyedropper' ? 'Выбери любой цвет на холсте' : tool === 'hand' ? 'Перетаскивай холст. Ctrl + колесо — масштаб' : 'Потяни на холсте. Shift — ровные пропорции'}</span>}
-        {['brush', 'rectangle', 'ellipse', 'text'].includes(tool) && <label className="option-color" title="Основной цвет"><input type="color" aria-label="Цвет инструмента" value={settings.color} onChange={e => setSettings({ color: e.target.value })} /><span style={{ background: settings.color }} /></label>}
+        {tool === 'move' ? <><label className="checkbox-row"><input type="checkbox" checked={settings.autoSelect} onChange={e => setSettings({ autoSelect: e.target.checked })} />Автовыбор слоя</label><label className="checkbox-row guides-option"><input type="checkbox" checked={settings.showGuides} onChange={e => setSettings({ showGuides: e.target.checked })} />Направляющие</label></> : tool === 'brush' || tool === 'eraser' || tool === 'clone' ? <><Field label="Размер" value={settings.brushSize} min={1} max={500} suffix="px" onChange={brushSize => setSettings({ brushSize })} /><Field label="Непр." value={settings.brushOpacity} min={1} max={100} suffix="%" onChange={brushOpacity => setSettings({ brushOpacity })} /><Field label="Жёсткость" value={settings.brushHardness ?? 100} min={0} max={100} suffix="%" onChange={brushHardness => setSettings({ brushHardness })} /><Field label="Интервал" value={settings.brushSpacing || 15} min={5} max={100} suffix="%" onChange={brushSpacing => setSettings({ brushSpacing })} />{tool === 'clone' && <span className="tool-instruction">Alt+клик — источник · текущий слой</span>}</> : tool === 'wand' || tool === 'bucket' ? <><Field label="Допуск" value={settings.tolerance} min={1} max={75} suffix="%" onChange={tolerance => setSettings({ tolerance })} /><span className="tool-instruction">{tool === 'bucket' ? 'Заливка связанной области цветом' : 'Кликни по области, которую хочешь стереть'}</span></> : selectionTools.includes(tool) ? <><Field label="Растушёвка" value={settings.feather || 0} min={0} max={50} suffix="px" onChange={feather => setSettings({ feather })} /><span className="tool-instruction">{tool === 'polygon-lasso' || tool === 'magnetic-lasso' ? 'Клики задают контур · Enter / двойной клик замыкает' : 'Обведи область · Ctrl+D — снять выделение'}</span></> : tool === 'gradient' ? <Select aria-label="Тип градиента" value={settings.gradientType || 'linear'} onChange={e => setSettings({ gradientType: e.target.value as 'linear' | 'radial' })}><option value="linear">Линейный</option><option value="radial">Радиальный</option></Select> : <span className="tool-instruction">{tool === 'text' ? 'Нажми на холст и напиши свою историю' : tool === 'crop' ? 'Выдели область, которую хочешь оставить' : tool === 'select' ? 'Выдели область для стирания или заливки' : tool === 'eyedropper' ? 'Выбери любой цвет на холсте' : tool === 'hand' ? 'Перетаскивай холст. Ctrl + колесо — масштаб' : 'Потяни на холсте. Shift — ровные пропорции'}</span>}
+        {['brush', 'rectangle', 'ellipse', 'text', 'bucket', 'gradient'].includes(tool) && <label className="option-color" title="Основной цвет"><input type="color" aria-label="Цвет инструмента" value={settings.color} onChange={e => setSettings({ color: e.target.value })} /><span style={{ background: settings.color }} /></label>}
       </div>
       <div className="options-right"><button className="add-image-button" onClick={() => input.current?.click()} disabled={!!busy}><ImagePlus size={16} /><span>Добавить изображение</span></button><div className="vertical-divider" /><IconButton icon={inspector ? PanelRightClose : PanelRightOpen} label={inspector ? 'Скрыть панели' : 'Показать панели'} onClick={() => setInspector(!inspector)} /></div>
     </div>
     <div className="editor-body">
-      <aside className="toolbar" aria-label="Инструменты"><div className="tool-stack">{tools.map(t => <div key={t.id}>{'divider' in t && <div className="tool-divider" />}<button className={`tool-button ${tool === t.id ? 'selected' : ''}`} aria-label={t.name} aria-pressed={tool === t.id} data-tool={t.id} onClick={() => { setTool(t.id); if (t.id !== 'select' && t.id !== 'crop') setSelection(null) }}><t.icon size={20} strokeWidth={1.65} /><span className="tool-tooltip">{t.name}<kbd>{t.key}</kbd></span></button></div>)}</div>
+      <aside className="toolbar" aria-label="Инструменты"><ToolRail tool={tool} onSelect={setTool} />
         <div className="toolbar-colors"><button className="swap-colors" title="Поменять цвета (X)" aria-label="Поменять цвета" onClick={() => setSettings({ color: settings.secondaryColor, secondaryColor: settings.color })}><ArrowLeftRight size={11} /></button><label className="secondary-color" style={{ background: settings.secondaryColor }} title="Фоновый цвет"><input type="color" aria-label="Фоновый цвет инструмента" value={settings.secondaryColor} onChange={e => setSettings({ secondaryColor: e.target.value })} /></label><button className="primary-color" style={{ background: settings.color }} title="Основной цвет" aria-label="Выбрать основной цвет" onClick={() => setModal('color')} /></div>
         <div className="toolbar-bottom"><IconButton icon={Keyboard} label="Горячие клавиши" onClick={() => setModal('help')} /><IconButton icon={CircleHelp} label="О редакторе" onClick={() => setModal('about')} /></div>
       </aside>
-      <main className="workspace"><div className="document-bar"><div className="document-tab"><span className="document-dot" />{renamingDoc ? <input autoFocus aria-label="Название проекта" value={doc.name} maxLength={80} onChange={e => editor.change(d => ({ ...d, name: e.target.value }), '', true)} onBlur={() => { if (!editor.documentRef.current.name.trim()) editor.change(d => ({ ...d, name: 'Без названия' }), '', true); editor.finish('Название проекта'); setRenamingDoc(false) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur() }} /> : <button className="document-name" title="Нажми, чтобы переименовать проект" onClick={() => setRenamingDoc(true)}>{doc.name}<span>.777</span></button>}<span className="document-unsaved">{saveStatus === 'saving' ? '•' : ''}</span></div><IconButton icon={Plus} label="Создать новый проект" onClick={() => setModal('new')} /><div className="document-meta"><span>{doc.width} × {doc.height} px</span><span className="color-profile">RGB / 8</span></div></div>
-        <CanvasStage editor={editor} selectedId={selectedId} onSelect={setSelectedId} tool={tool} setTool={setTool} settings={settings} setColor={color => setSettings({ color })} zoom={zoom} setZoom={setZoom} onEffectiveZoom={setEffectiveZoom} pan={pan} setPan={setPan} selection={selection} setSelection={setSelection} onCrop={crop} onPixelAction={(op, point) => void pixelAction(op, point)} onToast={toastMessage} rulers={rulers} busy={!!busy} />
+      <main className="workspace"><div className="document-bar"><div className="document-tab"><span className="document-dot" />{renamingDoc ? <input autoFocus aria-label="Название проекта" value={doc.name} maxLength={80} onChange={e => editor.change(d => ({ ...d, name: e.target.value }), '', true)} onBlur={() => { if (!editor.documentRef.current.name.trim()) editor.change(d => ({ ...d, name: 'Без названия' }), '', true); editor.finish('Название проекта'); setRenamingDoc(false) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur() }} /> : <button className="document-name" title="Нажми, чтобы переименовать проект" onClick={() => setRenamingDoc(true)}>{doc.name}<span>.psd</span></button>}<span className="document-unsaved">{saveStatus === 'saving' ? '•' : ''}</span></div><IconButton icon={Plus} label="Создать новый проект" onClick={() => setModal('new')} /><div className="document-meta"><span>{doc.width} × {doc.height} px</span><span className="color-profile">RGB / 8</span></div></div>
+        <CanvasStage editor={editor} selectedId={selectedId} onSelect={setSelectedId} tool={tool} setTool={setTool} settings={settings} setColor={color => setSettings({ color })} zoom={zoom} setZoom={setZoom} onEffectiveZoom={setEffectiveZoom} pan={pan} setPan={setPan} selection={selection} setSelection={setSelection} onCrop={crop} onPixelAction={(op, point) => void pixelAction(op, point)} onToast={toastMessage} onBusy={setBusy} smooth={preferences.smooth} showPerformance={preferences.showPerformance} rulers={rulers} busy={!!busy} />
         <footer className="workspace-status"><span className="status-left"><span className="status-dot" />Все инструменты — на твоей стороне<span className="status-divider" />{selected ? selected.name : 'Холст'}</span><div className="zoom-controls"><IconButton icon={Minus} label="Уменьшить масштаб" disabled={effectiveZoom <= 0.05} onClick={() => setZoom(Math.max(0.05, effectiveZoom / 1.25))} /><Select aria-label="Масштаб холста" value={zoom === null ? 'fit' : String(zoom)} onChange={e => { if (e.target.value === 'fit') fitView(); else { setZoom(+e.target.value); setPan({ x: 0, y: 0 }) } }}><option value="fit">{zoom === null ? `${Math.round(effectiveZoom * 100)}%` : 'По размеру окна'}</option>{zoom !== null && ![0.25, 0.5, 0.75, 1, 1.5, 2, 4].includes(zoom) && <option value={String(zoom)}>{Math.round(zoom * 100)}%</option>}{[0.25, 0.5, 0.75, 1, 1.5, 2, 4].map(z => <option key={z} value={String(z)}>{z * 100}%</option>)}</Select><IconButton icon={Plus} label="Увеличить масштаб" disabled={effectiveZoom >= 4} onClick={() => setZoom(Math.min(4, effectiveZoom * 1.25))} /><div className="vertical-divider" /><IconButton icon={Maximize} label="Вписать холст (Ctrl+0)" onClick={fitView} /></div></footer>
       </main>
-      {inspector && <aside className="inspector" aria-label="Свойства и слои"><PropertiesPanel editor={editor} layer={selected} onStyle={() => setModal('styles')} onExtractText={extractText} onRemoveBackground={() => void pixelAction('background')} onFitLayer={fitLayer} onImport={() => input.current?.click()} onAddText={addText} settings={settings} setSettings={setSettings} busy={!!busy} /><LayersPanel editor={editor} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEmpty} onDuplicate={duplicate} onDelete={deleteLayer} onReorder={reorder} /><div className="inspector-footer"><ShieldCheck size={12} /><span>Твои файлы остаются у тебя</span><span className="footer-777">777</span></div></aside>}
+      {inspector && <aside className="inspector" aria-label="Свойства и слои"><PropertiesPanel editor={editor} layer={selected} onStyle={() => setModal('styles')} onFonts={() => setModal('fonts')} onExtractText={extractText} onRemoveBackground={() => void pixelAction('background')} onFitLayer={fitLayer} onImport={() => input.current?.click()} onAddText={addText} settings={settings} setSettings={setSettings} busy={!!busy} /><LayersPanel editor={editor} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEmpty} onDuplicate={duplicate} onDelete={deleteLayer} onReorder={reorder} /><div className="inspector-footer"><ShieldCheck size={12} /><span>Твои файлы остаются у тебя</span><span className="footer-777">777</span></div></aside>}
     </div>
     <input ref={input} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json" multiple aria-label="Открыть изображение или проект" onChange={e => { void importFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
+    {modal === 'settings' && <SettingsDialog value={preferences} onChange={setPreferences} onClose={closeModal} />}
+    {modal === 'fonts' && <FontsDialog onClose={closeModal} onChoose={fontFamily => { if (selected?.kind === 'text' && !selected.locked) editor.patchLayer(selected.id, { fontFamily }, 'Шрифт'); else toastMessage(`Шрифт ${fontFamily} доступен в свойствах текста`) }} />}
     {modal === 'new' && <NewDocumentDialog onClose={closeModal} onSave={() => void saveProject()} onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))} />}
     {modal === 'export' && <ExportDialog doc={doc} onClose={closeModal} onSave={() => void saveProject()} onToast={toastMessage} />}
     {(modal === 'help' || modal === 'about') && <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />}

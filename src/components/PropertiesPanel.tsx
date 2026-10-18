@@ -1,3 +1,5 @@
+import { useFonts } from '../hooks/useFonts'
+import { useFont } from '../engine/fonts'
 import { useState } from 'react'
 import { AlignCenter, AlignLeft, AlignRight, Bold, ChevronDown, ChevronRight, FlipHorizontal2, FlipVertical2, Image, Italic, Link2, LockKeyhole, Maximize, Palette, RotateCcw, SlidersHorizontal, Sparkles, Type, Unlink2, Upload } from 'lucide-react'
 import { DEFAULT_ADJUSTMENTS, type Layer, type ToolSettings } from '../types'
@@ -8,6 +10,7 @@ interface Props {
   editor: Editor
   layer?: Layer
   onStyle: () => void
+  onFonts: () => void
   onExtractText: () => void
   onRemoveBackground: () => void
   onFitLayer: () => void
@@ -26,7 +29,8 @@ const presets = [
   { name: 'Плёнка', filter: 'sepia(.25) contrast(.8)', values: { sepia: 25, contrast: -20, saturation: -15 } },
 ]
 
-export function PropertiesPanel({ editor, layer, onStyle, onExtractText, onRemoveBackground, onFitLayer, onImport, onAddText, settings, setSettings, busy }: Props) {
+export function PropertiesPanel({ editor, layer, onStyle, onFonts, onExtractText, onRemoveBackground, onFitLayer, onImport, onAddText, settings, setSettings, busy }: Props) {
+  const fonts = useFonts()
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
   const [linked, setLinked] = useState(true)
   const [adjustOpen, setAdjustOpen] = useState(false)
@@ -69,9 +73,9 @@ export function PropertiesPanel({ editor, layer, onStyle, onExtractText, onRemov
             </div>
           {layer.warp && <button className="text-button" style={{ marginTop: 10 }} onClick={() => patch({ warp: undefined }, 'Сброс перспективы')}>Сбросить перспективу</button>}
           </div>
-          {layer.kind === 'text' && <div className="property-section text-properties"><div className="section-heading">Типографика<Type size={13} /></div>
-            <textarea aria-label="Текст слоя" className="text-content-field" value={layer.text || ''} onChange={e => patch({ text: e.target.value, height: Math.max(layer.height, e.target.value.split('\n').length * (layer.fontSize || 48) * (layer.lineHeight || 1.2)) }, '', true)} onBlur={() => editor.finish('Редактирование текста')} rows={2} />
-            <Select aria-label="Шрифт" value={layer.fontFamily || 'Manrope'} onChange={e => patch({ fontFamily: e.target.value }, 'Шрифт')}><option>Manrope</option><option>Unbounded</option><option>Arial</option><option>Georgia</option><option>monospace</option></Select>
+          {layer.kind === 'text' && <div className="property-section text-properties"><div className="section-heading">Свойства текста<Type size={13} /></div>
+            <textarea aria-label="Текст слоя" className="text-content-field" value={layer.text || ''} onChange={e => patch({ text: e.target.value, height: Math.max(layer.height, e.target.value.split('\n').length * (layer.fontSize || 48) * (layer.lineHeight || 1.2)) }, '', true)} onBlur={() => editor.finish('Редактирование текста')} maxLength={20000} rows={3} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.currentTarget.blur() } }} />
+            <div className="font-select-row"><Select aria-label="Шрифт" value={layer.fontFamily || 'Manrope'} onChange={e => { const fontFamily = e.target.value; void useFont(fontFamily).then(() => patch({ fontFamily }, 'Шрифт')) }}>{[...new Set([layer.fontFamily || 'Manrope', ...fonts])].map(f => <option key={f}>{f}</option>)}</Select><button className="compact-button" onClick={onFonts} title="Системные шрифты, TTF / OTF и Google Fonts" aria-label="Библиотека шрифтов">Aa+</button></div>
             <div className="text-style-row"><Field label="Размер" value={layer.fontSize || 48} min={4} max={1000} onChange={fontSize => patch({ fontSize }, '', true)} onCommit={finish} /><IconButton icon={Bold} label="Полужирный" active={(layer.fontWeight || 500) >= 700} onClick={() => patch({ fontWeight: (layer.fontWeight || 500) >= 700 ? 400 : 700 }, 'Начертание')} /><IconButton icon={Italic} label="Курсив" active={layer.italic} onClick={() => patch({ italic: !layer.italic }, 'Начертание')} /></div>
             <div className="text-style-row"><div className="segmented-control">{([['left', AlignLeft, 'По левому краю'], ['center', AlignCenter, 'По центру'], ['right', AlignRight, 'По правому краю']] as const).map(([value, icon, label]) => <IconButton key={value} icon={icon} label={label} active={(layer.textAlign || 'left') === value} onClick={() => patch({ textAlign: value }, 'Выравнивание текста')} />)}</div><Field label="А↔" value={layer.letterSpacing || 0} min={-30} max={100} onChange={letterSpacing => patch({ letterSpacing }, '', true)} onCommit={finish} /></div>
             <Field label="Интерлиньяж" value={layer.lineHeight || 1.2} min={0.5} max={4} step={0.1} onChange={lineHeight => patch({ lineHeight }, '', true)} onCommit={finish} />

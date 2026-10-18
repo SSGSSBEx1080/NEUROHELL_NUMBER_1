@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('fsh777', {
   desktop: true,
   platform: process.platform,
+  listFonts: () => ipcRenderer.invoke('fsh777:list-fonts'),
   onDownloadStatus(callback) {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, value) => {

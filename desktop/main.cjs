@@ -1,5 +1,6 @@
 'use strict';
-const { app, BrowserWindow, Menu, protocol, net, session, nativeTheme, screen, dialog } = require('electron');
+const { app, BrowserWindow, Menu, protocol, net, session, nativeTheme, screen, dialog, ipcMain } = require('electron');
+const { listSystemFonts, trustedFontRequest } = require('./fonts.cjs');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -17,6 +18,7 @@ else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   app.whenReady().then(async () => {
     nativeTheme.themeSource = 'dark';
+    ipcMain.handle('fsh777:list-fonts', async event => { if (!trustedFontRequest(event, window)) throw new Error('Untrusted font request'); return listSystemFonts(); });
     Menu.setApplicationMenu(null);
     const root = path.join(__dirname, '..', 'dist');
     protocol.handle('fsh777', async request => {

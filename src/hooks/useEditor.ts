@@ -1,3 +1,4 @@
+import { loadPreferences } from '../engine/preferences'
 import { useCallback, useRef, useState } from 'react'
 import type { EditorDocument, HistoryEntry, Layer } from '../types'
 import { descendants } from '../engine/document'
@@ -22,7 +23,7 @@ export function useEditor(initial: EditorDocument) {
   const setCurrent = useCallback((next: EditorDocument) => { documentRef.current = next; setDocument(next) }, [])
   const record = useCallback((next: EditorDocument, label: string) => {
     if (entriesRef.current[indexRef.current].document === next) return
-    const history = trimHistory([...entriesRef.current.slice(0, indexRef.current + 1), { document: next, label, time: Date.now(), command: new ReplaceDocumentCommand(entriesRef.current[indexRef.current].document, next, label), selectedId: next.layers.some(l => l.id === selectionRef.current) ? selectionRef.current : null }], Number(localStorage.getItem('fsh777-history-limit')) || 50)
+    const history = trimHistory([...entriesRef.current.slice(0, indexRef.current + 1), { document: next, label, time: Date.now(), command: new ReplaceDocumentCommand(entriesRef.current[indexRef.current].document, next, label), selectedId: next.layers.some(l => l.id === selectionRef.current) ? selectionRef.current : null }], loadPreferences().history)
     entriesRef.current = history; indexRef.current = history.length - 1
     setEntries(history); setIndex(history.length - 1)
     pruneImageCache(history.map(e => e.document))
@@ -41,7 +42,7 @@ export function useEditor(initial: EditorDocument) {
       const dx = (patch.x ?? target.x) - target.x, dy = (patch.y ?? target.y) - target.y
       return { ...d, layers: d.layers.map(l => {
         const next = l.id === id ? { ...l, ...patch } : children.has(l.id) && (dx || dy) ? { ...l, x: l.x + dx, y: l.y + dy } : l
-        if (next !== l && l.mask?.linked && !patch.mask) {
+        if (next !== l && l.mask?.linked && !(l.id === id && 'mask' in patch)) {
           const sx = next.width / l.width, sy = next.height / l.height
           return { ...next, mask: { ...l.mask, x: next.x + (l.mask.x - l.x) * sx, y: next.y + (l.mask.y - l.y) * sy, width: l.mask.width * sx, height: l.mask.height * sy } }
         }

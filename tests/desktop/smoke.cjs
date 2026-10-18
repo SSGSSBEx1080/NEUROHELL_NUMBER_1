@@ -56,8 +56,12 @@ watchdog.unref();
       if (format === 'WEBP') { assert.equal(bytes.toString('ascii', 0, 4), 'RIFF'); assert.equal(bytes.toString('ascii', 8, 12), 'WEBP'); }
       if (format === 'PSD' || format === 'PSB') { assert.equal(bytes.toString('ascii', 0, 4), '8BPS'); assert.equal(bytes.readUInt16BE(4), format === 'PSD' ? 1 : 2); }
     }
-    progress('save editable .777 project using Ctrl+S');
+    progress('save standard PSD using Ctrl+S');
     await page.keyboard.press('Control+s');
+    await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.psd$/, { timeout: 30000 });
+    progress('save legacy .777 backup from File menu');
+    await page.getByRole('button', { name: 'Файл', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click();
     await expect(page.locator('.toast')).toContainText(/Файл сохранён: .+\.777$/, { timeout: 30000 });
     const project = (await fs.readdir(temp)).find(file => file.endsWith('.777'));
     assert.ok(project); assert.equal(JSON.parse(await fs.readFile(path.join(temp, project), 'utf8')).layers.length, 7);

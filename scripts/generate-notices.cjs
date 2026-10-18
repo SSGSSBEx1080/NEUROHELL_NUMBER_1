@@ -8,4 +8,5 @@ for (const name of packages) {
   if (!file) throw new Error(`Missing license: ${name}`);
   text += `${'='.repeat(72)}\n${name} ${pkg.version}\n${'='.repeat(72)}\n${fs.readFileSync(`${root}/${file}`, 'utf8')}\n\n`;
 }
+for (const filename of fs.readdirSync('public/fonts/catalog').filter(f => f.endsWith('-OFL.txt')).sort()) text += `${'='.repeat(72)}\nBundled font: ${filename.replace('-OFL.txt', '')} — google/fonts\n${'='.repeat(72)}\n${fs.readFileSync('public/fonts/catalog/' + filename, 'utf8')}\n\n`;
 fs.writeFileSync('THIRD_PARTY_LICENSES.txt', text.trimEnd() + '\n');
