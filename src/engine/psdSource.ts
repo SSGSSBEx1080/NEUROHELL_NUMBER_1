@@ -9,7 +9,16 @@ export interface PsdSource {
   createdAt?: number
 }
 const sources = new Map<string, PsdSource>()
-const ignoredVisual = new Set(['name', 'locked', 'expanded', 'sourcePath', 'sourceId', 'id', 'dpi'])
+const ignoredVisual = new Set([
+  'name',
+  'locked',
+  'expanded',
+  'sourcePath',
+  'sourceId',
+  'id',
+  'dpi',
+  'script',
+])
 const ignoredSave = new Set(['sourceId', 'expanded'])
 function equal(a: unknown, b: unknown, ignored: Set<string>): boolean {
   if (a === b) return true

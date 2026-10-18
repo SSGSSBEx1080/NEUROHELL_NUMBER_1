@@ -1,3 +1,5 @@
+import { parseScript } from './scriptFormat'
+import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
 import {
@@ -244,6 +246,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : 'source-over',
       warp: validQuad(l.warp) ? l.warp : undefined,
       textScaleX: finite(l.textScaleX, 0.01, 100, 1),
+      textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
       styles: normalizeStyles(l.styles),
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff',
@@ -308,6 +311,12 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
     }
   }
   return {
+    script: parseScript(d.script)?.map((entry) => ({
+      ...entry,
+      layerId: layers.some((l) => l.id === entry.layerId && l.kind === 'text')
+        ? entry.layerId
+        : undefined,
+    })),
     sourceId: typeof d.sourceId === 'string' ? d.sourceId.slice(0, 100) : undefined,
     dpi: finite(d.dpi, 1, 1200, 72),
     version: 1,

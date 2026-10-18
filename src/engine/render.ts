@@ -1,3 +1,4 @@
+import { clearTextLayoutCache, getTextLayout, textFont } from './textLayout'
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
 import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions } from './imageSafety'
@@ -171,18 +172,38 @@ export function renderLayer(
     }
   } else if (layer.kind === 'text') {
     const textScale = layer.textScaleX || 1
+    const layout = layer.textFrame ? getTextLayout(layer) : undefined
+    if (layer.textFrame) {
+      const p = layer.textFrame.padding,
+        w = layer.width - p * 2,
+        h = layer.height - p * 2
+      ctx.beginPath()
+      if (layer.textFrame.shape === 'ellipse' && w > 0 && h > 0)
+        ctx.ellipse(layer.width / 2, layer.height / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
+      else ctx.rect(p, p, Math.max(0, w), Math.max(0, h))
+      ctx.clip()
+    }
     ctx.scale(textScale, 1)
-    const size = layer.fontSize || 48
-    ctx.font = `${layer.italic ? 'italic ' : ''}${layer.fontWeight || 500} ${size}px "${layer.fontFamily || 'Manrope'}"`
+    const size = layout?.fontSize || layer.fontSize || 48
+    ctx.font = textFont(layer, size)
     ctx.fillStyle = layer.color
     ctx.textBaseline = 'top'
     ctx.textAlign = layer.textAlign || 'left'
     if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
-    const x =
-      layer.textAlign === 'center' ? layer.width / 2 : layer.textAlign === 'right' ? layer.width : 0
-    ;(layer.text || '')
-      .split('\n')
-      .forEach((line, i) => ctx.fillText(line, x / textScale, i * size * (layer.lineHeight || 1.2)))
+    if (layout) for (const line of layout.lines) ctx.fillText(line.text, line.x / textScale, line.y)
+    else {
+      const x =
+        layer.textAlign === 'center'
+          ? layer.width / 2
+          : layer.textAlign === 'right'
+            ? layer.width
+            : 0
+      ;(layer.text || '')
+        .split('\n')
+        .forEach((line, i) =>
+          ctx.fillText(line, x / textScale, i * size * (layer.lineHeight || 1.2)),
+        )
+    }
   }
   ctx.restore()
 }
@@ -485,6 +506,7 @@ export function clearRenderCaches() {
   maskCache.clear()
   clearStyleCache()
   clearWarpCache()
+  clearTextLayoutCache()
 }
 
 function rasterMask(layer: Layer): Layer['mask'] {

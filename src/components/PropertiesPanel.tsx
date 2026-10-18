@@ -1,3 +1,4 @@
+import { TextFrameSettings } from './TextFrameSettings'
 import { descendants } from '../engine/document'
 import { useFonts } from '../hooks/useFonts'
 import { useFont } from '../engine/fonts'
@@ -111,7 +112,7 @@ export function PropertiesPanel({
         ...(linked
           ? {
               [other]: Math.min(16384, Math.max(1, layer[other] * ratio)),
-              ...(layer.kind === 'text'
+              ...(layer.kind === 'text' && !layer.textFrame
                 ? { fontSize: Math.min(1000, Math.max(4, (layer.fontSize || 48) * ratio)) }
                 : {}),
             }
@@ -486,12 +487,14 @@ export function PropertiesPanel({
                           patch(
                             {
                               text: e.target.value,
-                              height: Math.max(
-                                layer.height,
-                                e.target.value.split('\n').length *
-                                  (layer.fontSize || 48) *
-                                  (layer.lineHeight || 1.2),
-                              ),
+                              height: layer.textFrame
+                                ? layer.height
+                                : Math.max(
+                                    layer.height,
+                                    e.target.value.split('\n').length *
+                                      (layer.fontSize || 48) *
+                                      (layer.lineHeight || 1.2),
+                                  ),
                             },
                             '',
                             true,
@@ -598,6 +601,7 @@ export function PropertiesPanel({
                         onChange={(lineHeight) => patch({ lineHeight }, '', true)}
                         onCommit={finish}
                       />
+                      <TextFrameSettings layer={layer} patch={patch} finish={finish} />
                       <ColorField
                         label="Цвет текста"
                         value={layer.color}

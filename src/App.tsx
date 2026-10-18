@@ -1,3 +1,4 @@
+import { TranslationPanel } from './components/TranslationPanel'
 import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
@@ -141,6 +142,7 @@ export default function App() {
   }, [preferences])
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
+  const [dockTab, setDockTab] = useState<'properties' | 'translation'>('properties')
   const [modal, setModal] = useState<
     | 'new'
     | 'export'
@@ -1445,6 +1447,14 @@ export default function App() {
       checked: inspector,
       action: () => setInspector(!inspector),
     },
+    {
+      label: 'Сценарий перевода',
+      checked: inspector && dockTab === 'translation',
+      action: () => {
+        setInspector(true)
+        setDockTab('translation')
+      },
+    },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Настройки…', icon: SlidersHorizontal, action: () => setModal('settings') },
     ...workspace.tabs.map((t) => ({
@@ -1683,17 +1693,19 @@ export default function App() {
               </Select>
             ) : (
               <span className="tool-instruction">
-                {tool === 'text'
-                  ? 'Нажми на холст и напиши свою историю'
-                  : tool === 'crop'
-                    ? 'Выдели область, которую хочешь оставить'
-                    : tool === 'select'
-                      ? 'Выдели область для стирания или заливки'
-                      : tool === 'eyedropper'
-                        ? 'Выбери любой цвет на холсте'
-                        : tool === 'hand'
-                          ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
-                          : 'Потяни на холсте. Shift — ровные пропорции'}
+                {tool === 'text-frame'
+                  ? 'Протяни рамку пузыря · текст и переносы в панели справа'
+                  : tool === 'text'
+                    ? 'Нажми на холст и напиши свою историю'
+                    : tool === 'crop'
+                      ? 'Выдели область, которую хочешь оставить'
+                      : tool === 'select'
+                        ? 'Выдели область для стирания или заливки'
+                        : tool === 'eyedropper'
+                          ? 'Выбери любой цвет на холсте'
+                          : tool === 'hand'
+                            ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
+                            : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
             )}
             {['brush', 'rectangle', 'ellipse', 'text', 'bucket', 'gradient'].includes(tool) && (
@@ -1872,6 +1884,10 @@ export default function App() {
                 setSelection={setSelection}
                 onCrop={crop}
                 onRepair={openRepair}
+                onEditText={() => {
+                  setInspector(true)
+                  setDockTab('properties')
+                }}
                 onPixelAction={(op, point) => void pixelAction(op, point)}
                 onToast={toastMessage}
                 onBusy={setBusy}
@@ -1932,33 +1948,63 @@ export default function App() {
           </main>
           {inspector && (
             <aside className="inspector" aria-label="Свойства и слои">
-              <PropertiesPanel
-                editor={editor}
-                layer={selected}
-                onStyle={() => setModal('styles')}
-                onFonts={() => setModal('fonts')}
-                onExtractText={extractText}
-                onRemoveBackground={() => void pixelAction('background')}
-                onFitLayer={fitLayer}
-                onImport={() => input.current?.click()}
-                onAddText={addText}
-                onMask={() => void addMask()}
-                onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
-                onParent={(parent) => {
-                  if (selectedId)
-                    try {
-                      editor.change(
-                        (d) => moveLayer(d, selectedId, 0, parent),
-                        'Родительская группа',
-                      )
-                    } catch (e) {
-                      toastMessage(e instanceof Error ? e.message : 'Ошибка группы')
-                    }
-                }}
-                settings={settings}
-                setSettings={setSettings}
-                busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
-              />
+              <div className="dock-tabs" role="tablist" aria-label="Панели редактора">
+                <button
+                  role="tab"
+                  aria-selected={dockTab === 'properties'}
+                  onClick={() => setDockTab('properties')}
+                >
+                  Слой
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={dockTab === 'translation'}
+                  onClick={() => setDockTab('translation')}
+                >
+                  Перевод
+                </button>
+              </div>
+              {dockTab === 'translation' ? (
+                <TranslationPanel
+                  key={doc.id}
+                  editor={editor}
+                  selection={selection}
+                  busy={!!busy || !!modal}
+                  onToast={toastMessage}
+                  onDraw={() => {
+                    setTool('text-frame')
+                    toastMessage('Протяни рамку на холсте. Затем вставь перевод в выбранный текст.')
+                  }}
+                />
+              ) : (
+                <PropertiesPanel
+                  editor={editor}
+                  layer={selected}
+                  onStyle={() => setModal('styles')}
+                  onFonts={() => setModal('fonts')}
+                  onExtractText={extractText}
+                  onRemoveBackground={() => void pixelAction('background')}
+                  onFitLayer={fitLayer}
+                  onImport={() => input.current?.click()}
+                  onAddText={addText}
+                  onMask={() => void addMask()}
+                  onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
+                  onParent={(parent) => {
+                    if (selectedId)
+                      try {
+                        editor.change(
+                          (d) => moveLayer(d, selectedId, 0, parent),
+                          'Родительская группа',
+                        )
+                      } catch (e) {
+                        toastMessage(e instanceof Error ? e.message : 'Ошибка группы')
+                      }
+                  }}
+                  settings={settings}
+                  setSettings={setSettings}
+                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                />
+              )}
               <LayersPanel
                 editor={editor}
                 selectedId={selectedId}

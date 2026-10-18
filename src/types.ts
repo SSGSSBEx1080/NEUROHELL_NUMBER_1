@@ -6,6 +6,7 @@ export type Tool =
   | 'eraser'
   | 'wand'
   | 'text'
+  | 'text-frame'
   | 'rectangle'
   | 'ellipse'
   | 'eyedropper'
@@ -48,6 +49,13 @@ export interface Adjustments {
   sepia: number
   invert: number
 }
+export interface TextFrame {
+  shape: 'rectangle' | 'ellipse'
+  padding: number
+  verticalAlign: 'top' | 'middle' | 'bottom'
+  autoFit: boolean
+  minFontSize: number
+}
 export interface Layer {
   id: string
   name: string
@@ -78,6 +86,7 @@ export interface Layer {
   strokeWidth?: number
   warp?: Quad
   textScaleX?: number
+  textFrame?: TextFrame
   styles?: LayerStyles
   parentId?: string
   expanded?: boolean
@@ -90,6 +99,15 @@ export interface Layer {
   flipX?: boolean
   flipY?: boolean
 }
+export interface TranslationEntry {
+  id: string
+  source: string
+  translation: string
+  speaker: string
+  note: string
+  status: 'draft' | 'translated' | 'proofread'
+  layerId?: string
+}
 export interface EditorDocument {
   version: 1
   id: string
@@ -100,6 +118,7 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   dpi?: number
+  script?: TranslationEntry[]
 }
 export interface Point {
   x: number

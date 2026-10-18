@@ -49,7 +49,10 @@ const groups = [
     { id: 'bucket', name: 'Заливка', icon: PaintBucket, key: 'G' },
     { id: 'gradient', name: 'Градиент', icon: Blend, key: 'G' },
   ],
-  [{ id: 'text', name: 'Текст', icon: Type, key: 'T' }],
+  [
+    { id: 'text', name: 'Текст', icon: Type, key: 'T' },
+    { id: 'text-frame', name: 'Текстовая рамка', icon: SquareDashed, key: 'T' },
+  ],
   [
     { id: 'rectangle', name: 'Прямоугольник', icon: Square, key: 'U' },
     { id: 'ellipse', name: 'Эллипс', icon: Circle, key: 'U' },

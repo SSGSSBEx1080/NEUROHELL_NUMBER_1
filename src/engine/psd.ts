@@ -1,3 +1,4 @@
+import { getTextLayout } from './textLayout'
 import { nativeFontStyle } from './fonts'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
 import type { Color, Layer as PsdLayer, LayerEffectsInfo, Psd, PixelData } from 'ag-psd'
@@ -499,8 +500,17 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           const a = angle,
             cx = layer.x + layer.width / 2,
             cy = layer.y + layer.height / 2
+          const layout = layer.textFrame ? getTextLayout(layer) : undefined
+          const textSize = layout?.fontSize || layer.fontSize || 48
+          const pad = Math.min(
+            layer.textFrame?.padding || 0,
+            Math.max(0, Math.min(layer.width, layer.height) / 2 - 0.5),
+          )
           out.text = {
-            text: (layer.text || '').replace(/\n/g, '\r'),
+            text:
+              layout && !layout.overflow
+                ? layout.lines.map((l) => l.text).join('\r')
+                : (layer.text || '').replace(/\n/g, '\r'),
             transform: [
               Math.cos(a),
               Math.sin(a),
@@ -510,21 +520,34 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
               cy - (Math.sin(a) * layer.width) / 2 - (Math.cos(a) * layer.height) / 2,
             ],
             shapeType: 'box',
-            boxBounds: [0, 0, layer.width, layer.height],
+            boxBounds: [pad, layout?.lines[0]?.y || 0, layer.width - pad, layer.height - pad],
             style: {
               ...nativeFontStyle(
                 layer.fontFamily || 'Manrope',
                 layer.fontWeight || 400,
                 layer.italic,
               ),
-              fontSize: layer.fontSize || 48,
+              fontSize: textSize,
               horizontalScale: layer.textScaleX || 1,
               fillColor: rgb(layer.color),
-              leading: (layer.fontSize || 48) * (layer.lineHeight || 1.2),
+              leading: textSize * (layer.lineHeight || 1.2),
               autoLeading: false,
-              tracking: ((layer.letterSpacing || 0) / (layer.fontSize || 48)) * 1000,
+              tracking: ((layer.letterSpacing || 0) / textSize) * 1000,
             },
-            paragraphStyle: { justification: layer.textAlign || 'left' },
+            paragraphStyle: { justification: layer.textAlign || 'left', autoHyphenate: false },
+            ...(layout && !layout.overflow
+              ? {
+                  paragraphStyleRuns: layout.lines.map((line, i) => ({
+                    length: line.text.length + (i < layout.lines.length - 1 ? 1 : 0),
+                    style: {
+                      justification: layer.textAlign || 'left',
+                      autoHyphenate: false,
+                      startIndent: (layer.width - pad * 2 - line.availableWidth) / 2,
+                      endIndent: (layer.width - pad * 2 - line.availableWidth) / 2,
+                    },
+                  })),
+                }
+              : {}),
           }
         }
       }

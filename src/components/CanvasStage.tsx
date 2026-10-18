@@ -1,3 +1,4 @@
+import { defaultTextFrame } from '../engine/textLayout'
 import { duplicateLayers, subtree } from '../engine/layerOperations'
 import { FrameScheduler, SceneRenderer } from '../engine/scene'
 import { magneticPoint, polygonSelection, selectionMask, selectionPath } from '../engine/selection'
@@ -47,6 +48,7 @@ interface Props {
   setSelection: (r: Selection | null) => void
   onCrop: () => void
   onRepair: (selection: Selection) => void
+  onEditText: () => void
   onPixelAction: (operation: 'wand' | 'erase' | 'fill' | 'bucket', point?: Point) => void
   onToast: (message: string) => void
   onBusy: (message: string | null) => void
@@ -66,7 +68,7 @@ type Drag =
       before: EditorDocument
       duplicatedFrom?: string
     }
-  | { type: 'region'; start: Point; repair?: boolean }
+  | { type: 'region'; start: Point; repair?: boolean; textFrame?: boolean }
   | { type: 'lasso'; points: Point[]; repair?: boolean }
   | {
       type: 'gradient'
@@ -116,6 +118,7 @@ export function CanvasStage({
   setSelection,
   onCrop,
   onRepair,
+  onEditText,
   onPixelAction,
   onToast,
   onBusy,
@@ -187,7 +190,11 @@ export function CanvasStage({
       setRevision((v) => v + 1)
     }
     window.addEventListener('fsh777-fonts-changed', changed)
-    return () => window.removeEventListener('fsh777-fonts-changed', changed)
+    document.fonts.addEventListener('loadingdone', changed)
+    return () => {
+      window.removeEventListener('fsh777-fonts-changed', changed)
+      document.fonts.removeEventListener('loadingdone', changed)
+    }
   }, [])
   useEffect(() => {
     polygon.current = []
@@ -305,6 +312,7 @@ export function CanvasStage({
       return
     }
     onSelect(layer.id)
+    onEditText()
     setTool('move')
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
@@ -473,10 +481,16 @@ export function CanvasStage({
       tool === 'crop' ||
       tool === 'select' ||
       tool === 'ellipse-select' ||
-      tool === 'repair-box'
+      tool === 'repair-box' ||
+      tool === 'text-frame'
     ) {
       setSelection({ ...p, width: 0, height: 0 })
-      drag.current = { type: 'region', start: p, repair: tool === 'repair-box' }
+      drag.current = {
+        type: 'region',
+        start: p,
+        repair: tool === 'repair-box',
+        textFrame: tool === 'text-frame',
+      }
     } else if (tool === 'text') {
       const hit = [...doc.layers].reverse().find((l) => l.kind === 'text' && hitTest(l, p))
       if (hit) {
@@ -819,7 +833,7 @@ export function CanvasStage({
           height,
           x: d.layer.x + d.layer.width / 2 + cx * Math.cos(a) - cy * Math.sin(a) - width / 2,
           y: d.layer.y + d.layer.height / 2 + cx * Math.sin(a) + cy * Math.cos(a) - height / 2,
-          ...(d.layer.kind === 'text'
+          ...(d.layer.kind === 'text' && !d.layer.textFrame
             ? {
                 fontSize: Math.max(
                   4,
@@ -856,6 +870,37 @@ export function CanvasStage({
       setSelection(selected)
       if (d.repair && selected) onRepair(selected)
       setOutline([])
+      return
+    }
+    if (d.type === 'region' && d.textFrame) {
+      const rect = getRect(d.start, pointFrom(e))
+      setSelection(null)
+      if (rect.width < 20 || rect.height < 20) {
+        onToast('Протяни рамку от 20 × 20 px')
+        return
+      }
+      if (editor.documentRef.current.layers.length >= MAX_LAYERS) {
+        onToast('До 100 слоёв в проекте')
+        return
+      }
+      const layer = makeLayer({
+        ...rect,
+        kind: 'text',
+        name: 'Реплика',
+        text: 'Текст реплики',
+        fontFamily: 'Manrope',
+        fontSize: Math.min(48, Math.max(12, rect.height / 4)),
+        fontWeight: 600,
+        textAlign: 'center',
+        lineHeight: 1.15,
+        color: '#151515',
+        textFrame: defaultTextFrame(),
+      })
+      editor.change(
+        (doc) => ({ ...doc, layers: [...doc.layers, layer] }),
+        'Добавление текстовой рамки',
+      )
+      beginText(layer)
       return
     }
     if (d.type === 'region' && d.repair) {
