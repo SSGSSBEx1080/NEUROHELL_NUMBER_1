@@ -1,14 +1,23 @@
 import type { PathController } from '../hooks/usePathTool'
-import { PathProperties } from './PathProperties'
 import { maskOperationNames, type MaskOperation } from '../engine/maskOperations'
-import { CorrectionProperties } from './CorrectionProperties'
 import { localBounds, worldBounds, resizePointText, rotateVisual } from '../engine/layerGeometry'
-import { ShapeProperties } from './ShapeProperties'
-import { TextFrameSettings } from './TextFrameSettings'
 import { descendants } from '../engine/document'
 import { useFonts } from '../hooks/useFonts'
 import { useFont } from '../engine/fonts'
-import { useLayoutEffect, useState } from 'react'
+import { lazy, Suspense, useLayoutEffect, useState } from 'react'
+// Per-kind property editors load on first use; the panel shell stays synchronous.
+const CorrectionProperties = lazy(() =>
+  import('./CorrectionProperties').then((m) => ({ default: m.CorrectionProperties })),
+)
+const ShapeProperties = lazy(() =>
+  import('./ShapeProperties').then((m) => ({ default: m.ShapeProperties })),
+)
+const PathProperties = lazy(() =>
+  import('./PathProperties').then((m) => ({ default: m.PathProperties })),
+)
+const TextFrameSettings = lazy(() =>
+  import('./TextFrameSettings').then((m) => ({ default: m.TextFrameSettings })),
+)
 import {
   AlignCenter,
   AlignLeft,
@@ -332,15 +341,17 @@ export function PropertiesPanel({
                 <>
                   {layer.kind === 'adjustment' && layer.correction && (
                     <>
-                      <CorrectionProperties
-                        key={layer.id}
-                        layer={layer}
-                        doc={doc}
-                        onChange={(correction, temporary) =>
-                          patch({ correction }, 'Корректирующий слой', temporary)
-                        }
-                        onFinish={() => editor.finish('Корректирующий слой')}
-                      />
+                      <Suspense fallback={null}>
+                        <CorrectionProperties
+                          key={layer.id}
+                          layer={layer}
+                          doc={doc}
+                          onChange={(correction, temporary) =>
+                            patch({ correction }, 'Корректирующий слой', temporary)
+                          }
+                          onFinish={() => editor.finish('Корректирующий слой')}
+                        />
+                      </Suspense>
                       {!layer.mask && (
                         <button className="action-button" onClick={onMask}>
                           Добавить маску коррекции
@@ -680,7 +691,9 @@ export function PropertiesPanel({
                         onChange={(lineHeight) => patch({ lineHeight }, '', true)}
                         onCommit={finish}
                       />
-                      <TextFrameSettings layer={layer} patch={patch} finish={finish} />
+                      <Suspense fallback={null}>
+                        <TextFrameSettings layer={layer} patch={patch} finish={finish} />
+                      </Suspense>
                       <ColorField
                         label="Цвет текста"
                         value={layer.color}
@@ -691,8 +704,17 @@ export function PropertiesPanel({
                   )}
                   {layer.kind === 'shape' && (
                     <>
-                      <ShapeProperties key={layer.id} layer={layer} patch={patch} finish={finish} />
-                      <PathProperties key={`path:${layer.id}`} controller={pathController} />
+                      <Suspense fallback={null}>
+                        <ShapeProperties
+                          key={layer.id}
+                          layer={layer}
+                          patch={patch}
+                          finish={finish}
+                        />
+                      </Suspense>
+                      <Suspense fallback={null}>
+                        <PathProperties key={`path:${layer.id}`} controller={pathController} />
+                      </Suspense>
                     </>
                   )}
                   {layer.kind === 'image' && !layer.smart && (

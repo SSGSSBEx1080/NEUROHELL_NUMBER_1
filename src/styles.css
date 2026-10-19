@@ -392,11 +392,6 @@ fieldset:disabled {
   padding: 13px 0 9px;
   z-index: 20;
 }
-.tool-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
 .tool-button {
   position: relative;
   width: 36px;
@@ -425,37 +420,6 @@ fieldset:disabled {
   width: 2px;
   border-radius: 2px;
   background: var(--accent);
-}
-.tool-divider {
-  height: 1px;
-  background: #34313a;
-  margin: 10px 7px;
-}
-.tool-tooltip {
-  pointer-events: none;
-  position: absolute;
-  left: 47px;
-  top: 3px;
-  z-index: 200;
-  background: #39333f;
-  box-shadow: 0 4px 15px #0005;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  border: 1px solid #595064;
-  padding: 7px 9px;
-  border-radius: 5px;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  color: #e9e2f2;
-  font-size: 11px;
-}
-.tool-button:hover .tool-tooltip,
-.tool-button:focus-visible .tool-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0.35s;
 }
 kbd {
   font:
@@ -807,18 +771,6 @@ kbd {
 .tool-ellipse,
 .tool-eyedropper {
   cursor: crosshair;
-}
-.inline-text-editor {
-  position: absolute;
-  resize: none;
-  border: 1px dashed var(--accent);
-  outline: none;
-  background: #24202d88;
-  padding: 0;
-  overflow: hidden;
-  transform-origin: center;
-  z-index: 6;
-  border-radius: 0;
 }
 .selection-actions {
   display: flex;
@@ -2360,14 +2312,8 @@ kbd {
     width: 33px;
     height: 33px;
   }
-  .tool-divider {
-    margin: 7px;
-  }
   .toolbar {
     padding-top: 10px;
-  }
-  .tool-stack {
-    gap: 1px;
   }
   .tool-instruction {
     max-width: 170px;
@@ -2428,12 +2374,6 @@ kbd {
 @media (max-height: 740px) {
   .tool-button {
     height: 29px;
-  }
-  .tool-stack {
-    gap: 1px;
-  }
-  .tool-divider {
-    margin: 6px;
   }
   .toolbar-colors {
     margin-top: 9px;

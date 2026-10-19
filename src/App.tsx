@@ -9,7 +9,6 @@ import { selectionSource } from './engine/selectionSource'
 import { insertAdjustment } from './engine/adjustmentLayers'
 import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
 import type { PsdExportReport } from './engine/psdReport'
-import { parseTextEntriesFile, MAX_TEXT_ENTRIES } from './engine/textEntriesFormat'
 import { insertRepairLayer } from './engine/repairPlacement'
 import { ActionsPanel } from './components/ActionsPanel'
 import { PanelDock } from './components/PanelDock'
@@ -22,7 +21,9 @@ import {
   hasPendingActionDraft,
 } from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
-import { TextEntriesPanel } from './components/TextEntriesPanel'
+const TextEntriesPanel = lazy(() =>
+  import('./components/TextEntriesPanel').then((m) => ({ default: m.TextEntriesPanel })),
+)
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
 import { useWorkspace } from './hooks/useWorkspace'
@@ -126,7 +127,6 @@ import { selectionMask, combineSelection, invertSelection } from './engine/selec
 import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { parseActionSet, runAction, type StudioAction } from './engine/actions'
-import { parseAtn } from './engine/atn'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
@@ -1002,7 +1002,7 @@ export default function App() {
         if (actionFile.size > 8 * 1024 * 1024)
           throw new Error('Набор операций должен быть меньше 8 МБ')
         const imported = /\.atn$/i.test(actionFile.name)
-          ? parseAtn(await actionFile.arrayBuffer())
+          ? (await import('./engine/atn')).parseAtn(await actionFile.arrayBuffer())
           : parseActionSet(JSON.parse(await actionFile.text()))
         if (actions.length + imported.length > 100)
           throw new Error('До 100 операций в наборе. Удали ненужные перед импортом.')
@@ -1017,12 +1017,15 @@ export default function App() {
         if (textEntriesFile.size > 8 * 1024 * 1024)
           throw new Error('Файл текстов должен быть до 8 МиБ')
         const id = editor.documentRef.current.id
-        const imported = parseTextEntriesFile(JSON.parse(await textEntriesFile.text()))
+        const textEntriesFormat = await import('./engine/textEntriesFormat')
+        const imported = textEntriesFormat.parseTextEntriesFile(
+          JSON.parse(await textEntriesFile.text()),
+        )
         if (editor.documentRef.current.id !== id)
           throw new Error('Документ изменился — повтори импорт текстовых блоков')
         if (
           (editor.documentRef.current.textEntries?.length || 0) + imported.length >
-          MAX_TEXT_ENTRIES
+          textEntriesFormat.MAX_TEXT_ENTRIES
         )
           throw new Error('До 200 текстовых блоков')
         editor.change(
@@ -2809,17 +2812,19 @@ export default function App() {
                 />
               }
               texts={
-                <TextEntriesPanel
-                  key={doc.id}
-                  editor={editor}
-                  selection={selection}
-                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
-                  onToast={toastMessage}
-                  onDraw={() => {
-                    setTool('text-frame')
-                    toastMessage('Протяни рамку на холсте. Затем размести в ней текстовый блок.')
-                  }}
-                />
+                <Suspense fallback={null}>
+                  <TextEntriesPanel
+                    key={doc.id}
+                    editor={editor}
+                    selection={selection}
+                    busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                    onToast={toastMessage}
+                    onDraw={() => {
+                      setTool('text-frame')
+                      toastMessage('Протяни рамку на холсте. Затем размести в ней текстовый блок.')
+                    }}
+                  />
+                </Suspense>
               }
               actions={
                 <ActionsPanel
