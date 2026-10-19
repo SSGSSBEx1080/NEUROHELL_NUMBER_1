@@ -25,8 +25,8 @@ export function trimHistory(entries: HistoryEntry[], limit = 50, byteLimit = 128
     let bytes = 0
     const buffers = new Set<ArrayBufferLike>()
     const collect = (doc: EditorDocument) => {
-      for (const entry of doc.script || [])
-        for (const value of [entry.source, entry.translation, entry.note])
+      for (const entry of doc.textEntries || [])
+        for (const value of [entry.source, entry.text, entry.label, entry.note])
           if (!sources.has(value)) {
             sources.add(value)
             bytes += value.length * 2
@@ -75,8 +75,8 @@ export function trimInactiveHistories<
     }
   }
   const collect = (doc: EditorDocument) => {
-    for (const entry of doc.script || [])
-      for (const value of [entry.source, entry.translation, entry.note]) strings.add(value)
+    for (const entry of doc.textEntries || [])
+      for (const value of [entry.source, entry.text, entry.label, entry.note]) strings.add(value)
     for (const layer of doc.layers) {
       if (layer.text) strings.add(layer.text)
       if (layer.sourceText) strings.add(layer.sourceText)

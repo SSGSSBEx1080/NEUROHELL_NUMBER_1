@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module'
+const { textBlocksFixture } = createRequire(import.meta.url)('../fixtures/editor/text-blocks.cjs')
 import { readFile, writeFile } from 'node:fs/promises'
 import { initializeCanvas, readPsd } from 'ag-psd'
 import { expect, test, type Page } from '@playwright/test'
@@ -115,7 +117,7 @@ initializeCanvas(
   }),
 )
 async function savePsd(page: Page) {
-  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  await page.getByTestId('canvas-viewport').focus()
   const downloading = page.waitForEvent('download')
   await page.keyboard.press('Control+s')
   const file = await downloading
@@ -135,7 +137,7 @@ test('area text wraps with editable native PSD type and roundtrips its frame', a
   await page.mouse.up()
   const field = page.getByLabel('Текст слоя', { exact: true })
   await expect(field).toBeFocused()
-  await field.fill('Это новая реплика. Её нужно аккуратно разместить в пузыре.')
+  await field.fill('Это текстовый блок. Его нужно разместить в рамке.')
   await field.blur()
   await page.getByLabel('Режим текста').selectOption('ellipse')
   await expect(page.getByTestId('text-layout-status')).not.toContainText('Переполнение')
@@ -143,7 +145,7 @@ test('area text wraps with editable native PSD type and roundtrips its frame', a
     psd = readPsd(data, { useImageData: true, skipThumbnail: true })
   const type = psd.children?.find((l) => l.text)
   expect(type?.text?.text.replace(/\s/g, '')).toBe(
-    'Это новая реплика. Её нужно аккуратно разместить в пузыре.'.replace(/\s/g, ''),
+    'Это текстовый блок. Его нужно разместить в рамке.'.replace(/\s/g, ''),
   )
   expect(type?.text?.style?.fontSize).toBeLessThanOrEqual(29)
   expect(type?.text?.paragraphStyleRuns!.length).toBeGreaterThan(1)
@@ -152,58 +154,60 @@ test('area text wraps with editable native PSD type and roundtrips its frame', a
     .setInputFiles({ name: 'layout-text.psd', mimeType: 'image/vnd.adobe.photoshop', buffer: data })
   await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.locator('.layer-row').filter({ hasText: 'Реплика' }).click()
+  await page.locator('.layer-row').filter({ hasText: 'Текстовая рамка' }).click()
   await expect(page.getByLabel('Режим текста')).toHaveValue('ellipse')
-  await expect(field).toHaveValue('Это новая реплика. Её нужно аккуратно разместить в пузыре.')
+  await expect(field).toHaveValue('Это текстовый блок. Его нужно разместить в рамке.')
   await page.getByLabel('Авторазмер по рамке', { exact: true }).uncheck()
   await page.getByLabel('Размер', { exact: true }).fill('80')
   await page.getByLabel('Размер', { exact: true }).blur()
   await expect(page.getByTestId('text-layout-status')).toContainText('Переполнение')
 })
 
-test('translation script is local, places linked type once, survives PSD and data exchange', async ({
+test('text collection is local, places linked type once, survives PSD and data exchange', async ({
   page,
 }) => {
   await blank(page)
-  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
-  await page.getByRole('button', { name: 'Первая реплика', exact: true }).click()
-  await page.getByLabel('Оригинал реплики').fill('こんにちは')
-  await page.getByLabel('Перевод реплики').fill('Привет, мир!')
-  await page.getByLabel('Статус перевода').selectOption('proofread')
+  await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
+  await page.getByRole('button', { name: 'Добавить первый текстовый блок', exact: true }).click()
+  await page.getByLabel('Исходный текст блока').fill('Исходный образец')
+  await page.getByLabel('Содержимое текстового блока').fill('Текстовый блок')
+  await page.getByLabel('Статус текстового блока').selectOption('checked')
   await page.getByRole('button', { name: 'Создать текстовый слой', exact: true }).click()
   await expect(page.locator('.layer-row')).toHaveCount(2)
-  await page.getByLabel('Перевод реплики').fill('До встречи!')
+  await page.getByLabel('Содержимое текстового блока').fill('Новое содержимое')
   await page.getByRole('button', { name: 'Обновить связанный текст', exact: true }).click()
   await expect(page.locator('.layer-row')).toHaveCount(2)
   const data = await savePsd(page)
-  await page
-    .getByLabel('Открыть изображение или проект')
-    .setInputFiles({ name: 'script.psd', mimeType: 'image/vnd.adobe.photoshop', buffer: data })
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({
+    name: 'text-entries.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer: data,
+  })
   await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
-  await expect(page.getByLabel('Перевод реплики')).toHaveValue('До встречи!')
-  await expect(page.getByLabel('Оригинал реплики')).toHaveValue('こんにちは')
-  await expect(page.getByLabel('Статус перевода')).toHaveValue('proofread')
+  await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
+  await expect(page.getByLabel('Содержимое текстового блока')).toHaveValue('Новое содержимое')
+  await expect(page.getByLabel('Исходный текст блока')).toHaveValue('Исходный образец')
+  await expect(page.getByLabel('Статус текстового блока')).toHaveValue('checked')
   const exporting = page.waitForEvent('download')
   await page
-    .getByRole('region', { name: 'Сценарий перевода' })
-    .getByRole('button', { name: 'Скачать сценарий', exact: true })
+    .getByRole('region', { name: 'Текстовые блоки' })
+    .getByRole('button', { name: 'Экспорт текстовых блоков', exact: true })
     .click()
   const downloaded = await exporting
   const bytes = await readFile((await downloaded.path())!)
   const exported = JSON.parse(bytes.toString())
   expect(exported.entries[0].layerId).toBeUndefined()
   await page
-    .getByLabel('Импорт сценария')
-    .setInputFiles({ name: 'exchange.777script.json', mimeType: 'application/json', buffer: bytes })
-  await expect(page.locator('.script-list > button')).toHaveCount(2)
+    .getByLabel('Импорт текстовых блоков')
+    .setInputFiles({ name: 'exchange.777texts.json', mimeType: 'application/json', buffer: bytes })
+  await expect(page.locator('.text-entry-list > button')).toHaveCount(2)
   await expect(
     page.getByRole('button', { name: 'Создать текстовый слой', exact: true }),
   ).toBeVisible()
-  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  await page.getByTestId('canvas-viewport').focus()
   await page.keyboard.press('Control+z')
-  await expect(page.locator('.script-list > button')).toHaveCount(1)
+  await expect(page.locator('.text-entry-list > button')).toHaveCount(1)
 })
 
 async function beginRecording(page: Page, name = 'Макет — запись') {
@@ -229,7 +233,7 @@ test('real recording captures final property changes and duplicate; replay is on
   await expect(page.getByTestId('recorded-step-count')).toContainText('0 шагов')
   await page.getByLabel('X', { exact: true }).blur()
   await expect(page.getByTestId('recorded-step-count')).toContainText('1 шагов')
-  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  await page.getByTestId('canvas-viewport').focus()
   await page.keyboard.press('Control+i')
   await page.keyboard.press('Control+j')
   await expect(page.getByTestId('recorded-step-count')).toContainText('3 шагов')
@@ -253,7 +257,7 @@ test('real recording captures final property changes and duplicate; replay is on
   await page.getByLabel('Данные шага JSON').fill(JSON.stringify(recorded.steps[0].command))
   await page.getByRole('button', { name: 'Применить параметры', exact: true }).click()
   await page.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
-  await page.locator('.document-bar').click({ position: { x: 300, y: 15 } })
+  await page.getByTestId('canvas-viewport').focus()
   for (let i = 0; i < 3; i++) await page.keyboard.press('Control+z')
   await expect(page.locator('.layer-row')).toHaveCount(1)
   await expect(page.getByLabel('X', { exact: true })).toHaveValue(String(initialX))
@@ -322,7 +326,7 @@ test('recording pause skips changes and an interrupted draft recovers as data, n
   await expect(page.getByLabel('X', { exact: true })).toHaveValue('60')
 })
 
-test('panels resize, dock left, float, retain script cursor and restore safely on a smaller display', async ({
+test('panels resize, dock left, float, retain the text-entry cursor and restore safely on a smaller display', async ({
   page,
 }) => {
   await blank(page)
@@ -362,14 +366,14 @@ test('panels resize, dock left, float, retain script cursor and restore safely o
   await page.mouse.move(divider.x + 40, divider.y + 73, { steps: 6 })
   await page.mouse.up()
   expect((await upper.boundingBox())!.height).toBeGreaterThan(height + 45)
-  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
-  await page.getByRole('button', { name: 'Первая реплика', exact: true }).click()
-  await page.getByRole('button', { name: 'Добавить реплику', exact: true }).click()
-  await page.getByLabel('Перевод реплики').fill('Вторая реплика')
-  await page.getByLabel('Перевод реплики').blur()
+  await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
+  await page.getByRole('button', { name: 'Добавить первый текстовый блок', exact: true }).click()
+  await page.getByRole('button', { name: 'Добавить текстовый блок', exact: true }).click()
+  await page.getByLabel('Содержимое текстового блока').fill('Второй текстовый блок')
+  await page.getByLabel('Содержимое текстового блока').blur()
   await page.getByRole('tab', { name: 'Слой', exact: true }).click()
-  await page.getByRole('tab', { name: 'Перевод', exact: true }).click()
-  await expect(page.getByLabel('Перевод реплики')).toHaveValue('Вторая реплика')
+  await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
+  await expect(page.getByLabel('Содержимое текстового блока')).toHaveValue('Второй текстовый блок')
   await page.getByRole('button', { name: 'Панели слева', exact: true }).click()
   expect((await inspector.boundingBox())!.x).toBeLessThan(100)
   await page.getByRole('button', { name: 'Открепить панели', exact: true }).click()
@@ -397,18 +401,24 @@ test('panels resize, dock left, float, retain script cursor and restore safely o
     .toBe(true)
   await page.getByRole('button', { name: 'Сбросить рабочую среду', exact: true }).click()
   await expect(inspector).toHaveCSS('position', 'relative')
-  await expect(page.getByLabel('Рабочая среда')).toHaveValue('retouch')
+  await expect(page.getByLabel('Рабочая среда')).toHaveValue('standard')
 })
 
-test('layout practice completes J-to-typeset without covering translation and exports independent-check fixtures', async ({
+test('synthetic fixture completes repair and linked text placement and exports independent-check fixtures', async ({
   page,
 }) => {
   await page.goto('/')
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.getByTestId('open-layout-demo').click()
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({
+    name: 'text-blocks.777',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(textBlocksFixture())),
+  })
+  await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await expect(page.locator('.layer-row')).toHaveCount(4)
-  await expect(page.getByLabel('Рабочая среда')).toHaveValue('layout')
+  await page.getByLabel('Рабочая среда').selectOption('texts')
+  await page.getByTestId('canvas-viewport').focus()
   const dark = () =>
     page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => {
       const sx = c.width / 896,
@@ -439,13 +449,14 @@ test('layout practice completes J-to-typeset without covering translation and ex
   ])
     await page.mouse.move(box.x + x * scale, box.y + y * scale, { steps: 6 })
   await page.mouse.up()
-  await expect(page.getByLabel('Под верхними текстовыми слоями')).toBeChecked()
+  await expect(page.getByLabel('Под верхними текстовыми слоями')).not.toBeChecked()
+  await page.getByLabel('Под верхними текстовыми слоями').check()
   await page.getByRole('button', { name: 'Применить на новый слой', exact: true }).click()
   await expect(page.locator('.layer-row')).toHaveCount(5)
   await expect.poll(dark).toBe(0)
   await page.getByRole('button', { name: 'Обновить связанный текст', exact: true }).click()
   await expect.poll(dark).toBeGreaterThan(50)
-  await writeFile('test-results/layout-workflow.psd', await savePsd(page))
+  await writeFile('test-results/text-block-workflow.psd', await savePsd(page))
   await page
     .locator('.header-actions')
     .getByRole('button', { name: 'Экспорт', exact: true })
@@ -457,9 +468,9 @@ test('layout practice completes J-to-typeset without covering translation and ex
   const saving = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Скачать PNG', exact: true }).click()
   const download = await saving
-  await writeFile('test-results/layout-workflow.png', await readFile((await download.path())!))
+  await writeFile('test-results/text-block-workflow.png', await readFile((await download.path())!))
   await expect(page.getByRole('dialog')).toBeHidden()
-  await page.screenshot({ path: 'test-results/layout-workspace.png' })
+  await page.screenshot({ path: 'test-results/text-block-workspace.png' })
 })
 
 test('donor strokes interpolate, Shift restores samples, preview slider avoids RGBA rewrites and reset recalculates', async ({
@@ -599,9 +610,14 @@ test('cancelling active texture reconstruction terminates its actual worker with
     buffer: Buffer.from(image, 'base64'),
   })
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  const before = await page
-      .getByTestId('editor-canvas')
-      .evaluate((c: HTMLCanvasElement) => c.toDataURL()),
+  const before = await page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      // Import hides its busy state before the scheduled scene frame. Capture
+      // the rendered image, not the browser's initial 300x150 blank canvas.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      return c.toDataURL()
+    }),
     b = (await page.locator('.artboard').boundingBox())!,
     scale = b.width / 640
   await page.keyboard.press('j')
@@ -633,7 +649,14 @@ test('cancelling active texture reconstruction terminates its actual worker with
   expect(stats.terminated).toBe(stats.started)
   await expect(page.locator('.layer-row')).toHaveCount(1)
   expect(
-    await page.getByTestId('editor-canvas').evaluate((c: HTMLCanvasElement) => c.toDataURL()),
+    await page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      // Import hides its busy state before the scheduled scene frame. Capture
+      // the rendered image, not the browser's initial 300x150 blank canvas.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      return c.toDataURL()
+    }),
   ).toBe(before)
 })
 
@@ -653,7 +676,7 @@ test('recording shortcut commits focused input, F-key replay works, and pending 
   await expect(modal.locator('.action-step')).toHaveCount(1)
   await modal.getByLabel('Клавиша операции').selectOption('F8')
   await modal.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
-  await page.locator('.document-bar').click()
+  await page.getByTestId('canvas-viewport').focus()
   await page.keyboard.press('Shift+F8')
   await expect(field).toHaveValue(String(before + 20))
   await page.keyboard.press('Control+z')

@@ -278,7 +278,7 @@ export function repairPixels(
             Math.floor(mapping[q] / w) + ty - Math.floor(q / w),
           )
       })
-      // Dense axial candidates preserve phase on screen tones; deterministic global
+      // Dense axial candidates preserve phase on periodic textures; deterministic global
       // candidates allow the centre of a large hole to reach original clean material.
       for (let distance = r + 1; distance <= search; distance++) {
         consider(tx - distance, ty)

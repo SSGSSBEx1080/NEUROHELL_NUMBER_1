@@ -43,7 +43,7 @@ describe('local layout restoration', () => {
     expect(result.mode).toBe('smooth')
     expect(Math.max(...result.pixels.map((v, i) => Math.abs(v - truth[i])))).toBeLessThanOrEqual(1)
   })
-  it('preserves the phase of a repeating layout screen tone using original source patches', () => {
+  it('preserves the phase of a repeating pattern using original source patches', () => {
     const { request, truth } = fixture((x, y) => {
       const v = x % 6 < 2 && y % 6 < 2 ? 35 : 235
       return [v, v, v]

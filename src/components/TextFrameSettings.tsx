@@ -16,7 +16,7 @@ export function TextFrameSettings({
     result = frame ? getTextLayout(layer) : undefined
   return (
     <div className="frame-settings">
-      <div className="section-heading">Рамка и пузырь</div>
+      <div className="section-heading">Текстовая рамка</div>
       <Select
         aria-label="Режим текста"
         value={frame?.shape || 'point'}
@@ -116,7 +116,7 @@ export function TextFrameSettings({
             className="compact-button"
             onClick={() =>
               void useFont(preset.values.fontFamily!).then(() =>
-                patch(preset.values, `Тайпсет: ${preset.name}`),
+                patch(preset.values, `Оформление текста: ${preset.name}`),
               )
             }
           >

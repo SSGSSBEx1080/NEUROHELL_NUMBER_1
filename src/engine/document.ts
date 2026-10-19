@@ -1,9 +1,10 @@
+import { isBundledRaster } from './bundledAssets'
 import { normalizeLayout } from './layout'
 import { parseCorrection } from './adjustmentTypes'
 import { localBounds } from './layerGeometry'
 import { parseShapePaths, shapeNames } from './shapeGeometry'
 import { hitShape } from './shapeRenderer'
-import { parseScript } from './scriptFormat'
+import { parseDocumentTextEntries } from './textEntriesFormat'
 import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
@@ -234,7 +235,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       (typeof l.src !== 'string' ||
         !(
           /^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(l.src) ||
-          ['/demo-landscape.webp', '/demo-layout.webp', '/demo-manga.webp'].includes(l.src)
+          isBundledRaster(l.src)
         ))
     )
       throw new Error('Разрешены только встроенные PNG, JPEG и WebP')
@@ -349,7 +350,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
   }
   return {
     layout: d.layout ? normalizeLayout(d.layout) : undefined,
-    script: parseScript(d.script)?.map((entry) => ({
+    textEntries: parseDocumentTextEntries(d)?.map((entry) => ({
       ...entry,
       layerId: layers.some((l) => l.id === entry.layerId && l.kind === 'text')
         ? entry.layerId

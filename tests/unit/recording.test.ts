@@ -62,7 +62,7 @@ describe('Real recording and validated transactional playback', () => {
         },
         adjustments: { ...doc.layers[0].adjustments, contrast: 25 },
       })
-    const r = record(startRecording(doc, doc.layers[0].id, 'Тайпсет'), doc, after)
+    const r = record(startRecording(doc, doc.layers[0].id, 'Оформление текста'), doc, after)
     expect(r.steps.map((s) => s.command?.type)).toEqual(['transform', 'adjust', 'properties'])
     const target = edit(doc, { x: 100, y: 200 }),
       result = runAction(target, target.layers[0].id, action(r))

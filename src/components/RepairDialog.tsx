@@ -29,7 +29,7 @@ export function RepairDialog({
     [result, setResult] = useState<RepairResult | null>(null),
     [error, setError] = useState(''),
     [working, setWorking] = useState(true)
-  const [belowText, setBelowText] = useState(!!doc.script?.length)
+  const [belowText, setBelowText] = useState(false)
   const [mode, setMode] = useState<RepairMode>('auto'),
     [radius, setRadius] = useState(4),
     [expand, setExpand] = useState(2),
@@ -296,8 +296,8 @@ export function RepairDialog({
               onChange={(e) => setMode(e.target.value as RepairMode)}
             >
               <option value="auto">Авто · по окружению</option>
-              <option value="smooth">Бумага / плавный градиент</option>
-              <option value="texture">Фактура / скринтон</option>
+              <option value="smooth">Плавный фон</option>
+              <option value="texture">Повторяющаяся текстура</option>
             </Select>
           </label>
           <Field

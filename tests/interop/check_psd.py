@@ -66,16 +66,16 @@ for transform in ["rotated", "flipped", "perspective", "rotated-disabled", "rota
     assert float(delta.mean()) < .7, (transform, "vector mask mean", float(delta.mean()))
     print(f"PASS vector {transform}: native ShapeLayer + raster mask, interior max {delta[~edge].max():.4f}/255; edge-AA mean {delta.mean():.6f}/255")
 
-document = PSDImage.open(RESULTS / "layout-workflow.psd")
-reference = premultiplied(Image.open(RESULTS / "layout-workflow.png"))
+document = PSDImage.open(RESULTS / "text-block-workflow.psd")
+reference = premultiplied(Image.open(RESULTS / "text-block-workflow.png"))
 types = [layer for layer in document.descendants() if layer.kind == "type"]
-assert len(types) == 2, "Layout text must remain native type layers"
-assert "город уже" in types[0].text and "доставка" in types[1].text
+assert len(types) == 2, "Linked text must remain native type layers"
+assert "Текстовый" in types[0].text and "Второй" in types[1].text
 for source, image in [("merged", document.topil()), ("native layers", document.composite(force=True, apply_icc=False))]:
     delta = np.abs(premultiplied(image) - reference)
     worst = float(delta.max())
-    assert worst <= 2.0, ("layout workflow", source, worst)
-    print(f"PASS layout J → typeset, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
+    assert worst <= 2.0, ("text block workflow", source, worst)
+    print(f"PASS repair → linked text, {source}: max premultiplied RGBA error {worst:.4f}/255, mean {delta.mean():.6f}; two native type layers")
 
 
 

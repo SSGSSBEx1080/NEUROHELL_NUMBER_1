@@ -13,21 +13,13 @@ interface Props {
   value: PanelLayout
   onChange: (value: PanelLayout) => void
   properties: ReactNode
-  translation: ReactNode
+  texts: ReactNode
   actions: ReactNode
   layers: ReactNode
   footer: ReactNode
 }
 type Gesture = 'width' | 'split' | 'move' | 'corner'
-export function PanelDock({
-  value,
-  onChange,
-  properties,
-  translation,
-  actions,
-  layers,
-  footer,
-}: Props) {
+export function PanelDock({ value, onChange, properties, texts, actions, layers, footer }: Props) {
   const [viewport, setViewport] = useState({
       width: window.innerWidth,
       height: window.innerHeight,
@@ -139,7 +131,7 @@ export function PanelDock({
   }
   const tabs: [DockTab, string][] = [
     ['properties', 'Слой'],
-    ['translation', 'Перевод'],
+    ['texts', 'Тексты'],
     ['actions', 'Операции'],
   ]
   return (
@@ -170,9 +162,9 @@ export function PanelDock({
           value={displayed.preset}
           onChange={(e) => onChange(panelPreset(e.target.value as PanelLayout['preset']))}
         >
-          <option value="retouch">Ретушь</option>
-          <option value="layout">Макет</option>
-          <option value="type">Тайпсет</option>
+          <option value="standard">Стандартная</option>
+          <option value="texts">Текстовые блоки</option>
+          <option value="properties">Свойства</option>
           <option value="custom" disabled>
             Своя среда
           </option>
@@ -228,7 +220,7 @@ export function PanelDock({
             className="dock-view"
             hidden={displayed.tab !== id}
           >
-            {id === 'properties' ? properties : id === 'translation' ? translation : actions}
+            {id === 'properties' ? properties : id === 'texts' ? texts : actions}
           </div>
         ))}
       </div>

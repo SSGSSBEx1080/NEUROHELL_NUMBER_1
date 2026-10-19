@@ -130,13 +130,13 @@ export interface Layer {
   flipX?: boolean
   flipY?: boolean
 }
-export interface TranslationEntry {
+export interface TextEntry {
   id: string
   source: string
-  translation: string
-  speaker: string
+  text: string
+  label: string
   note: string
-  status: 'draft' | 'translated' | 'proofread'
+  status: 'draft' | 'ready' | 'checked'
   layerId?: string
 }
 export interface EditorDocument {
@@ -150,7 +150,7 @@ export interface EditorDocument {
   sourceId?: string
   dpi?: number
   layout?: DocumentLayout
-  script?: TranslationEntry[]
+  textEntries?: TextEntry[]
 }
 export interface Point {
   x: number
