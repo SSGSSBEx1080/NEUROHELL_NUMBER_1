@@ -5533,3 +5533,63 @@ canvas {
 .text-entry-details[open] summary {
   margin-bottom: 12px;
 }
+
+.panel-subtitle {
+  display: block;
+  margin: 14px 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.effect-count {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--accent);
+}
+.effect-instance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+}
+.effect-instance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+}
+.effect-instance.selected {
+  outline: 1px solid var(--accent);
+}
+.effect-instance-name {
+  flex: 1;
+  padding: 2px 0;
+  text-align: left;
+  font-size: 10px;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.effect-instance-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.gradient-preview-strip {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid #ffffff30;
+  margin: 10px 0 12px;
+  background-color: #d8d5df;
+}
+.alpha-ramp {
+  background-color: #d8d5df;
+}
+.gradient-library-tools {
+  margin-top: 12px;
+}

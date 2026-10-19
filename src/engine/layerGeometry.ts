@@ -43,10 +43,10 @@ export function rasterBounds(layer: Layer, effects = false, flipped = false): Re
     (layer.kind === 'shape' ? shapePadding(layer) : 0) +
     (s
       ? Math.max(
-          s.stroke.enabled ? s.stroke.size : 0,
-          s.shadow.enabled
-            ? s.shadow.blur * 2 + Math.max(Math.abs(s.shadow.x), Math.abs(s.shadow.y))
-            : 0,
+          ...s.strokes.map((e) => (e.enabled ? e.size : 0)),
+          ...s.shadows.map((e) =>
+            e.enabled ? e.blur * 2 + Math.max(Math.abs(e.x), Math.abs(e.y)) : 0,
+          ),
           s.glow.enabled ? s.glow.blur * 2 : 0,
         )
       : 0) +

@@ -1,0 +1,142 @@
+import { describe, expect, it } from 'vitest'
+import { initializeCanvas, readPsd, writePsd } from 'ag-psd'
+import { __psdStyleCodecForTests } from '../../src/engine/psd'
+import { normalizeStyles } from '../../src/engine/styles'
+
+initializeCanvas(
+  () => {
+    throw new Error('No canvas')
+  },
+  (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+)
+
+describe('multi-instance layer styles in native PSD effects', () => {
+  it('writes three strokes, two shadows, inner effects and a full gradient to binary PSD', () => {
+    const styles = normalizeStyles({
+      fillOpacity: 0.35,
+      strokes: [
+        { enabled: true, size: 2, color: '#ffffff', position: 'outside', opacity: 1 },
+        { enabled: true, size: 6, color: '#ff5c39', position: 'outside', opacity: 0.8 },
+        { enabled: true, size: 12, color: '#152546', position: 'outside', opacity: 0.6 },
+      ],
+      shadows: [
+        { enabled: true, color: '#000000', blur: 4, x: 3, y: 5, opacity: 0.7 },
+        { enabled: true, color: '#2244aa', blur: 12, x: -8, y: 10, opacity: 0.4 },
+      ],
+      innerShadows: [{ enabled: true, color: '#000000', blur: 5, x: 0, y: 3, opacity: 0.5 }],
+      glow: { enabled: true, color: '#b6a3ff', blur: 9, opacity: 0.6 },
+      innerGlow: { enabled: true, color: '#ffffff', blur: 7, opacity: 0.5 },
+      overlays: [{ enabled: true, color: '#123456', opacity: 0.25 }],
+      gradients: [
+        {
+          enabled: true,
+          angle: 30,
+          opacity: 0.9,
+          reverse: true,
+          gradient: {
+            name: 'Три точки',
+            kind: 'solid',
+            stops: [
+              { position: 0, color: '#ffd166', midpoint: 0.3 },
+              { position: 0.5, color: '#ff5c39' },
+              { position: 1, color: '#7c1d5c' },
+            ],
+            opacityStops: [
+              { position: 0, opacity: 0.5 },
+              { position: 1, opacity: 1 },
+            ],
+          },
+        },
+      ],
+    })!
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const bytes = writePsd({
+      width: 4,
+      height: 4,
+      children: [{ name: 'fx', effects, fillOpacity: styles.fillOpacity }],
+    })
+    const layer = readPsd(bytes, { useImageData: true }).children![0]
+    expect(layer.effects?.stroke).toHaveLength(3)
+    expect(layer.effects?.stroke?.map((s) => s.size?.value)).toEqual([2, 6, 12])
+    expect(layer.effects?.dropShadow).toHaveLength(2)
+    expect(layer.effects?.innerShadow).toHaveLength(1)
+    expect(layer.effects?.solidFill).toHaveLength(1)
+    expect(layer.effects?.outerGlow?.enabled).toBe(true)
+    expect(layer.effects?.innerGlow?.enabled).toBe(true)
+    const gradient = layer.effects?.gradientOverlay?.[0]
+    expect(gradient?.reverse).toBe(true)
+    if (!gradient?.gradient || gradient.gradient.type !== 'solid') throw new Error('solid expected')
+    expect(gradient.gradient.colorStops).toHaveLength(3)
+    expect(gradient.gradient.colorStops[0].midpoint).toBeCloseTo(0.3, 2)
+    expect(gradient.gradient.opacityStops[0].opacity).toBeCloseTo(0.5)
+
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.fillOpacity).toBeCloseTo(0.35)
+    expect(back.strokes.map((s) => s.size)).toEqual([2, 6, 12])
+    expect(back.strokes[1].color).toBe('#ff5c39')
+    expect(back.strokes[1].opacity).toBeCloseTo(0.8, 2)
+    expect(back.shadows).toHaveLength(2)
+    expect(back.shadows[0].x).toBeCloseTo(3, 0)
+    expect(back.shadows[0].y).toBeCloseTo(5, 0)
+    expect(back.innerShadows).toHaveLength(1)
+    expect(back.innerGlow.enabled).toBe(true)
+    expect(back.gradients[0].gradient.stops).toHaveLength(3)
+    expect(back.gradients[0].reverse).toBe(true)
+  })
+
+  it('round-trips a native noise gradient descriptor', () => {
+    const styles = normalizeStyles({
+      gradients: [
+        {
+          enabled: true,
+          angle: 0,
+          opacity: 1,
+          reverse: false,
+          gradient: {
+            name: 'Шум Lab',
+            kind: 'noise',
+            stops: [
+              { position: 0, color: '#000000' },
+              { position: 1, color: '#ffffff' },
+            ],
+            noise: {
+              roughness: 0.4,
+              model: 'lab',
+              seed: 123456,
+              min: [0.1, 0.2, 0.3, 0],
+              max: [0.9, 0.8, 0.7, 1],
+              restrictColors: true,
+              transparency: true,
+            },
+          },
+        },
+      ],
+    })!
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const layer = readPsd(writePsd({ width: 4, height: 4, children: [{ name: 'n', effects }] }), {
+      useImageData: true,
+    }).children![0]
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.gradients[0].gradient.kind).toBe('noise')
+    expect(back.gradients[0].gradient.noise).toMatchObject({
+      model: 'lab',
+      seed: 123456,
+      restrictColors: true,
+      transparency: true,
+    })
+    expect(back.gradients[0].gradient.noise?.roughness).toBeCloseTo(0.4, 2)
+    expect(back.gradients[0].gradient.noise?.min[0]).toBeCloseTo(0.1, 2)
+  })
+
+  it('bakes the PSD effect scale into editable sizes on import', () => {
+    const styles = normalizeStyles({
+      strokes: [{ enabled: true, size: 5, color: '#ffffff', position: 'outside', opacity: 1 }],
+    })!
+    const effects = { ...__psdStyleCodecForTests.exportStyles(styles), scale: 2 }
+    const layer = readPsd(writePsd({ width: 4, height: 4, children: [{ name: 's', effects }] }), {
+      useImageData: true,
+    }).children![0]
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.strokes[0].size).toBeCloseTo(10, 1)
+  })
+})

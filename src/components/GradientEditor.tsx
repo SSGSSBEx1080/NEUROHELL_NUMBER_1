@@ -3,19 +3,23 @@ import {
   GRADIENT_QUANTUM,
   MAX_GRADIENT_STOPS,
   gradientColor,
+  gradientCss,
   gradientPresets,
+  opaqueOpacityStops,
   parseGradientStops,
   type GradientStop,
 } from '../engine/gradientRamp'
-import { ColorField, Field, Select } from './ui'
+import { ColorField, Field, Select, Slider } from './ui'
 export function GradientEditor({
   stops,
   onChange,
   onFinish,
+  hidePresets = false,
 }: {
   stops: GradientStop[]
   onChange: (stops: GradientStop[], temporary: boolean) => void
   onFinish: () => void
+  hidePresets?: boolean
 }) {
   const [selected, setSelected] = useState(0),
     [error, setError] = useState(''),
@@ -73,32 +77,38 @@ export function GradientEditor({
   }
   return (
     <div className="gradient-editor" data-testid="gradient-editor">
-      <Select
-        aria-label="Пресет карты градиента"
-        value=""
-        onChange={(e) => {
-          const p = gradientPresets[+e.target.value]
-          if (p) {
-            set(p.stops, false)
-            setSelected(0)
-          }
-        }}
-      >
-        <option value="" disabled>
-          Выбрать палитру…
-        </option>
-        {gradientPresets.map((p, i) => (
-          <option value={i} key={p.name}>
-            {p.name}
+      {!hidePresets && (
+        <Select
+          aria-label="Пресет карты градиента"
+          value=""
+          onChange={(e) => {
+            const p = gradientPresets[+e.target.value]
+            if (p) {
+              set(p.stops, false)
+              setSelected(0)
+            }
+          }}
+        >
+          <option value="" disabled>
+            Выбрать палитру…
           </option>
-        ))}
-      </Select>
+          {gradientPresets.map((p, i) => (
+            <option value={i} key={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </Select>
+      )}
       <div
         ref={bar}
         className="gradient-ramp"
         data-testid="gradient-ramp"
         style={{
-          background: `linear-gradient(90deg in srgb,${stops.map((s) => `${s.color} ${s.position * 100}%`).join(',')})`,
+          background: gradientCss(
+            { name: '', kind: 'solid', stops, opacityStops: opaqueOpacityStops() },
+            90,
+            32,
+          ),
         }}
         onDoubleClick={(e) => {
           if (!(e.target as Element).closest('button')) {
@@ -187,6 +197,17 @@ export function GradientEditor({
           onChange={(v) => place(v / 100)}
           onCommit={onFinish}
         />
+        {index < stops.length - 1 && (
+          <Slider
+            label="Середина к следующей точке"
+            value={(stop.midpoint ?? 0.5) * 100}
+            suffix="%"
+            onChange={(v) =>
+              set(stops.map((s, i) => (i === index ? { ...s, midpoint: v / 100 } : s)))
+            }
+            onCommit={onFinish}
+          />
+        )}
       </div>
       <div className="path-button-grid">
         <button
@@ -216,8 +237,8 @@ export function GradientEditor({
         </p>
       )}
       <p className="panel-note">
-        2–16 цветов, непрозрачные точки. Перетаскивание/стрелки меняют позицию; двойной клик по
-        полосе добавляет цвет. Классическая линейная RGB-интерполяция.
+        2–16 цветов. Перетаскивание/стрелки меняют позицию; двойной клик по полосе добавляет цвет, а
+        середина сдвигает полупереход к соседней точке. Классическая линейная RGB-интерполяция.
       </p>
     </div>
   )

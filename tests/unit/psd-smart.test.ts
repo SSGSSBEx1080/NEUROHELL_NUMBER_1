@@ -77,7 +77,7 @@ describe('native PSD placed content', () => {
       ),
     ).toBeUndefined()
     const styles = defaultStyles()
-    styles.shadow.enabled = true
+    styles.shadows[0].enabled = true
     expect(nativeSmartPlacement(layer, 120, 80, styles)).toMatchObject({
       x: 7,
       y: 9,
