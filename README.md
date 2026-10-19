@@ -6,6 +6,8 @@
 
 ## Установить на Windows
 
+**[Выпуск 0.7.1](https://github.com/SSGSSBEx1080/NEUROHELL_NUMBER_1/releases/tag/v0.7.1)** проверен в исходном и упакованном Windows-приложении.
+
 Для запуска скачанного приложения аккаунт не требуется.
 
 Открой **[Releases → ФШ 777](https://github.com/SSGSSBEx1080/NEUROHELL_NUMBER_1/releases)** и выбери:
