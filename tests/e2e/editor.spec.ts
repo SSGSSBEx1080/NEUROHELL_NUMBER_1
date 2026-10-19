@@ -122,6 +122,9 @@ test('brush, eraser and undo restore actual pixels', async ({ page }) => {
   const b = await artboard(page)
   await page.mouse.click(b.x + 150, b.y + 100)
   await expect.poll(async () => (await pixel(page, 150, 100))[3]).toBe(0)
+  // Live brush pixels can arrive before the asynchronous bitmap/history commit.
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true })).toBeEnabled()
   await page.keyboard.press('Control+z')
   await expect.poll(async () => (await pixel(page, 150, 100))[3]).toBe(255)
   await page.keyboard.press('Control+Shift+z')

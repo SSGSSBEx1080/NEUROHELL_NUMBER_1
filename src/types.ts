@@ -1,3 +1,4 @@
+import type { DocumentLayout } from './engine/layout'
 import type { Correction } from './engine/adjustmentTypes'
 export type Tool =
   | 'move'
@@ -143,6 +144,7 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   dpi?: number
+  layout?: DocumentLayout
   script?: TranslationEntry[]
 }
 export interface Point {

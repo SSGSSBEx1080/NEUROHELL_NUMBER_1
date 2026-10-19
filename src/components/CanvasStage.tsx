@@ -1,9 +1,12 @@
+import { arrangementBounds } from '../engine/arrange'
+import { layoutOf, layoutTargets, snapBounds, snapPoint } from '../engine/layout'
 import { QuickMaskOverlay } from './QuickMaskOverlay'
 import { rasterSelection } from '../engine/selectionPixels'
 import { rasterOutline } from '../engine/selectionOutline'
 import {
   distortVisual,
   localBounds,
+  worldBounds,
   resizePointText,
   rotateVisual,
   selectionQuad,
@@ -25,7 +28,7 @@ import {
 import { brushStamp, strokeStamps } from '../engine/brush'
 import { selectionTools } from './ToolRail'
 import { validQuad } from '../engine/projection'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useId, useRef, useState } from 'react'
 import { Check, Crosshair, Eraser, ScanLine, Sparkles, X } from 'lucide-react'
 import type { Editor } from '../hooks/useEditor'
 import {
@@ -39,7 +42,14 @@ import {
   type ToolSettings,
   MAX_LAYERS,
 } from '../types'
-import { hitTest, localPoint, makeLayer, effectiveLayers, isLayerLocked } from '../engine/document'
+import {
+  hitTest,
+  localPoint,
+  makeLayer,
+  effectiveLayers,
+  isLayerLocked,
+  uid,
+} from '../engine/document'
 import {
   encodeBitmap,
   bitmapLayer,
@@ -68,6 +78,7 @@ interface Props {
   selection: Selection | null
   setSelection: (r: Selection | null, temporary?: boolean, label?: string) => void
   onWand: (point: Point, mode: SelectionMode) => void
+  onGuideSettings: () => void
   onCrop: () => void
   onRepair: (selection: Selection) => void
   onEditText: () => void
@@ -82,6 +93,7 @@ interface Props {
 }
 type Drag =
   | { type: 'pan'; client: Point; pan: Point }
+  | { type: 'guide'; id: string; axis: 'x' | 'y'; before: EditorDocument; fresh: boolean }
   | {
       type: 'quick-mask'
       canvas: HTMLCanvasElement
@@ -146,6 +158,7 @@ export function CanvasStage({
   selection,
   setSelection,
   onWand,
+  onGuideSettings,
   onCrop,
   onRepair,
   onEditText,
@@ -159,6 +172,13 @@ export function CanvasStage({
   onOpenSmart,
 }: Props) {
   const doc = editor.document
+  const layout = layoutOf(doc)
+  const gridId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  // Non-printing guide/view changes must not recomposite a large pixel stack on every pointermove.
+  const visualDoc = useMemo(
+    () => ({ ...doc, layout: undefined }),
+    [doc.id, doc.layers, doc.width, doc.height, doc.background, doc.sourceId],
+  )
   const viewport = useRef<HTMLDivElement>(null)
   const artboard = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -170,7 +190,7 @@ export function CanvasStage({
   const [revision, setRevision] = useState(0)
   const [spaceDown, setSpaceDown] = useState(false)
   const [cursor, setCursor] = useState<Point | null>(null)
-  const [guides, setGuides] = useState({ x: false, y: false })
+  const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null })
   const paintScheduler = useRef(new FrameScheduler()),
     scheduler = useRef(new FrameScheduler()),
     renderer = useRef(new SceneRenderer())
@@ -255,22 +275,22 @@ export function CanvasStage({
       const resolution = Math.min(
         scale * Math.min(window.devicePixelRatio || 1, 2),
         2,
-        4096 / doc.width,
-        4096 / doc.height,
+        4096 / visualDoc.width,
+        4096 / visualDoc.height,
       )
-      const width = Math.max(1, Math.round(doc.width * resolution)),
-        height = Math.max(1, Math.round(doc.height * resolution))
+      const width = Math.max(1, Math.round(visualDoc.width * resolution)),
+        height = Math.max(1, Math.round(visualDoc.height * resolution))
       if (el.width !== width || el.height !== height) {
         el.width = width
         el.height = height
       }
       const ctx = el.getContext('2d')!
-      ctx.setTransform(width / doc.width, 0, 0, height / doc.height, 0, 0)
+      ctx.setTransform(width / visualDoc.width, 0, 0, height / visualDoc.height, 0, 0)
       ctx.imageSmoothingEnabled = smooth
       ctx.imageSmoothingQuality = 'high'
       const start = performance.now()
       try {
-        renderer.current.draw(ctx, doc, overrides.current, selectedId || undefined)
+        renderer.current.draw(ctx, visualDoc, overrides.current, selectedId || undefined)
         renderError.current = ''
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Ошибка отрисовки'
@@ -280,9 +300,9 @@ export function CanvasStage({
       }
       if (showPerformance) setFrameTime(performance.now() - start)
     }
-    if (isPrepared(doc)) scheduler.current.request(paint)
+    if (isPrepared(visualDoc)) scheduler.current.request(paint)
     else
-      prepareDocument(doc)
+      prepareDocument(visualDoc)
         .then(() => {
           if (!disposed) scheduler.current.request(paint)
         })
@@ -293,7 +313,7 @@ export function CanvasStage({
       disposed = true
       scheduler.current.cancel()
     }
-  }, [doc, scale, revision, selectedId, onToast, smooth, showPerformance])
+  }, [visualDoc, scale, revision, selectedId, onToast, smooth, showPerformance])
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !isInput(e.target)) {
@@ -344,6 +364,77 @@ export function CanvasStage({
     y: Math.min(doc.height, Math.max(0, p.y)),
   })
   const inside = (p: Point) => p.x >= 0 && p.y >= 0 && p.x <= doc.width && p.y <= doc.height
+  const targets = (moving?: Layer, excludedGuide?: string) => {
+    const result = layoutTargets(doc, layout, excludedGuide)
+    if (layout.snapLayers) {
+      const excluded = moving ? subtree(doc, moving.id) : new Set<string>()
+      for (const l of effectiveLayers(doc))
+        if (!excluded.has(l.id) && l.kind !== 'group' && l.kind !== 'adjustment') {
+          const b = worldBounds(l)
+          result.x.push(b.x, b.x + b.width / 2, b.x + b.width)
+          result.y.push(b.y, b.y + b.height / 2, b.y + b.height)
+        }
+    }
+    return result
+  }
+  const gridSnap =
+    layout.showGrid && layout.snapGrid
+      ? { x: layout.gridSize / layout.subdivisions, y: layout.gridSizeY / layout.subdivisions }
+      : undefined
+  const guideKey = (event: React.KeyboardEvent<SVGGElement>, id: string, axis: 'x' | 'y') => {
+    if (
+      layout.locked ||
+      busy ||
+      !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Delete', 'Backspace', 'Enter'].includes(
+        event.key,
+      )
+    )
+      return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Enter') {
+      onGuideSettings()
+      return
+    }
+    const step = event.shiftKey ? 10 : 1
+    editor.change(
+      (d) => ({
+        ...d,
+        layout: {
+          ...layoutOf(d),
+          guides:
+            event.key === 'Delete' || event.key === 'Backspace'
+              ? layoutOf(d).guides.filter((g) => g.id !== id)
+              : layoutOf(d).guides.map((g) =>
+                  g.id === id
+                    ? {
+                        ...g,
+                        position: Math.min(
+                          16384,
+                          Math.max(
+                            0,
+                            g.position +
+                              (axis === 'x'
+                                ? event.key === 'ArrowRight'
+                                  ? step
+                                  : event.key === 'ArrowLeft'
+                                    ? -step
+                                    : 0
+                                : event.key === 'ArrowDown'
+                                  ? step
+                                  : event.key === 'ArrowUp'
+                                    ? -step
+                                    : 0),
+                          ),
+                        ),
+                      }
+                    : g,
+                ),
+        },
+      }),
+      'Изменение направляющей',
+    )
+  }
   const redraw = () => setRevision((v) => v + 1)
   const beginText = (layer: Layer) => {
     if (isLayerLocked(doc, layer.id)) {
@@ -454,9 +545,35 @@ export function CanvasStage({
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
     activePointer.current = e.pointerId
-    const p = pointFrom(e)
+    let p = pointFrom(e)
     if (spaceDown || tool === 'hand' || e.button === 1) {
       drag.current = { type: 'pan', client: { x: e.clientX, y: e.clientY }, pan }
+      return
+    }
+    const guideId = (e.target as Element).closest('[data-guide-id]')?.getAttribute('data-guide-id')
+    const ruler = (e.target as Element).closest('.ruler-x,.ruler-y')
+    if (!settings.quickMask && (ruler || (tool === 'move' && guideId))) {
+      if (layout.locked) return onToast('Направляющие заблокированы. Разблокируй их в меню «Вид».')
+      if (ruler && layout.guides.length >= 200) return onToast('До 200 направляющих на документ.')
+      const existing = layout.guides.find((g) => g.id === guideId),
+        axis = existing?.axis || (ruler?.classList.contains('ruler-x') ? 'y' : 'x'),
+        id = existing?.id || uid()
+      if (!existing)
+        editor.change(
+          (d) => ({
+            ...d,
+            layout: {
+              ...layoutOf(d),
+              showGuides: true,
+              guides: [...layoutOf(d).guides, { id, axis, position: Math.max(0, p[axis]) }],
+            },
+          }),
+          '',
+          true,
+        )
+      drag.current = { type: 'guide', id, axis, before: doc, fresh: !existing }
+      setTool('move')
+      ;(e.target as SVGElement).closest<SVGElement>('[data-guide-id]')?.focus()
       return
     }
     if (
@@ -477,6 +594,16 @@ export function CanvasStage({
       }
       return
     }
+    if (
+      layout.snap &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      (tool === 'select' ||
+        tool === 'ellipse-select' ||
+        tool === 'crop' ||
+        shapeTools.some((s) => s === tool))
+    )
+      p = clip(snapPoint(p, targets(), 8 / scale, gridSnap))
     if (!inside(p)) {
       if (tool === 'move') onSelect(null)
       return
@@ -833,10 +960,35 @@ export function CanvasStage({
       setOutline([...d.points])
       return
     }
+    if (d.type === 'guide') {
+      let position = p[d.axis]
+      if (e.shiftKey) {
+        const step = (d.axis === 'x' ? layout.gridSize : layout.gridSizeY) / layout.subdivisions
+        position = Math.round(position / step) * step
+      } else if (layout.snap && !e.ctrlKey && !e.metaKey)
+        position = snapPoint(p, targets(undefined, d.id), 8 / scale, gridSnap)[d.axis]
+      position = Math.round(position * 32) / 32
+      editor.change(
+        (current) => ({
+          ...current,
+          layout: {
+            ...layoutOf(current),
+            guides: layoutOf(current).guides.map((g) => (g.id === d.id ? { ...g, position } : g)),
+          },
+        }),
+        '',
+        true,
+      )
+      return
+    }
     if (d.type === 'region') {
+      const end =
+        layout.snap && !e.ctrlKey && !e.metaKey && !d.repair && !d.textFrame
+          ? clip(snapPoint(p, targets(), 8 / scale, gridSnap))
+          : clip(p)
       setSelection(
         {
-          ...getRect(d.start, clip(p)),
+          ...getRect(d.start, end),
           ellipse: tool === 'ellipse-select',
           feather: settings.feather || 0,
         },
@@ -865,9 +1017,13 @@ export function CanvasStage({
       return
     }
     if (d.type === 'shape') {
+      const shapePoint =
+        layout.snap && !e.ctrlKey && !e.metaKey
+          ? snapPoint(p, targets(d.before.layers.find((l) => l.id === d.id)), 8 / scale, gridSnap)
+          : p
       if (tool === 'line') {
-        const length = Math.max(1, Math.hypot(p.x - d.start.x, p.y - d.start.y))
-        let angle = Math.atan2(p.y - d.start.y, p.x - d.start.x)
+        const length = Math.max(1, Math.hypot(shapePoint.x - d.start.x, shapePoint.y - d.start.y))
+        let angle = Math.atan2(shapePoint.y - d.start.y, shapePoint.x - d.start.x)
         if (e.shiftKey) angle = (Math.round(angle / (Math.PI / 4)) * Math.PI) / 4
         editor.patchLayer(
           d.id,
@@ -883,12 +1039,12 @@ export function CanvasStage({
         )
         return
       }
-      let end = p
+      let end = shapePoint
       if (e.shiftKey) {
-        const m = Math.max(Math.abs(p.x - d.start.x), Math.abs(p.y - d.start.y))
+        const m = Math.max(Math.abs(shapePoint.x - d.start.x), Math.abs(shapePoint.y - d.start.y))
         end = {
-          x: d.start.x + m * Math.sign(p.x - d.start.x || 1),
-          y: d.start.y + m * Math.sign(p.y - d.start.y || 1),
+          x: d.start.x + m * Math.sign(shapePoint.x - d.start.x || 1),
+          y: d.start.y + m * Math.sign(shapePoint.y - d.start.y || 1),
         }
       }
       const rect = getRect(d.start, end)
@@ -909,22 +1065,32 @@ export function CanvasStage({
       }
       let x = d.layer.x + dx,
         y = d.layer.y + dy
-      const snap = 5 / scale
-      let gx = false,
-        gy = false
-      if (settings.showGuides && !e.altKey) {
-        if (Math.abs(x + d.layer.width / 2 - doc.width / 2) < snap) {
-          x = (doc.width - d.layer.width) / 2
-          gx = true
-        }
-        if (Math.abs(y + d.layer.height / 2 - doc.height / 2) < snap) {
-          y = (doc.height - d.layer.height) / 2
-          gy = true
-        }
-        if (Math.abs(x) < snap) x = 0
-        if (Math.abs(y) < snap) y = 0
+      let guideX: number | null = null,
+        guideY: number | null = null
+      if (layout.snap && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        const delta = snapBounds(
+          d.layer.kind === 'group'
+            ? (() => {
+                const b = (() => {
+                  try {
+                    return arrangementBounds(d.before, d.layer)
+                  } catch {
+                    return worldBounds(d.layer)
+                  }
+                })()
+                return { ...b, x: b.x + x - d.layer.x, y: b.y + y - d.layer.y }
+              })()
+            : worldBounds({ ...d.layer, x, y }),
+          targets(d.layer),
+          8 / scale,
+          gridSnap,
+        )
+        x += delta.dx
+        y += delta.dy
+        guideX = delta.x
+        guideY = delta.y
       }
-      setGuides({ x: gx, y: gy })
+      setGuides({ x: settings.showGuides ? guideX : null, y: settings.showGuides ? guideY : null })
       editor.patchLayer(d.layer.id, { x, y }, '', true)
     } else if (d.type === 'rotate') {
       const center = visualCenter(d.layer)
@@ -1044,10 +1210,39 @@ export function CanvasStage({
     activePointer.current = null
     const d = drag.current
     drag.current = null
-    setGuides({ x: false, y: false })
+    setGuides({ x: null, y: null })
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId)
     if (!d) return
+    if (d.type === 'guide') {
+      if (editor.documentRef.current === d.before) return
+      const position = pointFrom(e)[d.axis],
+        outside = position < 0 || position > (d.axis === 'x' ? doc.width : doc.height)
+      if (outside && d.fresh) {
+        editor.change(() => d.before, '', true)
+        return
+      }
+      if (outside)
+        editor.change(
+          (current) => ({
+            ...current,
+            layout: {
+              ...layoutOf(current),
+              guides: layoutOf(current).guides.filter((g) => g.id !== d.id),
+            },
+          }),
+          '',
+          true,
+        )
+      editor.finish(
+        outside
+          ? 'Удаление направляющей'
+          : d.fresh
+            ? 'Новая направляющая'
+            : 'Перемещение направляющей',
+      )
+      return
+    }
     if (d.type === 'quick-mask') {
       setSelection(quickSelection(d.canvas), false, 'Рисование быстрой маски')
       return
@@ -1104,7 +1299,12 @@ export function CanvasStage({
     }
     if (d.type === 'region') {
       finishSelection({
-        ...getRect(d.start, clip(pointFrom(e))),
+        ...getRect(
+          d.start,
+          layout.snap && !e.ctrlKey && !e.metaKey
+            ? clip(snapPoint(pointFrom(e), targets(), 8 / scale, gridSnap))
+            : clip(pointFrom(e)),
+        ),
         ellipse: tool === 'ellipse-select',
         feather: settings.feather || 0,
       })
@@ -1218,7 +1418,7 @@ export function CanvasStage({
     setOutline([])
     overrides.current.clear()
     redraw()
-    setGuides({ x: false, y: false })
+    setGuides({ x: null, y: null })
   }
   useEffect(() => {
     const cancel = (e: KeyboardEvent) => {
@@ -1278,6 +1478,10 @@ export function CanvasStage({
       onPointerCancel={cancelPointer}
       onPointerLeave={() => setCursor(null)}
       onDoubleClick={(e) => {
+        if ((e.target as Element).closest('[data-guide-id]')) {
+          onGuideSettings()
+          return
+        }
         if (tool === 'polygon-lasso' || tool === 'magnetic-lasso') {
           finishPolygon()
           return
@@ -1294,14 +1498,14 @@ export function CanvasStage({
           <div className="ruler-corner">
             <Crosshair size={10} />
           </div>
-          <div className="ruler ruler-x">
+          <div className="ruler ruler-x" title="Потяни вниз — горизонтальная направляющая">
             {xTicks.map((t) => (
               <span key={t} style={{ left: left + t * scale }}>
                 {t}
               </span>
             ))}
           </div>
-          <div className="ruler ruler-y">
+          <div className="ruler ruler-y" title="Потяни вправо — вертикальная направляющая">
             {yTicks.map((t) => (
               <span key={t} style={{ top: top + t * scale }}>
                 {t}
@@ -1335,22 +1539,99 @@ export function CanvasStage({
           height="100%"
           viewBox={`0 0 ${doc.width} ${doc.height}`}
         >
-          {guides.x && (
+          {layout.showGrid && (
+            <>
+              <defs>
+                <pattern
+                  id={`${gridId}-minor`}
+                  patternUnits="userSpaceOnUse"
+                  width={layout.gridSize / layout.subdivisions}
+                  height={layout.gridSizeY / layout.subdivisions}
+                >
+                  <path
+                    d={`M${layout.gridSize / layout.subdivisions} 0H0V${layout.gridSizeY / layout.subdivisions}`}
+                    fill="none"
+                    stroke="#b5abc5"
+                    strokeOpacity=".19"
+                    strokeWidth={0.5 / scale}
+                  />
+                </pattern>
+                <pattern
+                  id={`${gridId}-major`}
+                  patternUnits="userSpaceOnUse"
+                  width={layout.gridSize * Math.max(1, Math.ceil(8 / (layout.gridSize * scale)))}
+                  height={layout.gridSizeY * Math.max(1, Math.ceil(8 / (layout.gridSizeY * scale)))}
+                >
+                  <path
+                    d={`M${layout.gridSize * Math.max(1, Math.ceil(8 / (layout.gridSize * scale)))} 0H0V${layout.gridSizeY * Math.max(1, Math.ceil(8 / (layout.gridSizeY * scale)))}`}
+                    fill="none"
+                    stroke="#b5abc5"
+                    strokeOpacity=".38"
+                    strokeWidth={0.7 / scale}
+                  />
+                </pattern>
+              </defs>
+              {(Math.min(layout.gridSize, layout.gridSizeY) * scale) / layout.subdivisions >= 6 && (
+                <rect width={doc.width} height={doc.height} fill={`url(#${gridId}-minor)`} />
+              )}
+              <rect
+                data-testid="document-grid"
+                width={doc.width}
+                height={doc.height}
+                fill={`url(#${gridId}-major)`}
+              />
+            </>
+          )}
+          {layout.showGuides &&
+            layout.guides.map((g) => (
+              <g
+                key={g.id}
+                data-guide-id={g.id}
+                data-testid="document-guide"
+                role="button"
+                aria-label={`${g.axis === 'x' ? 'Вертикальная' : 'Горизонтальная'} направляющая ${g.position} px`}
+                tabIndex={!layout.locked && tool === 'move' ? 0 : -1}
+                onKeyDown={(e) => guideKey(e, g.id, g.axis)}
+              >
+                <line
+                  x1={g.axis === 'x' ? g.position : -left / scale}
+                  x2={g.axis === 'x' ? g.position : (size.width - left) / scale}
+                  y1={g.axis === 'y' ? g.position : -top / scale}
+                  y2={g.axis === 'y' ? g.position : (size.height - top) / scale}
+                  stroke={layout.guideColor}
+                  strokeWidth={1 / scale}
+                />
+                <rect
+                  className="guide-hit"
+                  x={g.axis === 'x' ? g.position - 4 / scale : -left / scale}
+                  y={g.axis === 'y' ? g.position - 4 / scale : -top / scale}
+                  width={g.axis === 'x' ? 8 / scale : size.width / scale}
+                  height={g.axis === 'y' ? 8 / scale : size.height / scale}
+                  fill="transparent"
+                  style={{
+                    pointerEvents:
+                      !layout.locked && tool === 'move' && !settings.quickMask ? 'all' : 'none',
+                    cursor: g.axis === 'x' ? 'col-resize' : 'row-resize',
+                  }}
+                />
+              </g>
+            ))}
+          {guides.x !== null && (
             <line
-              x1={doc.width / 2}
+              x1={guides.x}
               y1={0}
-              x2={doc.width / 2}
+              x2={guides.x}
               y2={doc.height}
               stroke="#d99cff"
               strokeWidth={1 / scale}
             />
           )}
-          {guides.y && (
+          {guides.y !== null && (
             <line
               x1={0}
-              y1={doc.height / 2}
+              y1={guides.y}
               x2={doc.width}
-              y2={doc.height / 2}
+              y2={guides.y}
               stroke="#d99cff"
               strokeWidth={1 / scale}
             />

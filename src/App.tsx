@@ -1,3 +1,6 @@
+import { ArrangeDialog } from './components/ArrangeDialog'
+import { GuidesDialog } from './components/GuidesDialog'
+import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
 import { ColorRangeDialog, selectionModeNames } from './components/ColorRangeDialog'
 import { SelectionModifyDialog, selectionModifyNames } from './components/SelectionModifyDialog'
 import { rasterSelection, type SelectionModify } from './engine/selectionPixels'
@@ -134,6 +137,7 @@ export default function App() {
   const initial = useMemo(demoDocument, [])
   const editor = useEditor(initial)
   const doc = editor.document
+  const layout = layoutOf(doc)
   const { selectedId, setSelectedId } = editor
   const selectedLayer = doc.layers.find((l) => l.id === selectedId)
   const selected = selectedLayer
@@ -188,8 +192,11 @@ export default function App() {
     | 'correction'
     | 'color-range'
     | 'selection-modify'
+    | 'guides'
+    | 'arrange'
     | null
   >(null)
+  const [arrangeIds, setArrangeIds] = useState<string[]>([])
   const [selectionModify, setSelectionModify] = useState<SelectionModify>('expand')
   const recorder = useActionRecorder(editor)
   const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
@@ -394,6 +401,12 @@ export default function App() {
     if (selectedId && !doc.layers.some((l) => l.id === selectedId)) setSelectedId(null)
   }, [doc.layers, selectedId])
 
+  const openArrange = (ids = selectedId ? [selectedId] : []) => {
+    setArrangeIds(ids)
+    setModal('arrange')
+  }
+  const updateLayout = (patch: Partial<DocumentLayout>, label = 'Разметка документа') =>
+    editor.change((d) => ({ ...d, layout: normalizeLayout({ ...layoutOf(d), ...patch }) }), label)
   const applySelection = (
     next: Selection,
     mode: SelectionMode = 'replace',
@@ -624,12 +637,12 @@ export default function App() {
       setBusy(null)
     }
   }
-  const imageSize = (width: number, height: number, dpi: number, centered: boolean) => {
+  const imageSize = (width: number, height: number, dpi: number, anchor: Point) => {
     const scale = modal === 'image-size',
       sx = width / doc.width,
       sy = height / doc.height,
-      dx = centered ? (width - doc.width) / 2 : 0,
-      dy = centered ? (height - doc.height) / 2 : 0
+      dx = (width - doc.width) * anchor.x,
+      dy = (height - doc.height) * anchor.y
     if (scale && Math.abs(sx - sy) > 0.00001 && doc.layers.some((l) => l.rotation || l.warp)) {
       toastMessage(
         'Для повёрнутых / перспективных слоёв используй пропорциональный масштаб. Неравномерное изменение исказило бы геометрию.',
@@ -643,6 +656,13 @@ export default function App() {
         width,
         height,
         dpi,
+        layout: transformLayout(
+          d.layout,
+          scale ? sx : 1,
+          scale ? sy : 1,
+          scale ? 0 : dx,
+          scale ? 0 : dy,
+        ),
         layers: d.layers.map((l) => ({
           ...l,
           x: l.kind === 'adjustment' ? 0 : scale ? l.x * sx : l.x + dx,
@@ -1101,6 +1121,7 @@ export default function App() {
         ...d,
         width,
         height,
+        layout: transformLayout(d.layout, 1, 1, -x, -y),
         layers: d.layers.map((l) => ({
           ...l,
           x: l.kind === 'adjustment' ? 0 : l.x - x,
@@ -1231,6 +1252,18 @@ export default function App() {
       }
       if (mod) {
         switch (e.code) {
+          case 'Semicolon':
+            e.preventDefault()
+            updateLayout(e.shiftKey ? { snap: !layout.snap } : { showGuides: !layout.showGuides })
+            return
+          case 'Quote':
+            e.preventDefault()
+            updateLayout({ showGrid: !layout.showGrid })
+            return
+          case 'KeyR':
+            e.preventDefault()
+            setRulers(!rulers)
+            return
           case 'KeyZ':
             e.preventDefault()
             if (e.shiftKey) editor.redo()
@@ -1574,9 +1607,44 @@ export default function App() {
       icon: ZoomOut,
       action: () => setZoom(Math.max(0.05, effectiveZoom / 1.25)),
     },
-    { label: 'Линейки', checked: rulers, action: () => setRulers(!rulers), divider: true },
     {
-      label: 'Умные направляющие',
+      label: 'Линейки',
+      checked: rulers,
+      action: () => setRulers(!rulers),
+      divider: true,
+      shortcut: 'Ctrl R',
+    },
+    { label: 'Направляющие и сетка…', action: () => setModal('guides') },
+    {
+      label: 'Показать направляющие',
+      checked: layout.showGuides,
+      action: () => updateLayout({ showGuides: !layout.showGuides }),
+      shortcut: 'Ctrl ;',
+    },
+    {
+      label: 'Заблокировать направляющие',
+      checked: layout.locked,
+      action: () => updateLayout({ locked: !layout.locked }),
+    },
+    {
+      label: 'Показать сетку',
+      checked: layout.showGrid,
+      action: () => updateLayout({ showGrid: !layout.showGrid }),
+      shortcut: "Ctrl '",
+    },
+    {
+      label: 'Привязка',
+      checked: layout.snap,
+      action: () => updateLayout({ snap: !layout.snap }),
+      shortcut: 'Ctrl ⇧ ;',
+    },
+    {
+      label: 'Удалить все направляющие',
+      action: () => updateLayout({ guides: [] }, 'Удаление направляющих'),
+      disabled: layout.locked || !layout.guides.length,
+    },
+    {
+      label: 'Подсказки привязки',
       checked: settings.showGuides,
       action: () => setSettings({ showGuides: !settings.showGuides }),
     },
@@ -1588,6 +1656,11 @@ export default function App() {
     disabled: !!busy || doc.layers.length >= MAX_LAYERS,
   }))
   const layerMenu: MenuItem[] = [
+    {
+      label: 'Выравнивание и интервалы…',
+      action: () => openArrange(),
+      disabled: !doc.layers.length,
+    },
     {
       label: 'Новый корректирующий слой…',
       icon: SlidersHorizontal,
@@ -1998,10 +2071,10 @@ export default function App() {
                 <label className="checkbox-row guides-option">
                   <input
                     type="checkbox"
-                    checked={settings.showGuides}
-                    onChange={(e) => setSettings({ showGuides: e.target.checked })}
+                    checked={layout.snap}
+                    onChange={(e) => updateLayout({ snap: e.target.checked })}
                   />
-                  Направляющие
+                  Привязка
                 </label>
               </>
             ) : tool === 'brush' || tool === 'eraser' || tool === 'clone' ? (
@@ -2333,6 +2406,7 @@ export default function App() {
                 selection={selection}
                 setSelection={setSelection}
                 onWand={(point, mode) => void wandSelection(point, mode)}
+                onGuideSettings={() => setModal('guides')}
                 onCrop={crop}
                 onRepair={openRepair}
                 onEditText={() => {
@@ -2468,6 +2542,7 @@ export default function App() {
               layers={
                 <LayersPanel
                   onCorrection={() => setModal('correction')}
+                  onArrange={openArrange}
                   onLoadSelection={(id, mode) => void loadLayerSelection(id, mode)}
                   editor={editor}
                   selectedId={selectedId}
@@ -2650,6 +2725,29 @@ export default function App() {
           onClose={closeReplace}
           onSave={() => void saveProject()}
           onConfirm={() => openDocument(pendingDocument)}
+        />
+      )}
+      {modal === 'arrange' && (
+        <ArrangeDialog
+          doc={doc}
+          ids={arrangeIds}
+          onClose={closeModal}
+          onApply={(next, label) => {
+            if (editor.documentRef.current !== doc)
+              throw new Error('Документ изменился во время компоновки. Открой окно заново.')
+            editor.change(() => next, label)
+            closeModal()
+          }}
+        />
+      )}
+      {modal === 'guides' && (
+        <GuidesDialog
+          doc={doc}
+          onClose={closeModal}
+          onApply={(value) => {
+            updateLayout(value, 'Настройка направляющих и сетки')
+            closeModal()
+          }}
         />
       )}
       {modal === 'color-range' && (

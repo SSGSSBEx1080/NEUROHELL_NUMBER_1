@@ -175,4 +175,11 @@ for fixture in ["selection-combined", "selection-quick-mask"]:
         assert float(delta.max()) <= 2, (fixture, source, float(delta.max()))
         print(f"PASS {fixture}, {source}: max error {delta.max():.4f}/255; real native pixel mask, holes/soft edges retained")
 
-print("Scope: RGB/8, these twenty-three fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+document = PSDImage.open(RESULTS / "native-guides.psd")
+guides = document.image_resources.get_data(Resource.GRID_AND_GUIDES_INFO)
+assert guides.horizontal == 1280 and guides.vertical == 1920
+assert guides.data == [(80 * 32, 0), (100 * 32, 1)]
+assert np.array_equal(premultiplied(document.topil()), premultiplied(Image.open(RESULTS / "native-guides.png")))
+print("PASS native grid/guides: correct independent 1/32-pixel resource, asymmetric grid, exact merged pixels without printed guides")
+
+print("Scope: RGB/8, these twenty-four fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")

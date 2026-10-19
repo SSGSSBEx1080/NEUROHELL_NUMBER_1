@@ -1,3 +1,4 @@
+import { normalizeLayout } from './layout'
 import { parseCorrection } from './adjustmentTypes'
 import { localBounds } from './layerGeometry'
 import { parseShapePaths, shapeNames } from './shapeGeometry'
@@ -347,6 +348,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
     }
   }
   return {
+    layout: d.layout ? normalizeLayout(d.layout) : undefined,
     script: parseScript(d.script)?.map((entry) => ({
       ...entry,
       layerId: layers.some((l) => l.id === entry.layerId && l.kind === 'text')

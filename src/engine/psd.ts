@@ -1,3 +1,4 @@
+import { nativeLayout, normalizeLayout, sameNativeLayout } from './layout'
 import { exportAdjustment, importAdjustment } from './psdAdjustments'
 import { sealProject } from './psdIntegrity'
 import { gaussianSmartFilter, nativeSmartPlacement, translateNativePlacement } from './psdSmart'
@@ -26,6 +27,7 @@ import {
   originalSource,
   registerSource,
   sameVisual,
+  sameEmbeddedContent,
 } from './psdSource'
 import { validatePsdHeader } from './psdHeader'
 export interface CompatibilityReport {
@@ -463,6 +465,22 @@ export async function importPsd(
         'Декодер сообщил о неподдерживаемых метаданных. Неизменённый оригинал сохраняется целиком; после правок неизвестные блоки могут быть потеряны.',
       )
   }
+  if (!doc.layout && psd.imageResources?.gridAndGuidesInformation) {
+    const information = psd.imageResources.gridAndGuidesInformation
+    doc.layout = normalizeLayout({
+      guides: information.guides?.map((g) => ({
+        id: uid(),
+        axis: g.direction === 'vertical' ? 'x' : 'y',
+        position: g.location,
+      })),
+      gridSize: (information.grid?.horizontal || 2048) / 32,
+      gridSizeY: (information.grid?.vertical || 2048) / 32,
+    })
+    if ((information.guides?.length || 0) !== doc.layout.guides.length)
+      warnings.add(
+        'Часть направляющих вне поддерживаемого бюджета (200 / 16384 px) не показана. Пока макет направляющих не изменён, исходный ресурс PSD сохраняется.',
+      )
+  }
   doc = parseProject({
     ...doc,
     dpi: psd.imageResources?.resolutionInfo?.horizontalResolution || doc.dpi || 72,
@@ -501,7 +519,7 @@ function layerAt(psd: Psd | undefined, path?: number[]): PsdLayer | undefined {
   return layer
 }
 function unchangedContent(a: Layer, b?: Layer) {
-  if (!b) return false
+  if (!b || !sameEmbeddedContent(a.smart, b.smart)) return false
   // Translation and compositing can be updated without rasterizing native type/masks/effects.
   const clean = (l: Layer) => ({
     ...l,
@@ -955,6 +973,16 @@ export async function exportPsd(
         heightUnit: 'Inches',
       },
     },
+  }
+  if (doc.layout && (!original || !sameNativeLayout(doc.layout, source?.baseline.layout))) {
+    psd.imageResources!.gridAndGuidesInformation = nativeLayout(doc.layout)
+    if (
+      (original?.imageResources?.gridAndGuidesInformation?.guides?.length || 0) >
+      (source?.baseline.layout?.guides.length || 0)
+    )
+      notes.push(
+        'Макет направляющих изменён. Неподдерживаемые исходные направляющие вне отображённого набора не перенесены; исходный файл не перезаписывай без резервной копии.',
+      )
   }
   const summary = inspectNativeLayers(psd, notes, editableContents)
   if (summary.text || summary.editableContents)

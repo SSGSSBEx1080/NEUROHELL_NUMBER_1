@@ -18,6 +18,7 @@ const ignoredVisual = new Set([
   'id',
   'dpi',
   'script',
+  'layout',
 ])
 const ignoredSave = new Set(['sourceId', 'expanded'])
 function equal(a: unknown, b: unknown, ignored: Set<string>): boolean {
@@ -30,6 +31,9 @@ function equal(a: unknown, b: unknown, ignored: Set<string>): boolean {
   return true
 }
 export const sameVisual = (a: unknown, b: unknown) => equal(a, b, ignoredVisual)
+/** Embedded documents must retain semantic edits even if their preview pixels are unchanged. */
+const ignoredEmbedded = new Set(['id', 'sourceId', 'sourcePath', 'expanded'])
+export const sameEmbeddedContent = (a: unknown, b: unknown) => equal(a, b, ignoredEmbedded)
 export function originalSource(doc: EditorDocument) {
   const source = doc.sourceId ? sources.get(doc.sourceId) : undefined
   if (source) {

@@ -32,6 +32,7 @@ interface Props {
   editor: Editor
   selectedId: string | null
   onSelect: (id: string | null) => void
+  onArrange: (ids: string[]) => void
   onLoadSelection: (id: string, mode: SelectionMode) => void
   onCorrection: () => void
   onAdd: () => void
@@ -92,6 +93,7 @@ export function LayersPanel({
   onAdd,
   onCorrection,
   onLoadSelection,
+  onArrange,
   onDuplicate,
   onDelete,
   onReorder,
@@ -109,6 +111,7 @@ export function LayersPanel({
   const [dragId, setDragId] = useState<string | null>(null),
     [dropId, setDropId] = useState<string | null>(null),
     [marked, setMarked] = useState<string[]>([])
+  const rangeAnchor = useRef<string | null>(null)
   const [context, setContext] = useState<{ id: string; x: number; y: number } | null>(null),
     contextRef = useRef<HTMLDivElement>(null)
   const layer = editor.document.layers.find((l) => l.id === selectedId),
@@ -131,6 +134,7 @@ export function LayersPanel({
   }
   useEffect(() => {
     setMarked([])
+    rangeAnchor.current = null
   }, [editor.document.id])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -221,11 +225,17 @@ export function LayersPanel({
           </div>
           {marked.length > 1 && (
             <div className="group-selection-note">
-              <span>{marked.length} слоёв для группы</span>
+              <span>{marked.length} слоёв выбрано</span>
+              <button onClick={() => onArrange(marked)}>Выровнять…</button>
               <button onClick={group}>Группировать · Ctrl G</button>
             </div>
           )}
-          <div className="layer-list" aria-label="Слои документа">
+          <div
+            className="layer-list"
+            aria-label="Слои документа"
+            role="listbox"
+            aria-multiselectable="true"
+          >
             {!rows.length && (
               <div className="empty-layers">
                 <Layers size={26} strokeWidth={1.3} />
@@ -246,7 +256,7 @@ export function LayersPanel({
                 className={`layer-row ${selectedId === l.id ? 'selected' : ''} ${marked.includes(l.id) && marked.length > 1 ? 'group-marked' : ''} ${!l.visible ? 'hidden-layer' : ''} ${dragId === l.id ? 'dragging' : ''} ${dropId === l.id ? 'drop-target' : ''}`}
                 style={{ paddingLeft: 8 + Math.min(depth, 5) * 12 }}
                 role="option"
-                aria-selected={selectedId === l.id}
+                aria-selected={selectedId === l.id || marked.includes(l.id)}
                 aria-label={l.name}
                 tabIndex={0}
                 draggable={!renaming}
@@ -274,14 +284,29 @@ export function LayersPanel({
                   setDropId(null)
                 }}
                 onClick={(e) => {
-                  if (e.ctrlKey || e.metaKey)
+                  if (e.shiftKey) {
+                    const start = rows.findIndex(
+                        (r) => r.layer.id === (rangeAnchor.current || selectedId),
+                      ),
+                      end = rows.findIndex((r) => r.layer.id === l.id)
+                    const range = rows
+                      .slice(Math.min(start < 0 ? end : start, end), Math.max(start, end) + 1)
+                      .map((r) => r.layer.id)
+                    setMarked((previous) =>
+                      e.ctrlKey || e.metaKey ? [...new Set([...previous, ...range])] : range,
+                    )
+                  } else if (e.ctrlKey || e.metaKey) {
+                    rangeAnchor.current = l.id
                     setMarked((ids) => {
                       const before = ids.length ? ids : selectedId ? [selectedId] : []
                       return before.includes(l.id)
                         ? before.filter((id) => id !== l.id)
                         : [...before, l.id]
                     })
-                  else setMarked([])
+                  } else {
+                    setMarked([])
+                    rangeAnchor.current = l.id
+                  }
                   onSelect(l.id)
                   onPixels()
                 }}
@@ -292,6 +317,7 @@ export function LayersPanel({
                 onContextMenu={(e) => {
                   e.preventDefault()
                   onSelect(l.id)
+                  if (!marked.includes(l.id)) setMarked([])
                   setContext({
                     id: l.id,
                     x: Math.min(e.clientX, window.innerWidth - 260),
@@ -519,6 +545,14 @@ export function LayersPanel({
             >
               <Copy size={14} />
               Дублировать<span>Ctrl J</span>
+            </button>
+            <button
+              onClick={() => {
+                onArrange(marked.length > 1 ? marked : [context.id])
+                setContext(null)
+              }}
+            >
+              Выравнивание и интервалы…
             </button>
             <button onClick={group}>
               <FolderPlus size={14} />
