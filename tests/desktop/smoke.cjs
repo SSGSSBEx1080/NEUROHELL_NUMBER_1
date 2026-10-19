@@ -355,14 +355,102 @@ watchdog.unref()
     const placed = updated.children.find((l) => l.name === 'Native smart').placedLayer
     const inner = decodePsd(updated.linkedFiles.find((l) => l.id === placed.id).data)
     assert.equal(inner.children[0].text.text, 'Готово')
+    progress('0.6 command search creates native Levels in the real Windows renderer')
+    const save06 = async () => {
+      await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+      await page.keyboard.press('Control+s')
+      await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+      await expect(page.locator('.toast')).toContainText('Файл сохранён: native-only.psd', {
+        timeout: 30000,
+      })
+      return decodePsd(await fs.readFile(path.join(temp, 'native-only.psd')))
+    }
     await page.locator('.layer-row').filter({ hasText: 'Native rounded' }).click()
+    await page.keyboard.press('Control+f')
+    await page.getByLabel('Найти команду').fill('levels')
+    await page.getByLabel('Найти команду').press('Enter')
+    await expect(page.getByLabel('Тип коррекции')).toHaveValue('levels')
+    await page.getByLabel('Вход: чёрный', { exact: true }).fill('20')
+    await page.getByLabel('Гамма уровней', { exact: true }).fill('1.25')
+    await page.getByLabel('Гамма уровней', { exact: true }).press('Tab')
+    let expanded = await save06()
+    const levels = expanded.children.find((l) => l.adjustment?.type === 'levels')
+    assert.equal(levels.adjustment.rgb.shadowInput, 20)
+    assert.equal(levels.adjustment.rgb.midtoneInput, 1.25)
+
+    progress('0.6 Quick Mask paints coverage, then creates a native masked Curves layer')
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('q')
+    await expect(page.getByTestId('quick-mask-overlay')).toBeVisible()
+    const region06 = await page.getByTestId('editor-canvas').boundingBox()
+    await page.mouse.click(region06.x + region06.width * 0.2, region06.y + region06.height * 0.2)
+    await page.keyboard.press('q')
+    await page.keyboard.press('Control+m')
+    await expect(page.getByLabel('Тип коррекции')).toHaveValue('curves')
+    expanded = await save06()
+    const curves = expanded.children.find((l) => l.adjustment?.type === 'curves')
+    assert.ok(curves.mask?.imageData)
+    const coverage06 = curves.mask.imageData.data
+    assert.ok(coverage06.some((value, i) => i % 4 === 0 && value === 0))
+    assert.ok(coverage06.some((value, i) => i % 4 === 0 && value === 255))
+
+    progress('0.6 grid/guide controls write the standard PSD resource')
+    await page.getByRole('button', { name: 'Вид', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Направляющие и сетка…', exact: true }).click()
+    await page.getByLabel('Положение новой направляющей').fill('50%')
+    await page.getByRole('button', { name: 'Добавить направляющую', exact: true }).click()
+    await page.getByRole('button', { name: 'Применить разметку', exact: true }).click()
+    expanded = await save06()
+    assert.deepEqual(expanded.imageResources.gridAndGuidesInformation.guides, [
+      { location: 400, direction: 'vertical' },
+    ])
+
+    progress('0.6 Magic Wand uses the production worker without erasing artwork')
+    const beforeWand06 = await page.getByTestId('editor-canvas').evaluate(async (c) => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return c.toDataURL()
+    })
+    await page.keyboard.press('w')
+    await page.mouse.click(region06.x + region06.width * 0.96, region06.y + region06.height * 0.9)
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    const afterWand06 = await page.getByTestId('editor-canvas').evaluate((c) => c.toDataURL())
+    assert.equal(afterWand06, beforeWand06)
+    await page.keyboard.press('Control+d')
+
+    progress(
+      '0.6 raster filter worker creates a copy, retains the original smart PSD and undoes atomically',
+    )
+    await page
+      .getByRole('button', { name: 'Открыть содержимое: Native smart', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Фильтры', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Растровые фильтры на копии…', exact: true }).click()
+    await page.getByLabel('Растровый фильтр').selectOption('noise')
+    await page
+      .getByRole('button', { name: 'Применить на копии', exact: true })
+      .click({ timeout: 30000 })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    expanded = await save06()
+    const original06 = expanded.children.find((l) => l.name === 'Native smart')
+    const filtered06 = expanded.children.find((l) => l.name.includes('Добавить шум'))
+    assert.ok(original06.placedLayer && original06.hidden)
+    assert.ok(filtered06.imageData && !filtered06.placedLayer)
+    await page.keyboard.press('Control+z')
+    expanded = await save06()
+    assert.equal(
+      expanded.children.some((l) => l.name.includes('Добавить шум')),
+      false,
+    )
+    assert.equal(expanded.children.find((l) => l.name === 'Native smart').hidden, false)
+    await page.locator('.layer-row').filter({ hasText: 'Кривые' }).click()
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
     progress(
-      'passed: standalone sandbox, exports, J/layout/recording, measured point bounds, native text/vector and XMP-free embedded PSD editing',
+      'passed: standalone sandbox/exports, J/recording, native text/vector/smart, command search, native adjustments/masks/guides, Quick Mask, Magic Wand and raster-filter worker/source preservation',
     )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })
