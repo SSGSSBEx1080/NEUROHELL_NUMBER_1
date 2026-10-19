@@ -92,3 +92,9 @@
 - **205/205 unit в 24 файлах; 7/7 security/IPC; TypeScript, Prettier, diff-check, node --check desktop smoke; npm audit: 0 уязвимостей.**
 - Настоящий Windows smoke дополнен native levels/curves+painted mask, native guide resource, Ctrl+F, Q, W worker и filter worker. Проверяется сохранение оригинального embedded PSD, явная растровая копия и undo. Он будет запущен в исходном Electron и упакованном EXE пайплайном; локальный Linux-прогон не выдаётся за эту Windows-проверку.
 - `[windows-release]` создаёт только новый draft после gates. Прежние выпуски не перезаписываются, PR №4 не объединяется автоматически. До проверки CI/assets новый выпуск не объявляется готовым к скачиванию.
+
+## Синхронизация следующего этапа
+
+- При восстановлении рабочего checkout обнаружена уже продвинутая удалённая ветка. Коммиты 684741f → e5be4be сохранены; локальная исследовательская заметка интегрирована без force-push и без перезаписи реализации.
+- Для e5be4be проверены успешные GitHub runs: Editor checks **39225759805**, Windows application **39225755462** (verify, build с обоими desktop smoke и draft-release). 0.6 находится в черновике; публикация требует проверки release/tag/assets.
+- Следующий самостоятельный блок — настоящее перо и изменение native-контуров. Ориентиры: [2](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-paths-with-the-pen-tool.html), [6](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/add-delete-and-convert-anchor-points.html), [16](https://helpx.adobe.com/photoshop/using/converting-paths-selection-borders.html). Точки/направляющие/сегменты должны быть данными, а не декоративными маркерами. Уже проверенный кандидат 0.6 не будет незаметно заменён сборкой с новыми непроверенными инструментами.
