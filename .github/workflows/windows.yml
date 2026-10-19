@@ -87,4 +87,4 @@ jobs:
             echo "::notice::Release v$VERSION already exists; it was not changed."
             exit 0
           fi
-          gh release create "v$VERSION" release/*.exe release/*.zip release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "ФШ 777 · $VERSION Desktop" --notes-file docs/RELEASE_NOTES_RU.md --draft --prerelease
+          gh release create "v$VERSION" release/*.exe release/*.zip release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "ФШ777 ULTRA · $VERSION Desktop" --notes-file docs/RELEASE_NOTES_RU.md --draft --prerelease
