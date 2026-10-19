@@ -187,10 +187,12 @@ export function transformedPaths(layer: Layer): ShapePath[] {
   })
 }
 export function shapePadding(layer: Layer) {
-  if (!layer.strokeColor || !layer.strokeWidth || layer.strokeAlign === 'inside') return 0
+  const open = layer.shape === 'line' || layer.shapePaths?.some((p) => p.open)
+  if (!layer.strokeColor || !layer.strokeWidth || (layer.strokeAlign === 'inside' && !open))
+    return 0
   const join = layer.strokeJoin || 'miter',
     factor = join === 'miter' ? layer.strokeMiterLimit || 4 : 1
-  return layer.strokeWidth * (layer.strokeAlign === 'outside' ? 1 : 0.5) * factor
+  return layer.strokeWidth * (layer.strokeAlign === 'outside' && !open ? 1 : 0.5) * factor
 }
 /** Strict validation: malformed contours must not become a different, seemingly valid rectangle. */
 export function parseShapePaths(input: unknown): ShapePath[] | undefined {

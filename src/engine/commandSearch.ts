@@ -22,6 +22,11 @@ const keyboard = (value: string, from: string, to: string) =>
     })
     .join('')
 export const commandAliases: Record<string, string> = {
+  Перо: 'pen bezier path',
+  'Рисовать пером': 'pen draw bezier path',
+  'Узлы контура': 'direct selection nodes anchor',
+  'Контур в выделение': 'path to selection',
+  'Редактировать узлы': 'edit path nodes bezier anchors',
   Уровни: 'levels',
   Кривые: 'curves',
   Экспозиция: 'exposure',

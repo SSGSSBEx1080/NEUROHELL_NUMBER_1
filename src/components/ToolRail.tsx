@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Pentagon,
+  PenTool,
+  Plus,
+  CornerDownRight,
+  MousePointer,
   Star,
   Minus,
   Bandage,
@@ -64,6 +68,13 @@ const groups = [
     { id: 'star', name: 'Звезда', icon: Star, key: 'U' },
     { id: 'line', name: 'Линия', icon: Minus, key: 'U' },
   ],
+  [
+    { id: 'pen', name: 'Перо', icon: PenTool, key: 'P' },
+    { id: 'add-anchor', name: 'Добавить опорную точку', icon: Plus, key: 'P' },
+    { id: 'delete-anchor', name: 'Удалить опорную точку', icon: Minus, key: 'P' },
+    { id: 'convert-anchor', name: 'Преобразовать опорную точку', icon: CornerDownRight, key: 'P' },
+  ],
+  [{ id: 'node', name: 'Узлы контура', icon: MousePointer, key: 'A' }],
   [{ id: 'eyedropper', name: 'Пипетка', icon: Pipette, key: 'I' }],
   [{ id: 'hand', name: 'Рука', icon: Hand, key: 'H' }],
 ] satisfies { id: Tool; name: string; icon: typeof ScanLine; key: string }[][]

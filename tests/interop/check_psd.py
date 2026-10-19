@@ -200,4 +200,27 @@ for source, image in [("merged", document.topil()), ("native composition", docum
     assert float(delta.max()) <= 2, ("raster filter", source, float(delta.max()))
     print(f"PASS raster filter copy, {source}: source retained, no alpha doubling, max {delta.max():.4f}/255")
 
-print("Scope: RGB/8, these twenty-nine fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion/levels/curves/exposure/posterize are independently recomputed on these fixtures; not all Adobe algorithms/ICC. No XnConvert/Photoshop execution or universal fidelity claim.")
+# Pen-created and edited paths are native vector curves, not bitmap-only layers.
+# Apply the existing vector-specific AA boundary rule, never widen raster tolerances.
+for fixture in ["native-pen", "native-pen-open", "native-pen-mask"]:
+    document = PSDImage.open(RESULTS / f"{fixture}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"{fixture}.png"))
+    layer = document[0]
+    assert layer.kind == "shape" and layer.vector_mask
+    assert len(layer.vector_mask.paths) == (2 if fixture.endswith("mask") else 1)
+    if fixture.endswith("mask"):
+        assert layer.has_mask()
+    assert float(np.abs(premultiplied(document.topil()) - reference).max()) <= 2
+    native = premultiplied(document.composite(ignore_preview=True, force=True, apply_icc=False))
+    delta = np.abs(native - reference)
+    plane = Image.new("L", document.size, 0)
+    plane.paste(layer.topil().getchannel("A"), layer.offset)
+    plane = plane.point(lambda value: 255 if value >= 128 else 0)
+    edge = np.asarray(plane.filter(ImageFilter.MaxFilter(5))) != np.asarray(plane.filter(ImageFilter.MinFilter(5)))
+    assert float(edge.mean()) < .1
+    assert float(delta[~edge].max()) <= 2, (fixture, "interior", delta[~edge].max())
+    assert float(delta.mean()) < .35, (fixture, "mean", delta.mean())
+    assert 0.9 < float(native[:, :, 3].sum() / reference[:, :, 3].sum()) < 1.1
+    print(f"PASS {fixture}: independent native curves, merged <=2, interior {delta[~edge].max():.4f}, edge-AA mean {delta.mean():.6f}")
+
+print("Scope: RGB/8, these thirty-two fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion/levels/curves/exposure/posterize are independently recomputed on these fixtures; not all Adobe algorithms/ICC. No XnConvert/Photoshop execution or universal fidelity claim.")

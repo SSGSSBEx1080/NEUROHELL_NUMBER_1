@@ -87,7 +87,9 @@ watchdog.unref()
         .filter({ has: page.locator('strong', { hasText: new RegExp(`^${format}$`) }) })
         .click()
       await page.getByRole('button', { name: `Скачать ${format}`, exact: true }).click()
-      await expect(page.getByRole('dialog')).toBeHidden()
+      // PSD encoding + atomic disk save is asynchronous; use the same bounded budget
+      // as the save acknowledgement, rather than Playwright's unrelated 5s default.
+      await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30000 })
       await expect(page.locator('.toast')).toContainText(
         new RegExp(`Файл сохранён: .+\\.${format.toLowerCase()}$`),
         { timeout: 30000 },
@@ -466,7 +468,7 @@ watchdog.unref()
             label: document.activeElement?.getAttribute('aria-label'),
           },
           dialogs: Array.from(document.querySelectorAll('[role=dialog]')).map((node) =>
-            node.textContent?.slice(0, 400),
+            node.textContent?.slice(0, 4000),
           ),
           viewport: [innerWidth, innerHeight],
         }))

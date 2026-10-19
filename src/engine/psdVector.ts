@@ -26,7 +26,10 @@ export function exportVectorShape(layer: Layer, dpi = 72): Partial<PsdLayer> {
       strokeEnabled: !!layer.strokeColor && !!layer.strokeWidth,
       fillEnabled: layer.shapeFill !== false && layer.shape !== 'line',
       lineWidth: px(layer.strokeWidth || 0),
-      lineAlignment: layer.shape === 'line' ? 'center' : layer.strokeAlign || 'center',
+      lineAlignment:
+        layer.shape === 'line' || layer.shapePaths?.some((p) => p.open)
+          ? 'center'
+          : layer.strokeAlign || 'center',
       lineCapType: layer.strokeCap || 'butt',
       lineJoinType: layer.strokeJoin || 'miter',
       miterLimit: layer.strokeMiterLimit || 4,

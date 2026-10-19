@@ -5437,3 +5437,72 @@ canvas {
   flex: 0 0 75px;
   text-align: right;
 }
+
+/* Native path editing: overlays never alter image pixels. */
+.path-tool-status {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 36px);
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 5px 20px #0003;
+  color: var(--muted);
+  font-size: 11px;
+}
+.path-tool-status b {
+  color: #e7e6ed;
+}
+.path-tool-status .compact-button {
+  white-space: nowrap;
+}
+.path-controls {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+.path-button-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.path-button-grid .compact-button {
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1.5;
+  min-height: 32px;
+  white-space: normal;
+}
+.path-properties .select-wrap {
+  width: 100%;
+}
+.tool-pen .artboard,
+.tool-add-anchor .artboard,
+.tool-convert-anchor .artboard {
+  cursor: crosshair;
+}
+.tool-node .artboard {
+  cursor: default;
+}
+.tool-delete-anchor .artboard {
+  cursor: not-allowed;
+}
+.canvas-viewport:focus {
+  outline: none;
+}
+.path-properties .number-field > span:first-child {
+  flex-shrink: 0;
+}

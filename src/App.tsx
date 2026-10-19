@@ -1,3 +1,4 @@
+import { usePathTool } from './hooks/usePathTool'
 import { RasterFilterDialog } from './components/RasterFilterDialog'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
 import { insertFilteredCopy } from './engine/filterLayers'
@@ -333,6 +334,18 @@ export default function App() {
     fitView()
   }
   const workspace = useWorkspace(editor, setBusy, toastMessage, resetView)
+  const pathController = usePathTool({
+    editor,
+    tool,
+    setTool,
+    settings,
+    disabled: !!busy || !!modal || !!pendingDocument || !!workspace.closing || workspace.home,
+    onToast: toastMessage,
+    onActivate: () => {
+      setInspector(true)
+      setDockTab('properties')
+    },
+  })
   useEasterEggs(workspace.home, () => {
     setPreferences((p) => ({ ...p, theme: p.theme === 'aurora' ? 'violet' : 'aurora' }))
     toastMessage(
@@ -1834,6 +1847,41 @@ export default function App() {
       divider: true,
     },
   ]
+  const pathMenu: MenuItem[] = [
+    { label: 'Рисовать пером', shortcut: 'P', action: () => setTool('pen') },
+    {
+      label: 'Редактировать узлы',
+      shortcut: 'A',
+      action: pathController.activate,
+      disabled: !pathController.editable || selected?.locked,
+    },
+    {
+      label: 'Преобразовать фигуру в контур',
+      action: pathController.convert,
+      disabled: !pathController.editable || selected?.shape === 'path' || selected?.locked,
+    },
+    {
+      label: 'Контур в выделение',
+      shortcut: 'Ctrl Enter',
+      action: () => pathController.toSelection(),
+      disabled: !pathController.editable || selected?.locked,
+    },
+    {
+      label: 'Гладкие узлы',
+      action: () => pathController.mode('smooth'),
+      disabled: !pathController.nodes.length || selected?.locked,
+    },
+    {
+      label: 'Угловые узлы',
+      action: () => pathController.mode('corner'),
+      disabled: !pathController.nodes.length || selected?.locked,
+    },
+    {
+      label: 'Соединить концы',
+      action: pathController.join,
+      disabled: pathController.nodes.length !== 2 || selected?.locked,
+    },
+  ]
   const imageMenu: MenuItem[] = [
     { label: 'Размер изображения…', icon: Maximize, action: () => setModal('image-size') },
     { label: 'Размер холста…', icon: RectangleHorizontal, action: () => setModal('canvas-size') },
@@ -1991,6 +2039,7 @@ export default function App() {
       ['Правка', editMenu],
       ['Изображение', imageMenu],
       ['Слой', layerMenu],
+      ['Контур', pathMenu],
       ['Коррекция', correctionMenu],
       ['Выделение', selectionMenu],
       ['Вид', viewMenu],
@@ -2118,6 +2167,7 @@ export default function App() {
             <Dropdown label="Правка" items={editMenu} />
             <Dropdown label="Изображение" items={imageMenu} />
             <Dropdown label="Слой" items={layerMenu} />
+            <Dropdown label="Контур" items={pathMenu} />
             <Dropdown label="Коррекция" items={correctionMenu} />
             <Dropdown label="Выделение" items={selectionMenu} />
             <Dropdown label="Вид" items={viewMenu} />
@@ -2310,6 +2360,19 @@ export default function App() {
                     : 'Shift: + · Alt: − · Shift+Alt: пересечение · Ctrl+D: снять'}
                 </span>
               </>
+            ) : tool === 'pen' ? (
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.shapeFill}
+                  onChange={(e) => setSettings({ shapeFill: e.target.checked })}
+                />
+                Заливка замкнутого контура
+              </label>
+            ) : ['node', 'add-anchor', 'delete-anchor', 'convert-anchor'].includes(tool) ? (
+              <span className="tool-instruction">
+                Перо P · узлы A · Shift: несколько · параметры справа
+              </span>
             ) : tool === 'gradient' ? (
               <Select
                 aria-label="Тип градиента"
@@ -2342,6 +2405,7 @@ export default function App() {
             )}
             {[
               'brush',
+              'pen',
               'rectangle',
               'ellipse',
               'polygon',
@@ -2528,6 +2592,7 @@ export default function App() {
             )}
             {!workspace.home && (
               <CanvasStage
+                pathController={pathController}
                 editor={editor}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
@@ -2619,6 +2684,7 @@ export default function App() {
               onChange={setPanelLayout}
               properties={
                 <PropertiesPanel
+                  pathController={pathController}
                   editor={editor}
                   layer={selected}
                   onStyle={() => setModal('styles')}

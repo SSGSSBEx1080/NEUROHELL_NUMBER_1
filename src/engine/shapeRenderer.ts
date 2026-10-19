@@ -50,10 +50,11 @@ export function renderShape(ctx: CanvasRenderingContext2D, layer: Layer) {
   if (!layer.strokeColor || !layer.strokeWidth) return
   ctx.save()
   configureStroke(ctx, layer)
-  if (layer.strokeAlign === 'inside' && layer.shape !== 'line') {
+  const open = layer.shape === 'line' || layer.shapePaths?.some((p) => p.open)
+  if (layer.strokeAlign === 'inside' && !open) {
     ctx.clip(path, rule)
     ctx.lineWidth *= 2
-  } else if (layer.strokeAlign === 'outside' && layer.shape !== 'line') {
+  } else if (layer.strokeAlign === 'outside' && !open) {
     const outside = new Path2D(),
       p = shapePadding(layer) + 4
     outside.rect(-p, -p, layer.width + p * 2, layer.height + p * 2)
@@ -81,15 +82,16 @@ export function hitShape(layer: Layer, x: number, y: number) {
   if (layer.shapeFill !== false && layer.shape !== 'line' && inside) return true
   if (!layer.strokeColor || !layer.strokeWidth) return false
   configureStroke(hitContext, layer)
+  const open = layer.shape === 'line' || layer.shapePaths?.some((p) => p.open)
   hitContext.lineWidth = Math.max(
     6,
-    layer.strokeWidth *
-      (layer.strokeAlign && layer.strokeAlign !== 'center' && layer.shape !== 'line' ? 2 : 1),
+    layer.strokeWidth * (layer.strokeAlign && layer.strokeAlign !== 'center' && !open ? 2 : 1),
   )
   // Small visual handles/lines remain selectable. Gaps in dashes stay non-hit areas.
   const hit = hitContext.isPointInStroke(path, x, y)
   return (
     hit &&
-    (layer.strokeAlign === 'inside' ? inside : layer.strokeAlign === 'outside' ? !inside : true)
+    (open ||
+      (layer.strokeAlign === 'inside' ? inside : layer.strokeAlign === 'outside' ? !inside : true))
   )
 }

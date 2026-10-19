@@ -1,3 +1,5 @@
+import type { PathController } from '../hooks/usePathTool'
+import { PathProperties } from './PathProperties'
 import { maskOperationNames, type MaskOperation } from '../engine/maskOperations'
 import { CorrectionProperties } from './CorrectionProperties'
 import { localBounds, worldBounds, resizePointText, rotateVisual } from '../engine/layerGeometry'
@@ -33,6 +35,7 @@ import type { Editor } from '../hooks/useEditor'
 import { ColorField, Field, IconButton, Select, Slider } from './ui'
 
 interface Props {
+  pathController: PathController
   editor: Editor
   layer?: Layer
   onStyle: () => void
@@ -76,6 +79,7 @@ const presets = [
 ]
 
 export function PropertiesPanel({
+  pathController,
   editor,
   layer,
   onStyle,
@@ -94,7 +98,8 @@ export function PropertiesPanel({
   busy,
 }: Props) {
   useLayoutEffect(() => {
-    if (layer?.kind === 'text' || layer?.kind === 'adjustment') setTab('properties')
+    if (layer?.kind === 'text' || layer?.kind === 'adjustment' || layer?.kind === 'shape')
+      setTab('properties')
   }, [layer?.id, layer?.kind])
   const fonts = useFonts()
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
@@ -685,7 +690,10 @@ export function PropertiesPanel({
                     </div>
                   )}
                   {layer.kind === 'shape' && (
-                    <ShapeProperties key={layer.id} layer={layer} patch={patch} finish={finish} />
+                    <>
+                      <ShapeProperties key={layer.id} layer={layer} patch={patch} finish={finish} />
+                      <PathProperties key={`path:${layer.id}`} controller={pathController} />
+                    </>
                   )}
                   {layer.kind === 'image' && !layer.smart && (
                     <div className="property-section quick-actions">

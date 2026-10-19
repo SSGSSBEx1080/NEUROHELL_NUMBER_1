@@ -1,3 +1,5 @@
+import type { PathController } from '../hooks/usePathTool'
+import { PathOverlay, PathToolbar } from './PathOverlay'
 import { arrangementBounds } from '../engine/arrange'
 import { layoutOf, layoutTargets, snapBounds, snapPoint } from '../engine/layout'
 import { QuickMaskOverlay } from './QuickMaskOverlay'
@@ -63,6 +65,7 @@ import {
 } from '../engine/render'
 
 interface Props {
+  pathController: PathController
   editor: Editor
   selectedId: string | null
   onSelect: (id: string | null) => void
@@ -143,6 +146,7 @@ const isInput = (target: EventTarget | null) =>
   !!target.closest('input,textarea,select,[contenteditable="true"],[role="dialog"]')
 
 export function CanvasStage({
+  pathController,
   editor,
   selectedId,
   onSelect,
@@ -598,7 +602,8 @@ export function CanvasStage({
       layout.snap &&
       !e.ctrlKey &&
       !e.metaKey &&
-      (tool === 'select' ||
+      (tool === 'pen' ||
+        tool === 'select' ||
         tool === 'ellipse-select' ||
         tool === 'crop' ||
         shapeTools.some((s) => s === tool))
@@ -607,6 +612,10 @@ export function CanvasStage({
     if (!inside(p)) {
       if (tool === 'move') onSelect(null)
       return
+    }
+    if (pathController.active) {
+      e.currentTarget.focus({ preventScroll: true })
+      if (pathController.down(p, e, scale)) return
     }
     if (settings.quickMask && (tool === 'brush' || tool === 'eraser')) {
       const buffer = document.createElement('canvas')
@@ -922,6 +931,7 @@ export function CanvasStage({
   }
   const pointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = pointFrom(e)
+    if (!drag.current && pathController.move(p, e)) return
     if (tool === 'brush' || tool === 'eraser' || tool === 'clone') setCursor(p)
     if (polygon.current.length && !drag.current) {
       if (tool === 'magnetic-lasso' && inside(p)) {
@@ -1213,6 +1223,7 @@ export function CanvasStage({
     setGuides({ x: null, y: null })
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId)
+    if (pathController.up()) return
     if (!d) return
     if (d.type === 'guide') {
       if (editor.documentRef.current === d.before) return
@@ -1401,6 +1412,7 @@ export function CanvasStage({
       )
   }
   const cancelPointer = () => {
+    pathController.cancelGesture()
     paintScheduler.current.cancel()
     const d = drag.current
     if (selectionGesture.current) {
@@ -1472,12 +1484,17 @@ export function CanvasStage({
       ref={viewport}
       className={`canvas-viewport tool-${spaceDown ? 'hand' : tool} ${busy ? 'is-busy' : ''}`}
       data-testid="canvas-viewport"
+      tabIndex={-1}
       onPointerDown={pointerDown}
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
       onPointerCancel={cancelPointer}
       onPointerLeave={() => setCursor(null)}
       onDoubleClick={(e) => {
+        if (tool === 'pen' && pathController.draft?.knots.length) {
+          pathController.finishDraft(false)
+          return
+        }
         if ((e.target as Element).closest('[data-guide-id]')) {
           onGuideSettings()
           return
@@ -1681,6 +1698,7 @@ export function CanvasStage({
               ))}
             </g>
           )}
+          <PathOverlay controller={pathController} scale={scale} color={settings.color} />
           {outline.length > 0 && (
             <polyline
               points={outline.map((p) => `${p.x},${p.y}`).join(' ')}
@@ -1768,6 +1786,8 @@ export function CanvasStage({
         <div className="quick-mask-hint">
           Быстрая маска · B: чёрный убирает / белый добавляет · E: проявить · Q: закончить
         </div>
+      ) : pathController.active ? (
+        <PathToolbar controller={pathController} />
       ) : selection &&
         selection.width > 2 &&
         selection.height > 2 &&

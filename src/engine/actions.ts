@@ -230,6 +230,7 @@ export function runAction(
           [
             'shape',
             'shapeFill',
+            'shapePaths',
             'cornerRadii',
             'sides',
             'starRatio',
