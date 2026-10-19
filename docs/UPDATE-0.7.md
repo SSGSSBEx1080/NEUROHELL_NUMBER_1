@@ -53,3 +53,12 @@ CI первого path-checkpoint остановился на новом interop
 - Windows smoke расширен настоящим P-drag/native Bezier, координатой `+=24`, native Photo/GradientMap, выражением `2*29`, атомарным CUBE-export и повторным CUBE-import/native save. Локальная проверка синтаксиса не выдаётся за Windows-запуск.
 
 Публичный ориентир: [1](https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/use-simple-math.html). Возможность арифметики не означает реализации всей системы измерений/цвета/интерфейса Adobe.
+
+## Этап 4 · Кандидат 0.7.0 и полная регрессия
+
+- Версия package/lock — 0.7.0. Обновлены README, WORKFLOW, FEATURE_MATRIX, COMPATIBILITY, ARCHITECTURE, release notes и встроенная справка/shortcuts. UI/описания остаются общими, не жанровыми.
+- Полный production browser-прогон: **114/114 за 4.5 минуты**; все **35/35 независимых PSD cases** повторно пройдены на заново сгенерированных артефактах. Финальные unit: **257/257 в 27 файлах**; desktop security/IPC/font-probe: **11/11**. TypeScript/build/Prettier/diff-check/node syntax проходят; npm audit — 0 уязвимостей.
+- Отдельный чистый `color-engine` chunk (~16.53 kB / 6.38 gzip) уменьшил основной index с ~514.5 до ~498.5 kB; React и PSD workers остаются отдельными. Это разбиение ресурсов, не измерение общего ускорения.
+- Повторный Windows 95bd570 выявил отказ исходного GDI/PowerShell font query. Добавлен ограниченный read-only SFNT/OTF/TTC name-table fallback из фиксированных Windows font folders: корректные family names вместо догадок по имени файла. Оригинальные IPC origin/frame ограничения сохранены. Синтетические corrupt/bounds/TTC/cache/failure tests проходят; native smoke теперь отдельно читает реальные Windows font folders.
+- **e5d5c91** прошёл Editor **39238269497** и Windows **39238265273**, включая новые native P/A, numeric fields, Photo/GradientMap и CUBE disk/import проверки в source и packaged EXE. Это подтверждение предыдущего checkpoint, не ещё не запущенного финального кандидата с font fallback/chunk split/версией 0.7.
+- Новый `[windows-release]` создаст draft только после финальных gates. Tag/source/assets проверяются отдельно перед публикацией. 0.3–0.6 не перезаписываются, PR №4 без отдельного разрешения не объединяется.

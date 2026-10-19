@@ -127,6 +127,13 @@ watchdog.unref()
     const families = await page.evaluate(() => window.fsh777.listFonts())
     assert.ok(families.length > 10)
     assert.ok(families.some((f) => /Arial|Segoe|Times/.test(f)))
+    progress('bounded fallback reads actual Windows font name tables, including collections')
+    const probedFamilies = await require('../../desktop/fontProbe.cjs').probeFontFolders([
+      path.join(process.env.SystemRoot || 'C:\\Windows', 'Fonts'),
+    ])
+    assert.ok(probedFamilies.length > 10)
+    assert.ok(probedFamilies.some((f) => /Arial|Segoe|Times/.test(f)))
+
     progress('save legacy .777 backup from File menu')
     await page.getByRole('button', { name: 'Файл', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click()

@@ -103,6 +103,14 @@ test('RGB photo filter stays native, preserves source and alpha, and edits witho
   await nativeOnly(page, bytes)
   await page.locator('.layer-row').filter({ hasText: 'Фотофильтр' }).click()
   await expect(page.getByLabel('Плотность фотофильтра', { exact: true })).toHaveValue('29')
+  // Adding a mask preserves the raw photo record; that codec path must keep 29%, too.
+  await menu(page, 'Слой', 'Добавить маску')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  expect(readPsd(await save(page), { useImageData: true }).children![1].adjustment).toMatchObject({
+    type: 'photo filter',
+    density: 0.29,
+  })
+
   await page.getByLabel('Плотность фотофильтра', { exact: true }).fill('58')
   await page.getByLabel('Плотность фотофильтра', { exact: true }).press('Enter')
   expect(readPsd(await save(page), { useImageData: true }).children![1].adjustment).toMatchObject({
