@@ -5593,3 +5593,10 @@ canvas {
 .gradient-library-tools {
   margin-top: 12px;
 }
+.gradient-tool-strip {
+  width: 92px;
+  height: 22px;
+  border: 1px solid #ffffff40;
+  border-radius: 5px;
+  flex-shrink: 0;
+}

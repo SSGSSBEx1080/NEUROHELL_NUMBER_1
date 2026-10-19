@@ -62,6 +62,7 @@ import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  Blend,
   Search,
   Check,
   ChevronDown,
@@ -94,6 +95,8 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { LayerStyleDialog } from './components/LayerStyleDialog'
+import { GradientToolDialog } from './components/GradientToolDialog'
+import { gradientCss, solidGradient } from './engine/gradientRamp'
 import { CompatibilityDialog } from './components/CompatibilityDialog'
 import type { CompatibilityReport } from './engine/psd'
 import { CanvasStage } from './components/CanvasStage'
@@ -205,6 +208,7 @@ export default function App() {
     | 'arrange'
     | 'commands'
     | 'raster-filter'
+    | 'gradient-tool'
     | null
   >(null)
   const [lastFilter, setLastFilter] = useState<RasterFilter | null>(null)
@@ -1795,6 +1799,14 @@ export default function App() {
       divider: true,
     },
     {
+      label: 'Градиент инструмента…',
+      icon: Blend,
+      action: () => {
+        setTool('gradient')
+        setModal('gradient-tool')
+      },
+    },
+    {
       label: 'Растрировать содержимое',
       icon: ImagePlus,
       action: () => void rasterizeSelected(),
@@ -2364,16 +2376,39 @@ export default function App() {
                 Перо P · узлы A · Shift: несколько · параметры справа
               </span>
             ) : tool === 'gradient' ? (
-              <Select
-                aria-label="Тип градиента"
-                value={settings.gradientType || 'linear'}
-                onChange={(e) =>
-                  setSettings({ gradientType: e.target.value as 'linear' | 'radial' })
-                }
-              >
-                <option value="linear">Линейный</option>
-                <option value="radial">Радиальный</option>
-              </Select>
+              <>
+                <button
+                  className="gradient-tool-strip"
+                  aria-label="Выбрать градиент"
+                  title="Выбрать или изменить градиент"
+                  style={{
+                    background: gradientCss(
+                      settings.gradient ||
+                        solidGradient([
+                          { position: 0, color: settings.color },
+                          { position: 1, color: settings.secondaryColor },
+                        ]),
+                      90,
+                      24,
+                    ),
+                  }}
+                  onClick={() => setModal('gradient-tool')}
+                />
+                <Select
+                  aria-label="Тип градиента"
+                  value={settings.gradientType || 'linear'}
+                  onChange={(e) =>
+                    setSettings({
+                      gradientType: e.target.value as 'linear' | 'radial' | 'reflected' | 'angle',
+                    })
+                  }
+                >
+                  <option value="linear">Линейный</option>
+                  <option value="radial">Радиальный</option>
+                  <option value="reflected">Отражённый</option>
+                  <option value="angle">Угловой</option>
+                </Select>
+              </>
             ) : (
               <span className="tool-instruction">
                 {tool === 'repair' || tool === 'repair-box'
@@ -2750,6 +2785,10 @@ export default function App() {
                   onMask={(id) => void addMask(id)}
                   onSmart={() => void convertSmart()}
                   onOpenSmart={(id) => void workspace.openSmart(id)}
+                  onStyle={(id) => {
+                    setSelectedId(id)
+                    setModal('styles')
+                  }}
                   editingMask={!!settings.editMask}
                   onPixels={() => setSettings({ editMask: false })}
                 />
@@ -2883,6 +2922,15 @@ export default function App() {
           onCapture={captureAction}
           onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
           canRun={!!selected && !selected.locked && !workspace.home}
+        />
+      )}
+      {modal === 'gradient-tool' && (
+        <GradientToolDialog
+          gradient={settings.gradient}
+          color={settings.color}
+          secondaryColor={settings.secondaryColor}
+          onChange={(gradient) => setSettings({ gradient })}
+          onClose={closeModal}
         />
       )}
       {modal === 'styles' && selected && (

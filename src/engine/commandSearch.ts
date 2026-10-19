@@ -29,6 +29,8 @@ export const commandAliases: Record<string, string> = {
   'Редактировать узлы': 'edit path nodes bezier anchors',
   Фотофильтр: 'photo filter warm cool',
   'Карта градиента': 'gradient map duotone',
+  'Градиент инструмента…': 'gradient tool editor noise library stops opacity',
+  'Стиль слоя…': 'layer style effects stroke drop shadow inner glow bevel overlay',
   'Поиск цвета · 3D LUT': 'color lookup cube lut',
   'Экспорт цветового стека CUBE…': 'export color lookup table cube lut grading',
   Уровни: 'levels',

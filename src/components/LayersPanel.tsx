@@ -11,7 +11,11 @@ import {
   EyeOff,
   Folder,
   FolderPlus,
+  ClipboardCopy,
+  ClipboardPaste,
+  Eraser,
   History,
+  Paintbrush,
   SlidersHorizontal,
   Layers,
   LockKeyhole,
@@ -27,6 +31,8 @@ import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
 import type { BlendMode, Layer, SelectionMode } from '../types'
 import { visibleLayerRows } from '../engine/layerOperations'
+import { copyStyleToClipboard, readStyleClipboard } from '../engine/libraries'
+import { defaultStyles, hasStyles, styleEffectSummary } from '../engine/styles'
 import { Field, IconButton, Select } from './ui'
 interface Props {
   editor: Editor
@@ -44,6 +50,7 @@ interface Props {
   onMask: (id?: string) => void
   onSmart: () => void
   onOpenSmart: (id: string) => void
+  onStyle: (id: string) => void
   editingMask: boolean
   onPixels: () => void
 }
@@ -102,6 +109,7 @@ export function LayersPanel({
   onMask,
   onSmart,
   onOpenSmart,
+  onStyle,
   editingMask,
   onPixels,
 }: Props) {
@@ -221,6 +229,29 @@ export function LayersPanel({
               disabled={!layer || layer.locked}
               onChange={(v) => layer && editor.patchLayer(layer.id, { opacity: v / 100 }, '', true)}
               onCommit={() => editor.finish('Непрозрачность')}
+            />
+            <Field
+              label="Заливка"
+              value={Math.round((layer?.styles?.fillOpacity ?? 1) * 100)}
+              min={0}
+              max={100}
+              suffix="%"
+              disabled={!layer || layer.locked || layer.kind === 'adjustment'}
+              onChange={(v) =>
+                layer &&
+                editor.patchLayer(
+                  layer.id,
+                  {
+                    styles: {
+                      ...(layer.styles || defaultStyles()),
+                      fillOpacity: v / 100,
+                    },
+                  },
+                  '',
+                  true,
+                )
+              }
+              onCommit={() => editor.finish('Заливка слоя')}
             />
           </div>
           {marked.length > 1 && (
@@ -432,10 +463,19 @@ export function LayersPanel({
                     {l.name}
                   </span>
                 )}
-                {l.styles && (
-                  <span className="layer-fx-mark" title="Эффекты слоя">
+                {hasStyles(l.styles) && (
+                  <button
+                    className="layer-fx-mark"
+                    aria-label={`Стиль слоя: ${l.name}`}
+                    title={styleEffectSummary(l.styles) || 'Эффекты слоя'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSelect(l.id)
+                      onStyle(l.id)
+                    }}
+                  >
                     fx
-                  </span>
+                  </button>
                 )}
                 <button
                   className={`layer-lock ${l.locked ? 'locked' : ''}`}
@@ -569,6 +609,51 @@ export function LayersPanel({
                 Разгруппировать
               </button>
             )}
+            <div className="menu-divider" />
+            <button
+              disabled={contextual.locked || contextual.kind === 'adjustment'}
+              onClick={() => {
+                onSelect(context.id)
+                onStyle(context.id)
+                setContext(null)
+              }}
+            >
+              <Paintbrush size={14} />
+              Стиль слоя…
+            </button>
+            <button
+              disabled={!hasStyles(contextual.styles)}
+              onClick={() => {
+                if (contextual.styles) copyStyleToClipboard(contextual.styles)
+                setContext(null)
+              }}
+            >
+              <ClipboardCopy size={14} />
+              Копировать стиль
+            </button>
+            <button
+              disabled={
+                contextual.locked || contextual.kind === 'adjustment' || !readStyleClipboard()
+              }
+              onClick={() => {
+                const pasted = readStyleClipboard()
+                if (pasted) editor.patchLayer(context.id, { styles: pasted }, 'Вставка стиля слоя')
+                setContext(null)
+              }}
+            >
+              <ClipboardPaste size={14} />
+              Вставить стиль
+            </button>
+            <button
+              disabled={contextual.locked || !hasStyles(contextual.styles)}
+              onClick={() => {
+                editor.patchLayer(context.id, { styles: undefined }, 'Очистка стиля слоя')
+                setContext(null)
+              }}
+            >
+              <Eraser size={14} />
+              Очистить стиль
+            </button>
             <div className="menu-divider" />
             <button
               disabled={contextual.locked}

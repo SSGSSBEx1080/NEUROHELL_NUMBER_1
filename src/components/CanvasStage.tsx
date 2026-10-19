@@ -28,6 +28,13 @@ import {
   selectionCoverage,
 } from '../engine/selection'
 import { brushStamp, strokeStamps } from '../engine/brush'
+import {
+  applyGradientStops,
+  gradientRgbaCss,
+  reflectPosition,
+  solidGradient,
+  type GradientDefinition,
+} from '../engine/gradientRamp'
 import { selectionTools } from './ToolRail'
 import { validQuad } from '../engine/projection'
 import { useEffect, useLayoutEffect, useMemo, useId, useRef, useState } from 'react'
@@ -1010,12 +1017,32 @@ export function CanvasStage({
       const ctx = d.canvas.getContext('2d')!,
         length = Math.max(1, Math.hypot(p.x - d.start.x, p.y - d.start.y))
       ctx.clearRect(0, 0, doc.width, doc.height)
-      const g =
-        settings.gradientType === 'radial'
-          ? ctx.createRadialGradient(d.start.x, d.start.y, 0, d.start.x, d.start.y, length)
-          : ctx.createLinearGradient(d.start.x, d.start.y, p.x, p.y)
-      g.addColorStop(0, settings.color)
-      g.addColorStop(1, settings.secondaryColor)
+      const definition: GradientDefinition =
+        settings.gradient ||
+        solidGradient([
+          { position: 0, color: settings.color },
+          { position: 1, color: settings.secondaryColor },
+        ])
+      const type = settings.gradientType || 'linear'
+      let g: CanvasGradient
+      if (type === 'radial') {
+        g = ctx.createRadialGradient(d.start.x, d.start.y, 0, d.start.x, d.start.y, length)
+        applyGradientStops(g, definition)
+      } else if (type === 'angle' && typeof ctx.createConicGradient === 'function') {
+        g = ctx.createConicGradient(
+          Math.atan2(p.y - d.start.y, p.x - d.start.x),
+          d.start.x,
+          d.start.y,
+        )
+        applyGradientStops(g, definition)
+      } else if (type === 'reflected') {
+        g = ctx.createLinearGradient(d.start.x, d.start.y, p.x, p.y)
+        for (let i = 0; i <= 64; i++)
+          g.addColorStop(i / 64, gradientRgbaCss(definition, reflectPosition(i / 64)))
+      } else {
+        g = ctx.createLinearGradient(d.start.x, d.start.y, p.x, p.y)
+        applyGradientStops(g, definition)
+      }
       ctx.fillStyle = g
       ctx.fillRect(0, 0, doc.width, doc.height)
       if (selection) {
