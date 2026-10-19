@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   GRADIENT_QUANTUM,
   MAX_GRADIENT_STOPS,
@@ -75,6 +75,11 @@ export function GradientEditor({
     set(next, false)
     setSelected(next.findIndex((s) => s.position === Math.round(p! * 4096) / 4096))
   }
+  const rampCss = useMemo(
+    () =>
+      gradientCss({ name: '', kind: 'solid', stops, opacityStops: opaqueOpacityStops() }, 90, 32),
+    [stops],
+  )
   return (
     <div className="gradient-editor" data-testid="gradient-editor">
       {!hidePresets && (
@@ -103,13 +108,7 @@ export function GradientEditor({
         ref={bar}
         className="gradient-ramp"
         data-testid="gradient-ramp"
-        style={{
-          background: gradientCss(
-            { name: '', kind: 'solid', stops, opacityStops: opaqueOpacityStops() },
-            90,
-            32,
-          ),
-        }}
+        style={{ background: rampCss }}
         onDoubleClick={(e) => {
           if (!(e.target as Element).closest('button')) {
             const b = e.currentTarget.getBoundingClientRect()

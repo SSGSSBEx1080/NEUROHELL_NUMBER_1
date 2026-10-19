@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Dices, Download, Save, Trash2, Upload } from 'lucide-react'
 import {
   GRADIENT_QUANTUM,
@@ -242,12 +242,14 @@ export function GradientDefinitionEditor({
   const patchNoise = (patch: Partial<typeof noise>) =>
     set({ ...definition, kind: 'noise', noise: { ...noise, ...patch } })
   const allPresets = [...gradientDefinitionPresets, ...library]
+  // Recomputed only when the definition object itself changes, not on unrelated parent renders.
+  const previewCss = useMemo(() => gradientCss(definition, 90, 48), [definition])
   return (
     <div data-testid="gradient-definition-editor">
       <div
         className="gradient-preview-strip"
         data-testid="gradient-preview-strip"
-        style={{ backgroundImage: gradientCss(definition, 90, 48) }}
+        style={{ backgroundImage: previewCss }}
       />
       <div className="field-grid">
         <Select
