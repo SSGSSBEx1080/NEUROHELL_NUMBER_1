@@ -6,6 +6,7 @@ export type Tool =
   | 'brush'
   | 'eraser'
   | 'wand'
+  | 'magic-wand'
   | 'text'
   | 'text-frame'
   | 'rectangle'
@@ -157,6 +158,7 @@ export interface HistoryEntry {
   label: string
   time: number
   selectedId: string | null
+  pixelSelection?: Selection | null
   command?: { execute(): EditorDocument; undo(): EditorDocument }
 }
 export interface ToolSettings {
@@ -171,6 +173,11 @@ export interface ToolSettings {
   brushHardness?: number
   brushSpacing?: number
   feather?: number
+  selectionMode?: SelectionMode
+  selectionTolerance?: number
+  contiguous?: boolean
+  sampleAllLayers?: boolean
+  quickMask?: boolean
   editMask?: boolean
   gradientType?: 'linear' | 'radial'
 }
@@ -211,7 +218,12 @@ export interface LayerMask extends Rect {
   feather: number
   defaultColor: number
 }
+export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
+export interface SelectionRaster extends Rect {
+  data: Uint8ClampedArray
+}
 export interface Selection extends Rect {
+  raster?: SelectionRaster
   points?: Point[]
   ellipse?: boolean
   feather?: number

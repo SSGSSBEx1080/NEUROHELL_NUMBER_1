@@ -37,6 +37,7 @@ const groups = [
     { id: 'polygon-lasso', name: 'Прямолинейное лассо', icon: Spline, key: 'L' },
     { id: 'magnetic-lasso', name: 'Магнитное лассо', icon: Magnet, key: 'L' },
   ],
+  [{ id: 'magic-wand', name: 'Волшебная палочка', icon: WandSparkles, key: 'W' }],
   [{ id: 'crop', name: 'Кадрирование', icon: Crop, key: 'C' }],
   [{ id: 'brush', name: 'Кисть', icon: Paintbrush, key: 'B' }],
   [
@@ -68,6 +69,7 @@ const groups = [
 ] satisfies { id: Tool; name: string; icon: typeof ScanLine; key: string }[][]
 export const TOOLS = groups.flat()
 export const selectionTools: Tool[] = [
+  'magic-wand',
   'select',
   'ellipse-select',
   'lasso',

@@ -268,13 +268,15 @@ test('real recording captures final property changes and duplicate; replay is on
   await expect(page.locator('.layer-row')).toHaveCount(2)
 })
 
-test('recording marks unsupported J instead of pretending to record pixels', async ({ page }) => {
+test('recording marks selection and J unsupported instead of pretending to record pixels', async ({
+  page,
+}) => {
   await blank(page)
   await beginRecording(page, 'Неподдерживаемый J')
   await outline(page)
   await page.getByRole('button', { name: 'Применить на новый слой', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Запись операции' })).toContainText(
-    '1 неподдерживаемых',
+    '2 неподдерживаемых',
   )
   await page.getByRole('button', { name: 'Сохранить запись', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Выполнить операцию', exact: true })).toBeDisabled()

@@ -4994,3 +4994,92 @@ canvas {
   flex: 0 0 38px;
   text-align: right;
 }
+.quick-mask-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.quick-mask-hint {
+  position: absolute;
+  bottom: 17px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border: 1px solid #a5536455;
+  border-radius: 7px;
+  background: #33212beb;
+  color: #f5bac9;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.selection-mask-preview {
+  min-height: 100px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #141217;
+  border: 1px solid #48404f;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.selection-mask-preview canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 280px;
+}
+.range-previews {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.range-previews figure {
+  margin: 0;
+  min-width: 0;
+}
+.range-previews .selection-mask-preview {
+  min-height: 180px;
+}
+.range-previews figcaption {
+  text-align: center;
+  color: #aba1b4;
+  font-size: 10px;
+  margin-bottom: 16px;
+}
+.range-previews canvas {
+  cursor: crosshair;
+}
+.selection-dialog-fields {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+.selection-dialog-fields > .select-wrap {
+  flex: 1;
+}
+.selection-dialog-fields .number-field {
+  flex: 1;
+  min-width: 180px;
+}
+.selection-dialog-fields .number-field > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+}
+.selection-dialog-fields .number-field input {
+  width: 60px;
+  flex: 0 0 60px;
+  text-align: right;
+}
+.range-swatches {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tool-magic-wand .artboard {
+  cursor: crosshair;
+}

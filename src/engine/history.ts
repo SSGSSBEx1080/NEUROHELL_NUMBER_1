@@ -1,4 +1,4 @@
-import type { EditorDocument, HistoryEntry } from '../types'
+import type { EditorDocument, HistoryEntry, Selection } from '../types'
 export interface DocumentCommand {
   label: string
   execute(): EditorDocument
@@ -23,6 +23,7 @@ export function trimHistory(entries: HistoryEntry[], limit = 50, byteLimit = 128
   const size = () => {
     const sources = new Set<string>()
     let bytes = 0
+    const buffers = new Set<ArrayBufferLike>()
     const collect = (doc: EditorDocument) => {
       for (const entry of doc.script || [])
         for (const value of [entry.source, entry.translation, entry.note])
@@ -39,7 +40,14 @@ export function trimHistory(entries: HistoryEntry[], limit = 50, byteLimit = 128
         if (layer.smart) collect(layer.smart)
       }
     }
-    for (const entry of keep) collect(entry.document)
+    for (const entry of keep) {
+      collect(entry.document)
+      const data = entry.pixelSelection?.raster?.data
+      if (data && !buffers.has(data.buffer)) {
+        buffers.add(data.buffer)
+        bytes += data.byteLength
+      }
+    }
     return bytes
   }
   while (keep.length > 2 && size() > byteLimit) keep.shift()
@@ -49,9 +57,23 @@ export function trimHistory(entries: HistoryEntry[], limit = 50, byteLimit = 128
 /** A global target, in addition to each tab's undo budget. Keep every current
  * document; only inactive undo stacks may be discarded, never artwork. */
 export function trimInactiveHistories<
-  T extends { document: EditorDocument; entries: HistoryEntry[]; index: number },
+  T extends {
+    document: EditorDocument
+    entries: HistoryEntry[]
+    index: number
+    pixelSelection?: Selection | null
+  },
 >(sessions: Map<string, T>, activeId: string, target = 256 * 1024 * 1024) {
   const strings = new Set<string>()
+  const buffers = new Set<ArrayBufferLike>()
+  let selectionBytes = 0
+  const collectSelection = (s?: Selection | null) => {
+    const data = s?.raster?.data
+    if (data && !buffers.has(data.buffer)) {
+      buffers.add(data.buffer)
+      selectionBytes += data.byteLength
+    }
+  }
   const collect = (doc: EditorDocument) => {
     for (const entry of doc.script || [])
       for (const value of [entry.source, entry.translation, entry.note]) strings.add(value)
@@ -65,9 +87,13 @@ export function trimInactiveHistories<
   }
   for (const session of sessions.values()) {
     collect(session.document)
-    for (const entry of session.entries) collect(entry.document)
+    collectSelection(session.pixelSelection)
+    for (const entry of session.entries) {
+      collect(entry.document)
+      collectSelection(entry.pixelSelection)
+    }
   }
-  let bytes = 0
+  let bytes = selectionBytes
   for (const source of strings) bytes += source.length * 2
   if (bytes <= target) return false
   let changed = false

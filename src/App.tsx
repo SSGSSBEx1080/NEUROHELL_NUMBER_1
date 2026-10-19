@@ -1,3 +1,8 @@
+import { ColorRangeDialog, selectionModeNames } from './components/ColorRangeDialog'
+import { SelectionModifyDialog, selectionModifyNames } from './components/SelectionModifyDialog'
+import { rasterSelection, type SelectionModify } from './engine/selectionPixels'
+import { runSelection } from './engine/selectionJob'
+import { selectionSource } from './engine/selectionSource'
 import { CorrectionDialog } from './components/CorrectionDialog'
 import { insertAdjustment } from './engine/adjustmentLayers'
 import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
@@ -37,7 +42,7 @@ import { FontsDialog } from './components/FontsDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import { loadSystemFonts, restoreFonts } from './engine/fonts'
 import { ToolRail, TOOLS as tools, cycleTool, selectionTools } from './components/ToolRail'
-import { selectionMask } from './engine/selection'
+import { selectionMask, combineSelection, invertSelection } from './engine/selection'
 import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
@@ -105,6 +110,7 @@ import {
   prepareDocument,
   validateRasterBudget,
   rasterizeLayer,
+  rasterizedGeometry,
 } from './engine/render'
 import { saveDocument, hasPendingWrites } from './engine/storage'
 import { runPixelOperation } from './engine/processing'
@@ -114,6 +120,7 @@ import {
   type Layer,
   type Point,
   type Selection,
+  type SelectionMode,
   type Tool,
   type ToolSettings,
   DEFAULT_ADJUSTMENTS,
@@ -150,7 +157,7 @@ export default function App() {
   const [zoom, setZoom] = useState<number | null>(null)
   const [effectiveZoom, setEffectiveZoom] = useState(0.5)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [selection, setSelection] = useState<Selection | null>(null)
+  const { pixelSelection: selection, setPixelSelection: setSelection } = editor
   const [preferences, setPreferences] = useState(loadPreferences)
   useEffect(() => {
     savePreferences(preferences)
@@ -179,8 +186,11 @@ export default function App() {
     | 'repair'
     | 'psd-report'
     | 'correction'
+    | 'color-range'
+    | 'selection-modify'
     | null
   >(null)
+  const [selectionModify, setSelectionModify] = useState<SelectionModify>('expand')
   const recorder = useActionRecorder(editor)
   const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
   const [actionsError, setActionsError] = useState('')
@@ -302,9 +312,8 @@ export default function App() {
     setPan({ x: 0, y: 0 })
   }, [])
   const resetView = () => {
-    setSelection(null)
     setTool('move')
-    setSettings({ editMask: false })
+    setSettings({ editMask: false, quickMask: false })
     fitView()
   }
   const workspace = useWorkspace(editor, setBusy, toastMessage, resetView)
@@ -385,14 +394,81 @@ export default function App() {
     if (selectedId && !doc.layers.some((l) => l.id === selectedId)) setSelectedId(null)
   }, [doc.layers, selectedId])
 
+  const applySelection = (
+    next: Selection,
+    mode: SelectionMode = 'replace',
+    label = 'Выделение пикселей',
+  ) => {
+    const result = combineSelection(selection, next, mode, doc.width, doc.height)
+    setSelection(result, false, label)
+    if (!result.width || !result.height)
+      toastMessage('Выделение пустое. Ctrl+Z отменит изменение; Ctrl+D снимет ограничение.')
+  }
+  const toggleQuickMask = () => {
+    setSettings({
+      quickMask: !settings.quickMask,
+      editMask: false,
+      ...(!settings.quickMask ? { color: '#000000', secondaryColor: '#ffffff' } : {}),
+    })
+    if (!settings.quickMask) setTool('brush')
+  }
+  const invertSelectedArea = () =>
+    setSelection(invertSelection(selection, doc.width, doc.height), false, 'Инверсия выделения')
+  const previousSelection = [...editor.entries.slice(0, editor.index + 1)]
+    .reverse()
+    .find((e) => e.pixelSelection && e.pixelSelection !== selection)?.pixelSelection
+  const loadLayerSelection = async (id: string, mode: SelectionMode = 'replace') => {
+    const snapshot = editor.documentRef.current
+    setBusy('Выделяем непрозрачность слоя…')
+    try {
+      const c = await selectionSource(snapshot, id),
+        rgba = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      const alpha = new Uint8ClampedArray(c.width * c.height)
+      for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3]
+      if (editor.documentRef.current === snapshot)
+        applySelection(rasterSelection(alpha, c.width, c.height), mode, 'Выделение из слоя')
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка выделения')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const wandSelection = async (point: Point, mode: SelectionMode) => {
+    const snapshot = editor.documentRef.current
+    setBusy('Выбираем область по цвету…')
+    try {
+      if (settings.sampleAllLayers === false && !selectedId)
+        throw new Error('Выбери слой или включи «Все видимые слои».')
+      const c = await selectionSource(
+        snapshot,
+        settings.sampleAllLayers === false ? selectedId || undefined : undefined,
+      )
+      const coverage = await runSelection({
+        operation: 'wand',
+        width: c.width,
+        height: c.height,
+        pixels: c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data,
+        x: point.x,
+        y: point.y,
+        tolerance: settings.selectionTolerance ?? 32,
+        contiguous: settings.contiguous !== false,
+      })
+      if (editor.documentRef.current === snapshot)
+        applySelection(rasterSelection(coverage, c.width, c.height), mode, 'Волшебная палочка')
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка выделения')
+    } finally {
+      setBusy(null)
+    }
+  }
   const addCorrection = (type: CorrectionKind) => {
     try {
       editor.finish('Перед коррекцией')
       const result = insertAdjustment(editor.documentRef.current, type, selectedId, selection)
+      setSelection(null, true)
       editor.change(() => result.document, `Коррекция: ${correctionNames[type]}`)
       setSelectedId(result.selectedId)
-      setSelection(null)
-      setSettings({ editMask: false })
+      setSettings({ editMask: false, quickMask: false })
       setDockTab('properties')
       setTool('move')
       setModal(null)
@@ -493,7 +569,7 @@ export default function App() {
     if (!layer || isLayerLocked(editor.documentRef.current, layer.id)) return
     if (layer.mask) {
       setSelectedId(id)
-      setSettings({ editMask: true, color: '#000000', secondaryColor: '#ffffff' })
+      setSettings({ editMask: true, quickMask: false, color: '#000000', secondaryColor: '#ffffff' })
       setTool('brush')
       return
     }
@@ -521,28 +597,27 @@ export default function App() {
       }
       ctx.putImageData(pixels, 0, 0)
       const bitmap = await encodeBitmap(layer, source)
-      editor.patchLayer(
-        id,
-        {
-          mask: {
-            src: bitmap.src!,
-            x: layer.x,
-            y: layer.y,
-            width: layer.width,
-            height: layer.height,
-            enabled: true,
-            linked: true,
-            density: 1,
-            feather: 0,
-            defaultColor: 0,
-          },
-        },
-        'Добавление маски',
-      )
+      const mask = {
+        src: bitmap.src!,
+        x: layer.x,
+        y: layer.y,
+        width: layer.width,
+        height: layer.height,
+        enabled: true,
+        linked: true,
+        density: 1,
+        feather: 0,
+        defaultColor: 0,
+      }
+      validateRasterBudget({
+        ...doc,
+        layers: doc.layers.map((l) => (l.id === id ? { ...l, mask } : l)),
+      })
+      setSelection(null, true)
+      editor.patchLayer(id, { mask }, 'Добавление маски')
       setSelectedId(id)
-      setSettings({ editMask: true, color: '#000000', secondaryColor: '#ffffff' })
+      setSettings({ editMask: true, quickMask: false, color: '#000000', secondaryColor: '#ffffff' })
       setTool('brush')
-      setSelection(null)
     } catch (e) {
       toastMessage(e instanceof Error ? e.message : 'Не удалось создать маску')
     } finally {
@@ -561,6 +636,7 @@ export default function App() {
       )
       return
     }
+    setSelection(null, true)
     editor.change(
       (d) => ({
         ...d,
@@ -591,7 +667,6 @@ export default function App() {
       scale ? 'Размер изображения' : 'Размер холста',
     )
     setModal(null)
-    setSelection(null)
     fitView()
   }
   const copyLayer = () => {
@@ -908,19 +983,13 @@ export default function App() {
     const target = selected || fresh
     if (fresh && doc.layers.length >= MAX_LAYERS) return toastMessage('Достигнут лимит 100 слоёв')
     if (!target) return toastMessage('Сначала выбери слой с изображением')
-    if (target.kind === 'group' || target.smart)
+    if (target.kind === 'group' || target.kind === 'adjustment' || target.smart)
       return toastMessage('Выбери растровый слой или открой содержимое смарт-объекта')
     if (target.locked) return toastMessage('Сначала разблокируй слой')
     if (operation === 'background' && target.kind !== 'image')
       return toastMessage('Удаление фона работает с изображениями')
     if ((operation === 'erase' || operation === 'fill') && !selection)
       return toastMessage('Сначала выдели область инструментом M')
-    const local = point ? localPoint(target, point) : undefined
-    if (
-      local &&
-      (local.x < 0 || local.y < 0 || local.x >= target.width || local.y >= target.height)
-    )
-      return toastMessage('Кликни внутри выбранного слоя')
     setBusy(
       operation === 'background'
         ? 'Убираем фон на твоём устройстве…'
@@ -931,8 +1000,23 @@ export default function App() {
     try {
       const buffer = await rasterizeLayer(target),
         ctx = buffer.getContext('2d', { willReadFrequently: true })!
-      const sx = buffer.width / target.width,
-        sy = buffer.height / target.height
+      const rasterTarget = {
+        ...target,
+        ...rasterizedGeometry(target, buffer),
+        flipX: false,
+        flipY: false,
+      }
+      const local = point ? localPoint(rasterTarget, point) : undefined
+      if (
+        local &&
+        (local.x < 0 ||
+          local.y < 0 ||
+          local.x >= rasterTarget.width ||
+          local.y >= rasterTarget.height)
+      )
+        throw new Error('Кликни внутри выбранного слоя')
+      const sx = buffer.width / rasterTarget.width,
+        sy = buffer.height / rasterTarget.height
       let rect: Selection | undefined
       if (selection && (operation === 'erase' || operation === 'fill'))
         rect = { x: 0, y: 0, width: buffer.width, height: buffer.height }
@@ -942,7 +1026,7 @@ export default function App() {
         height: buffer.height,
         pixels: ctx.getImageData(0, 0, buffer.width, buffer.height).data,
         mask: selection
-          ? selectionMask(selection, buffer.width, buffer.height, target)
+          ? selectionMask(selection, buffer.width, buffer.height, rasterTarget)
               .getContext('2d')!
               .getImageData(0, 0, buffer.width, buffer.height).data
           : undefined,
@@ -1011,6 +1095,7 @@ export default function App() {
       y = Math.round(selection.y),
       width = Math.max(1, Math.round(selection.width)),
       height = Math.max(1, Math.round(selection.height))
+    setSelection(null, true)
     editor.change(
       (d) => ({
         ...d,
@@ -1018,14 +1103,14 @@ export default function App() {
         height,
         layers: d.layers.map((l) => ({
           ...l,
-          x: l.x - x,
-          y: l.y - y,
+          x: l.kind === 'adjustment' ? 0 : l.x - x,
+          y: l.kind === 'adjustment' ? 0 : l.y - y,
+          ...(l.kind === 'adjustment' ? { width, height } : {}),
           mask: l.mask ? { ...l.mask, x: l.mask.x - x, y: l.mask.y - y } : undefined,
         })),
       }),
       'Кадрирование холста',
     )
-    setSelection(null)
     setTool('move')
     fitView()
     toastMessage(`Холст: ${width} × ${height} px. Слои сохранены.`)
@@ -1194,6 +1279,10 @@ export default function App() {
             return
           case 'KeyI':
             e.preventDefault()
+            if (e.shiftKey || settings.quickMask) {
+              invertSelectedArea()
+              return
+            }
             if (selected && !selected.locked && selected.kind !== 'adjustment')
               editor.patchLayer(
                 selected.id,
@@ -1220,7 +1309,13 @@ export default function App() {
               addCorrection('hue/saturation')
               return
             }
-            if (e.shiftKey && selected && !selected.locked && selected.kind !== 'adjustment') {
+            if (
+              e.shiftKey &&
+              selected &&
+              !selected.locked &&
+              selected.kind !== 'adjustment' &&
+              !settings.quickMask
+            ) {
               e.preventDefault()
               editor.patchLayer(
                 selected.id,
@@ -1258,7 +1353,8 @@ export default function App() {
             return
           case 'KeyD':
             e.preventDefault()
-            setSelection(null)
+            if (e.shiftKey && previousSelection) setSelection(previousSelection)
+            else setSelection(null)
             return
         }
         return
@@ -1278,7 +1374,8 @@ export default function App() {
         e.key.startsWith('Arrow') &&
         selected &&
         !selected.locked &&
-        selected.kind !== 'adjustment'
+        selected.kind !== 'adjustment' &&
+        !settings.quickMask
       ) {
         e.preventDefault()
         const amount = e.shiftKey ? 10 : 1
@@ -1299,6 +1396,11 @@ export default function App() {
             Math.min(500, settings.brushSize + (e.code === 'BracketLeft' ? -5 : 5)),
           ),
         })
+        return
+      }
+      if (e.code === 'KeyQ') {
+        e.preventDefault()
+        toggleQuickMask()
         return
       }
       if (e.code === 'KeyX') {
@@ -1554,6 +1656,48 @@ export default function App() {
       disabled: !selected || selected.locked,
     },
   ]
+  const selectionMenu: MenuItem[] = [
+    {
+      label: 'Выделить всё',
+      shortcut: 'Ctrl A',
+      action: () => setSelection({ x: 0, y: 0, width: doc.width, height: doc.height }),
+    },
+    {
+      label: 'Снять выделение',
+      shortcut: 'Ctrl D',
+      action: () => setSelection(null),
+      disabled: !selection,
+    },
+    {
+      label: 'Выделить повторно',
+      shortcut: 'Ctrl ⇧ D',
+      action: () => previousSelection && setSelection(previousSelection),
+      disabled: !previousSelection,
+    },
+    { label: 'Инвертировать выделение', shortcut: 'Ctrl ⇧ I', action: invertSelectedArea },
+    { label: 'Цветовой диапазон…', action: () => setModal('color-range'), divider: true },
+    {
+      label: 'Из непрозрачности слоя',
+      action: () => selectedId && void loadLayerSelection(selectedId),
+      disabled: !selected || selected.kind === 'adjustment',
+    },
+    ...Object.entries(selectionModifyNames).map(([kind, label]) => ({
+      label: `${label} выделение…`,
+      action: () => {
+        setSelectionModify(kind as SelectionModify)
+        setModal('selection-modify')
+      },
+      disabled: !selection,
+      divider: kind === 'expand',
+    })),
+    {
+      label: 'Быстрая маска',
+      shortcut: 'Q',
+      checked: !!settings.quickMask,
+      action: toggleQuickMask,
+      divider: true,
+    },
+  ]
   const imageMenu: MenuItem[] = [
     { label: 'Размер изображения…', icon: Maximize, action: () => setModal('image-size') },
     { label: 'Размер холста…', icon: RectangleHorizontal, action: () => setModal('canvas-size') },
@@ -1574,7 +1718,7 @@ export default function App() {
     },
     {
       label: 'Инвертировать выделение',
-      action: () => selection && setSelection({ ...selection, inverted: !selection.inverted }),
+      action: invertSelectedArea,
       disabled: !selection,
     },
     {
@@ -1771,6 +1915,7 @@ export default function App() {
             <Dropdown label="Изображение" items={imageMenu} />
             <Dropdown label="Слой" items={layerMenu} />
             <Dropdown label="Коррекция" items={correctionMenu} />
+            <Dropdown label="Выделение" items={selectionMenu} />
             <Dropdown label="Вид" items={viewMenu} />
             <Dropdown label="Фильтры" items={filterMenu} />
             <Dropdown label="Окно" items={windowMenu} />
@@ -1827,6 +1972,19 @@ export default function App() {
           </div>
           <div className="vertical-divider" />
           <div className="tool-options">
+            {selectionTools.includes(tool) && (
+              <Select
+                aria-label="Режим выделения"
+                value={settings.selectionMode || 'replace'}
+                onChange={(e) => setSettings({ selectionMode: e.target.value as SelectionMode })}
+              >
+                {Object.entries(selectionModeNames).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+            )}
             {tool === 'move' ? (
               <>
                 <label className="checkbox-row">
@@ -1884,6 +2042,32 @@ export default function App() {
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
                 )}
               </>
+            ) : tool === 'magic-wand' ? (
+              <>
+                <Field
+                  label="Допуск палочки"
+                  value={settings.selectionTolerance ?? 32}
+                  min={0}
+                  max={255}
+                  onChange={(selectionTolerance) => setSettings({ selectionTolerance })}
+                />
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.contiguous !== false}
+                    onChange={(e) => setSettings({ contiguous: e.target.checked })}
+                  />
+                  Смежные пиксели
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.sampleAllLayers !== false}
+                    onChange={(e) => setSettings({ sampleAllLayers: e.target.checked })}
+                  />
+                  Все видимые слои
+                </label>
+              </>
             ) : tool === 'wand' || tool === 'bucket' ? (
               <>
                 <Field
@@ -1913,7 +2097,7 @@ export default function App() {
                 <span className="tool-instruction">
                   {tool === 'polygon-lasso' || tool === 'magnetic-lasso'
                     ? 'Клики задают контур · Enter / двойной клик замыкает'
-                    : 'Обведи область · Ctrl+D — снять выделение'}
+                    : 'Shift: + · Alt: − · Shift+Alt: пересечение · Ctrl+D: снять'}
                 </span>
               </>
             ) : tool === 'gradient' ? (
@@ -2148,6 +2332,7 @@ export default function App() {
                 setPan={setPan}
                 selection={selection}
                 setSelection={setSelection}
+                onWand={(point, mode) => void wandSelection(point, mode)}
                 onCrop={crop}
                 onRepair={openRepair}
                 onEditText={() => {
@@ -2283,6 +2468,7 @@ export default function App() {
               layers={
                 <LayersPanel
                   onCorrection={() => setModal('correction')}
+                  onLoadSelection={(id, mode) => void loadLayerSelection(id, mode)}
                   editor={editor}
                   selectedId={selectedId}
                   onSelect={setSelectedId}
@@ -2403,7 +2589,13 @@ export default function App() {
           onClose={closeModal}
           onApply={(color) => {
             setSettings({ color })
-            if (selected && !selected.locked && selected.kind !== 'image')
+            if (
+              selected &&
+              !selected.locked &&
+              ['shape', 'text'].includes(selected.kind) &&
+              !settings.quickMask &&
+              !settings.editMask
+            )
               editor.patchLayer(selected.id, { color }, 'Цвет слоя')
             closeModal()
           }}
@@ -2458,6 +2650,30 @@ export default function App() {
           onClose={closeReplace}
           onSave={() => void saveProject()}
           onConfirm={() => openDocument(pendingDocument)}
+        />
+      )}
+      {modal === 'color-range' && (
+        <ColorRangeDialog
+          doc={doc}
+          initialMode={settings.selectionMode || 'replace'}
+          onApply={(area, mode) => {
+            applySelection(area, mode, 'Цветовой диапазон')
+            closeModal()
+          }}
+          onClose={closeModal}
+        />
+      )}
+      {modal === 'selection-modify' && selection && (
+        <SelectionModifyDialog
+          selection={selection}
+          width={doc.width}
+          height={doc.height}
+          initial={selectionModify}
+          onApply={(area, kind) => {
+            setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
+            closeModal()
+          }}
+          onClose={closeModal}
         />
       )}
       {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}

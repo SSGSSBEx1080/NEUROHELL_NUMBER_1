@@ -166,4 +166,13 @@ for source, image in [("merged", document.topil()), ("native recomputation", doc
     assert float(delta.max()) <= 2.0, ("clipped adjustment", source, float(delta.max()))
     print(f"PASS masked clipped inversion, {source}: max premultiplied RGBA error {delta.max():.4f}/255; original alpha retained")
 
-print("Scope: RGB/8, these twenty-one fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+for fixture in ["selection-combined", "selection-quick-mask"]:
+    document = PSDImage.open(RESULTS / f"{fixture}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"{fixture}.png"))
+    assert len(document) == 2 and document[1].kind == "invert" and document[1].has_mask()
+    for source, image in [("merged", document.topil()), ("native recomputation", document.composite(force=True, apply_icc=False))]:
+        delta = np.abs(premultiplied(image) - reference)
+        assert float(delta.max()) <= 2, (fixture, source, float(delta.max()))
+        print(f"PASS {fixture}, {source}: max error {delta.max():.4f}/255; real native pixel mask, holes/soft edges retained")
+
+print("Scope: RGB/8, these twenty-three fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")

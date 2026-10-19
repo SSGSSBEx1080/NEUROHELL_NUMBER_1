@@ -25,13 +25,14 @@ import {
 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
-import type { BlendMode, Layer } from '../types'
+import type { BlendMode, Layer, SelectionMode } from '../types'
 import { visibleLayerRows } from '../engine/layerOperations'
 import { Field, IconButton, Select } from './ui'
 interface Props {
   editor: Editor
   selectedId: string | null
   onSelect: (id: string | null) => void
+  onLoadSelection: (id: string, mode: SelectionMode) => void
   onCorrection: () => void
   onAdd: () => void
   onDuplicate: (id?: string) => void
@@ -90,6 +91,7 @@ export function LayersPanel({
   onSelect,
   onAdd,
   onCorrection,
+  onLoadSelection,
   onDuplicate,
   onDelete,
   onReorder,
@@ -335,8 +337,22 @@ export function LayersPanel({
                 <button
                   className="layer-pixels-button"
                   aria-label={l.smart ? `Открыть содержимое: ${l.name}` : `Пиксели слоя: ${l.name}`}
+                  title="Ctrl+клик — выделить непрозрачность; Shift добавляет, Alt вычитает"
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (e.ctrlKey || e.metaKey) {
+                      onLoadSelection(
+                        l.id,
+                        e.altKey
+                          ? e.shiftKey
+                            ? 'intersect'
+                            : 'subtract'
+                          : e.shiftKey
+                            ? 'add'
+                            : 'replace',
+                      )
+                      return
+                    }
                     onSelect(l.id)
                     onPixels()
                   }}

@@ -1,3 +1,6 @@
+import { QuickMaskOverlay } from './QuickMaskOverlay'
+import { rasterSelection } from '../engine/selectionPixels'
+import { rasterOutline } from '../engine/selectionOutline'
 import {
   distortVisual,
   localBounds,
@@ -10,7 +13,15 @@ import { shapeNames, shapeTools } from '../engine/shapeGeometry'
 import { defaultTextFrame } from '../engine/textLayout'
 import { duplicateLayers, subtree } from '../engine/layerOperations'
 import { FrameScheduler, SceneRenderer } from '../engine/scene'
-import { magneticPoint, polygonSelection, selectionMask, selectionPath } from '../engine/selection'
+import {
+  magneticPoint,
+  polygonSelection,
+  selectionMask,
+  selectionPath,
+  combineSelection,
+  gestureSelectionMode,
+  selectionCoverage,
+} from '../engine/selection'
 import { brushStamp, strokeStamps } from '../engine/brush'
 import { selectionTools } from './ToolRail'
 import { validQuad } from '../engine/projection'
@@ -23,6 +34,7 @@ import {
   type Point,
   type Rect,
   type Selection,
+  type SelectionMode,
   type Tool,
   type ToolSettings,
   MAX_LAYERS,
@@ -54,7 +66,8 @@ interface Props {
   pan: Point
   setPan: (p: Point) => void
   selection: Selection | null
-  setSelection: (r: Selection | null) => void
+  setSelection: (r: Selection | null, temporary?: boolean, label?: string) => void
+  onWand: (point: Point, mode: SelectionMode) => void
   onCrop: () => void
   onRepair: (selection: Selection) => void
   onEditText: () => void
@@ -69,6 +82,13 @@ interface Props {
 }
 type Drag =
   | { type: 'pan'; client: Point; pan: Point }
+  | {
+      type: 'quick-mask'
+      canvas: HTMLCanvasElement
+      last: Point
+      stamp: HTMLCanvasElement
+      beforeSelection: Selection | null
+    }
   | {
       type: 'move' | 'resize' | 'rotate' | 'distort'
       start: Point
@@ -125,6 +145,7 @@ export function CanvasStage({
   setPan,
   selection,
   setSelection,
+  onWand,
   onCrop,
   onRepair,
   onEditText,
@@ -143,6 +164,7 @@ export function CanvasStage({
   const canvas = useRef<HTMLCanvasElement>(null)
   const drag = useRef<Drag | null>(null)
   const activePointer = useRef<number | null>(null)
+  const selectionGesture = useRef<{ base: Selection | null; mode: SelectionMode } | null>(null)
   const overrides = useRef(new Map<string, HTMLCanvasElement>())
   const [size, setSize] = useState({ width: 900, height: 700 })
   const [revision, setRevision] = useState(0)
@@ -180,6 +202,7 @@ export function CanvasStage({
     selected.visible &&
     !isLayerLocked(doc, selected.id) &&
     tool === 'move' &&
+    !settings.quickMask &&
     selected.kind !== 'group' &&
     selected.kind !== 'adjustment'
 
@@ -209,6 +232,10 @@ export function CanvasStage({
   useEffect(() => {
     polygon.current = []
     setOutline([])
+    if (selectionGesture.current) {
+      setSelection(selectionGesture.current.base, true)
+      selectionGesture.current = null
+    }
   }, [tool])
   useEffect(() => onEffectiveZoom(scale), [scale, onEffectiveZoom])
   useEffect(() => {
@@ -217,6 +244,8 @@ export function CanvasStage({
     polygon.current = []
     setOutline([])
     clone.current = null
+    selectionGesture.current = null
+    drag.current = null
   }, [doc.id])
   useEffect(() => {
     let disposed = false
@@ -332,9 +361,38 @@ export function CanvasStage({
       }),
     )
   }
+  const finishSelection = (next: Selection | null) => {
+    const gesture = selectionGesture.current
+    selectionGesture.current = null
+    if (!next) {
+      setSelection(gesture?.base || null, true)
+      return
+    }
+    try {
+      const result = combineSelection(
+        gesture?.base || null,
+        next,
+        gesture?.mode || 'replace',
+        doc.width,
+        doc.height,
+      )
+      setSelection(result, false, 'Выделение пикселей')
+      if (!result.width || !result.height)
+        onToast('Выделение пустое. Ctrl+Z отменит его, Ctrl+D снимет ограничение.')
+    } catch (error) {
+      setSelection(gesture?.base || null, true)
+      onToast(error instanceof Error ? error.message : 'Ошибка выделения')
+    }
+  }
+  const quickSelection = (c: HTMLCanvasElement) => {
+    const rgba = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data,
+      alpha = new Uint8ClampedArray(c.width * c.height)
+    for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4]
+    return rasterSelection(alpha, c.width, c.height)
+  }
   const finishPolygon = () => {
     const next = polygonSelection(polygon.current, settings.feather || 0)
-    if (next) setSelection(next)
+    finishSelection(next)
     polygon.current = []
     setOutline([])
     magnetic.current = null
@@ -401,6 +459,13 @@ export function CanvasStage({
       drag.current = { type: 'pan', client: { x: e.clientX, y: e.clientY }, pan }
       return
     }
+    if (
+      settings.quickMask &&
+      !['brush', 'eraser', 'hand', 'eyedropper', ...selectionTools].includes(tool)
+    )
+      return onToast(
+        'Быстрая маска: используй B/E и инструменты выделения. Q возвращает обычное редактирование.',
+      )
     const handle = (e.target as Element).closest('[data-handle]')?.getAttribute('data-handle')
     if (handle && selected && !isLayerLocked(doc, selected.id) && tool === 'move') {
       drag.current = {
@@ -414,6 +479,40 @@ export function CanvasStage({
     }
     if (!inside(p)) {
       if (tool === 'move') onSelect(null)
+      return
+    }
+    if (settings.quickMask && (tool === 'brush' || tool === 'eraser')) {
+      const buffer = document.createElement('canvas')
+      buffer.width = doc.width
+      buffer.height = doc.height
+      const x = buffer.getContext('2d')!,
+        image = x.createImageData(doc.width, doc.height),
+        alpha = selectionCoverage(selection, doc.width, doc.height, 255)
+      for (let i = 0; i < alpha.length; i++) {
+        image.data[i * 4] = image.data[i * 4 + 1] = image.data[i * 4 + 2] = alpha[i]
+        image.data[i * 4 + 3] = 255
+      }
+      x.putImageData(image, 0, 0)
+      const rgb = [1, 3, 5].map((i) => parseInt(settings.color.slice(i, i + 2), 16)),
+        grey = tool === 'eraser' ? 255 : Math.round(rgb[0] * 0.3 + rgb[1] * 0.59 + rgb[2] * 0.11)
+      const stamp = brushStamp(
+        settings.brushSize,
+        '#' + grey.toString(16).padStart(2, '0').repeat(3),
+        settings.brushHardness ?? 100,
+      )
+      drag.current = {
+        type: 'quick-mask',
+        canvas: buffer,
+        last: p,
+        stamp,
+        beforeSelection: selection,
+      }
+      strokeStamps(x, p, p, stamp, settings, false)
+      setSelection(quickSelection(buffer), true)
+      return
+    }
+    if (tool === 'magic-wand') {
+      onWand(p, gestureSelectionMode(e, settings.selectionMode))
       return
     }
     if (tool === 'move') {
@@ -452,12 +551,20 @@ export function CanvasStage({
         } else drag.current = { type: 'move', start: p, layer: { ...hit }, before: doc }
       }
     } else if (tool === 'lasso' || tool === 'repair') {
-      setSelection(null)
+      selectionGesture.current = {
+        base: selection,
+        mode: tool === 'repair' ? 'replace' : gestureSelectionMode(e, settings.selectionMode),
+      }
+      setSelection(null, true)
       drag.current = { type: 'lasso', points: [p], repair: tool === 'repair' }
       setOutline([p])
     } else if (tool === 'polygon-lasso' || tool === 'magnetic-lasso') {
       if (!polygon.current.length) {
-        setSelection(null)
+        selectionGesture.current = {
+          base: selection,
+          mode: gestureSelectionMode(e, settings.selectionMode),
+        }
+        setSelection(null, true)
         if (tool === 'magnetic-lasso')
           magnetic.current = canvas
             .current!.getContext('2d', { willReadFrequently: true })!
@@ -494,7 +601,13 @@ export function CanvasStage({
       tool === 'repair-box' ||
       tool === 'text-frame'
     ) {
-      setSelection({ ...p, width: 0, height: 0 })
+      selectionGesture.current = {
+        base: selection,
+        mode: selectionTools.includes(tool)
+          ? gestureSelectionMode(e, settings.selectionMode)
+          : 'replace',
+      }
+      setSelection({ ...p, width: 0, height: 0 }, true)
       drag.current = {
         type: 'region',
         start: p,
@@ -667,10 +780,9 @@ export function CanvasStage({
         last,
         mask: targetMask,
         stamp: brushStamp(settings.brushSize * sx, settings.color, settings.brushHardness ?? 100),
-        selection:
-          selection && !targetMask
-            ? selectionMask(selection, buffer.width, buffer.height, layer)
-            : undefined,
+        selection: selection
+          ? selectionMask(selection, buffer.width, buffer.height, layer, targetMask)
+          : undefined,
         clone:
           tool === 'clone' && clone.current
             ? { canvas: clone.current.canvas, offset: clone.current.offset! }
@@ -702,6 +814,14 @@ export function CanvasStage({
       setPan({ x: d.pan.x + e.clientX - d.client.x, y: d.pan.y + e.clientY - d.client.y })
       return
     }
+    if (d.type === 'quick-mask') {
+      strokeStamps(d.canvas.getContext('2d')!, d.last, p, d.stamp, settings, false)
+      d.last = p
+      paintScheduler.current.request(() => {
+        if (drag.current === d) setSelection(quickSelection(d.canvas), true)
+      })
+      return
+    }
     if (d.type === 'paint') {
       paintSegment(d, p)
       return
@@ -714,11 +834,14 @@ export function CanvasStage({
       return
     }
     if (d.type === 'region') {
-      setSelection({
-        ...getRect(d.start, clip(p)),
-        ellipse: tool === 'ellipse-select',
-        feather: settings.feather || 0,
-      })
+      setSelection(
+        {
+          ...getRect(d.start, clip(p)),
+          ellipse: tool === 'ellipse-select',
+          feather: settings.feather || 0,
+        },
+        true,
+      )
       return
     }
     if (d.type === 'gradient') {
@@ -925,21 +1048,29 @@ export function CanvasStage({
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId)
     if (!d) return
+    if (d.type === 'quick-mask') {
+      setSelection(quickSelection(d.canvas), false, 'Рисование быстрой маски')
+      return
+    }
     if (d.type === 'lasso') {
       const selected = polygonSelection(d.points, settings.feather || 0)
-      setSelection(selected)
+      finishSelection(selected)
       if (d.repair && selected) onRepair(selected)
       setOutline([])
       return
     }
     if (d.type === 'region' && d.textFrame) {
-      const rect = getRect(d.start, clip(pointFrom(e)))
-      setSelection(null)
+      const rect = getRect(d.start, clip(pointFrom(e))),
+        previous = selectionGesture.current?.base || null
+      selectionGesture.current = null
+      setSelection(null, true)
       if (rect.width < 20 || rect.height < 20) {
+        setSelection(previous, true)
         onToast('Протяни рамку от 20 × 20 px')
         return
       }
       if (editor.documentRef.current.layers.length >= MAX_LAYERS) {
+        setSelection(previous, true)
         onToast('До 100 слоёв в проекте')
         return
       }
@@ -966,9 +1097,17 @@ export function CanvasStage({
     if (d.type === 'region' && d.repair) {
       const selected = getRect(d.start, clip(pointFrom(e)))
       if (selected.width > 1 && selected.height > 1) {
-        setSelection(selected)
+        finishSelection(selected)
         onRepair(selected)
-      }
+      } else finishSelection(null)
+      return
+    }
+    if (d.type === 'region') {
+      finishSelection({
+        ...getRect(d.start, clip(pointFrom(e))),
+        ellipse: tool === 'ellipse-select',
+        feather: settings.feather || 0,
+      })
       return
     }
     if (d.type === 'gradient') {
@@ -998,6 +1137,12 @@ export function CanvasStage({
         onBusy('Сохраняем маску…')
         try {
           const bitmap = await encodeBitmap(d.layer, d.canvas)
+          validateRasterBudget({
+            ...editor.documentRef.current,
+            layers: editor.documentRef.current.layers.map((l) =>
+              l.id === d.layer.id ? { ...l, mask: { ...d.mask!, src: bitmap.src! } } : l,
+            ),
+          })
           editor.patchLayer(d.layer.id, { mask: { ...d.mask, src: bitmap.src! } }, '', true)
           editor.finish('Рисование по маске')
         } catch {
@@ -1042,7 +1187,7 @@ export function CanvasStage({
         editor.patchLayer(d.id, { width: 240, height: 160 }, '', true)
       editor.finish('Добавление фигуры')
       setTool('move')
-    } else if (d.type !== 'pan' && d.type !== 'region')
+    } else if (d.type !== 'pan')
       editor.finish(
         d.type === 'move'
           ? d.duplicatedFrom
@@ -1058,6 +1203,11 @@ export function CanvasStage({
   const cancelPointer = () => {
     paintScheduler.current.cancel()
     const d = drag.current
+    if (selectionGesture.current) {
+      setSelection(selectionGesture.current.base, true)
+      selectionGesture.current = null
+    }
+    if (d?.type === 'quick-mask') setSelection(d.beforeSelection, true)
     if (d && 'before' in d) editor.change(() => d.before, '', true)
     if (d && 'duplicatedFrom' in d && d.duplicatedFrom) onSelect(d.duplicatedFrom)
     else if (d && 'before' in d && !d.before.layers.some((l) => l.id === selectedId))
@@ -1176,6 +1326,9 @@ export function CanvasStage({
           data-testid="editor-canvas"
           aria-label={`Холст ${doc.name}, ${doc.width} на ${doc.height} пикселей`}
         />
+        {settings.quickMask && (
+          <QuickMaskOverlay selection={selection} width={doc.width} height={doc.height} />
+        )}
         <svg
           className="canvas-overlay"
           width="100%"
@@ -1255,7 +1408,18 @@ export function CanvasStage({
               fill="none"
             />
           )}
-          {selection && (
+          {selectionGesture.current?.base &&
+            selectionGesture.current.mode !== 'replace' &&
+            !settings.quickMask && (
+              <path
+                d={selectionPath(selectionGesture.current.base)}
+                fill="none"
+                stroke="#bda6ff"
+                strokeDasharray={`${3 / scale} ${3 / scale}`}
+                strokeWidth={1 / scale}
+              />
+            )}
+          {selection && !settings.quickMask && (
             <>
               {tool === 'crop' && (
                 <path
@@ -1319,14 +1483,24 @@ export function CanvasStage({
           )}
         </svg>
       </div>
-      {selection &&
-      selection.width > 2 &&
-      selection.height > 2 &&
-      (tool === 'crop' || selectionTools.includes(tool)) ? (
+      {settings.quickMask ? (
+        <div className="quick-mask-hint">
+          Быстрая маска · B: чёрный убирает / белый добавляет · E: проявить · Q: закончить
+        </div>
+      ) : selection &&
+        selection.width > 2 &&
+        selection.height > 2 &&
+        (tool === 'crop' || selectionTools.includes(tool)) ? (
         <div className="selection-actions">
           <span>
             <ScanLine size={15} />
             {Math.round(selection.width)} × {Math.round(selection.height)}
+            {selection.raster && rasterOutline(selection.raster).simplified && (
+              <small title="Для скорости упрощён только видимый контур. Покрытие сохраняется попиксельно; Q показывает точную маску.">
+                {' '}
+                · контур ≈
+              </small>
+            )}
           </span>
           <div className="vertical-divider" />
           {tool === 'crop' ? (
