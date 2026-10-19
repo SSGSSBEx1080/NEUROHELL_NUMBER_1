@@ -296,6 +296,23 @@ export function applyCorrection(
     transform = compileCorrection(correction),
     out = [0, 0, 0],
     strength = unit(opacity)
+  if (!mask && mode === 'source-over') {
+    // Fast path: identical arithmetic, but amount is loop-invariant and
+    // blendCorrection('source-over') is a no-op, so neither is recomputed.
+    const amount = strength
+    if (!amount) return result
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (!pixels[i + 3]) continue
+      const r = pixels[i] / 255,
+        g = pixels[i + 1] / 255,
+        b = pixels[i + 2] / 255
+      transform(r, g, b, out)
+      result[i] = Math.round(pixels[i] + (unit(out[0]) * 255 - pixels[i]) * amount)
+      result[i + 1] = Math.round(pixels[i + 1] + (unit(out[1]) * 255 - pixels[i + 1]) * amount)
+      result[i + 2] = Math.round(pixels[i + 2] + (unit(out[2]) * 255 - pixels[i + 2]) * amount)
+    }
+    return result
+  }
   for (let i = 0; i < pixels.length; i += 4) {
     const amount = strength * (mask ? mask[i / 4] / 255 : 1)
     if (!pixels[i + 3] || !amount) continue
