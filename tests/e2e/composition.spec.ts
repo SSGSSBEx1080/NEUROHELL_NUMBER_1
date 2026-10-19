@@ -566,19 +566,46 @@ test('donor strokes interpolate, Shift restores samples, preview slider avoids R
   expect(await pixels(page)).toEqual([23, 248])
 })
 
-test('cancelling active texture reconstruction terminates its actual worker without changing the document', async ({
+test('cancelling a pending real repair worker terminates it and ignores late results without changing pixels', async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    const w = window as typeof window & { __repairs: { started: number; terminated: number } }
-    w.__repairs = { started: 0, terminated: 0 }
+    const w = window as typeof window & {
+      __repairs: { started: number; submitted: number; held: number; terminated: number }
+      __deliverRepairResults: () => void
+    }
+    w.__repairs = { started: 0, submitted: 0, held: 0, terminated: 0 }
     const NativeWorker = window.Worker
+    let gate = true
+    const held: { worker: Worker; data: unknown }[] = []
+    w.__deliverRepairResults = () => {
+      gate = false
+      for (const message of held)
+        message.worker.dispatchEvent(new MessageEvent('message', { data: message.data }))
+      held.length = 0
+    }
     window.Worker = class extends NativeWorker {
       repair: boolean
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options)
         this.repair = String(url).includes('repair.worker')
-        if (this.repair) w.__repairs.started++
+        if (this.repair) {
+          w.__repairs.started++
+          // Test-only delivery gate: the REAL module receives and computes the
+          // payload, but its final message waits. Cancellation must not depend
+          // on a particular machine being slow enough to keep Apply disabled.
+          this.addEventListener('message', (event) => {
+            if (gate && event.data.result) {
+              event.stopImmediatePropagation()
+              held.push({ worker: this, data: event.data })
+              w.__repairs.held++
+            }
+          })
+        }
+      }
+      postMessage(...args: Parameters<Worker['postMessage']>) {
+        if (this.repair) w.__repairs.submitted++
+        return Reflect.apply(NativeWorker.prototype.postMessage, this, args)
       }
       terminate() {
         if (this.repair) w.__repairs.terminated++
@@ -635,19 +662,32 @@ test('cancelling active texture reconstruction terminates its actual worker with
   await expect
     .poll(() =>
       page.evaluate(
-        () => (window as typeof window & { __repairs: { started: number } }).__repairs.started,
+        () => (window as typeof window & { __repairs: { held: number } }).__repairs.held,
       ),
     )
     .toBeGreaterThan(0)
   await expect(
     page.getByRole('button', { name: 'Применить на новый слой', exact: true }),
   ).toBeDisabled()
-  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
-  const stats = await page.evaluate(
+  const pending = await page.evaluate(
     () =>
       (window as typeof window & { __repairs: { started: number; terminated: number } }).__repairs,
   )
+  expect(pending.started - pending.terminated).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Остановить и закрыть', exact: true }).click()
+  const stats = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __repairs: { started: number; submitted: number; terminated: number }
+        }
+      ).__repairs,
+  )
+  expect(stats.submitted).toBeGreaterThan(0)
   expect(stats.terminated).toBe(stats.started)
+  await page.evaluate(() =>
+    (window as typeof window & { __deliverRepairResults: () => void }).__deliverRepairResults(),
+  )
   await expect(page.locator('.layer-row')).toHaveCount(1)
   expect(
     await page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
