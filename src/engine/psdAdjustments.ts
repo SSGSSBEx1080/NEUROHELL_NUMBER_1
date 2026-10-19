@@ -48,7 +48,7 @@ export function exportAdjustment(c: Correction): AdjustmentLayer {
       colorStops: c.stops.map((s) => ({
         location: s.position,
         color: rgb(s.color),
-        midpoint: 0.5,
+        midpoint: s.midpoint ?? 0.5,
       })),
       opacityStops: [
         { location: 0, opacity: 1, midpoint: 0.5 },
@@ -132,14 +132,18 @@ export function importAdjustment(a: AdjustmentLayer | undefined): Correction | u
         (a.smoothness !== undefined && a.smoothness !== 1) ||
         a.addTransparency ||
         !a.colorStops?.length ||
-        a.colorStops.some((s) => !hex(s.color) || Math.abs(s.midpoint - 0.5) > 1e-6) ||
+        a.colorStops.some((s) => !hex(s.color)) ||
         a.opacityStops?.some((s) => s.opacity !== 1)
       )
         return
       return parseCorrection({
         type: a.type,
         reverse: a.reverse,
-        stops: a.colorStops.map((s) => ({ position: s.location, color: hex(s.color) })),
+        stops: a.colorStops.map((s) => ({
+          position: s.location,
+          color: hex(s.color),
+          midpoint: s.midpoint,
+        })),
       })
     }
     if (a.type === 'color lookup') {
