@@ -12,6 +12,7 @@ import {
   Folder,
   FolderPlus,
   History,
+  SlidersHorizontal,
   Layers,
   LockKeyhole,
   Plus,
@@ -31,6 +32,7 @@ interface Props {
   editor: Editor
   selectedId: string | null
   onSelect: (id: string | null) => void
+  onCorrection: () => void
   onAdd: () => void
   onDuplicate: (id?: string) => void
   onDelete: (id?: string) => void
@@ -65,7 +67,9 @@ const modes: [BlendMode, string][] = [
 export function LayerThumbnail({ layer }: { layer: Layer }) {
   return (
     <span className={`layer-thumbnail ${layer.kind === 'image' ? 'checkerboard' : ''}`}>
-      {layer.kind === 'group' ? (
+      {layer.kind === 'adjustment' ? (
+        <span className="correction-symbol">◐</span>
+      ) : layer.kind === 'group' ? (
         <Folder size={19} />
       ) : layer.kind === 'image' ? (
         layer.src && <img src={layer.src} alt="" draggable={false} />
@@ -85,6 +89,7 @@ export function LayersPanel({
   selectedId,
   onSelect,
   onAdd,
+  onCorrection,
   onDuplicate,
   onDelete,
   onReorder,
@@ -411,6 +416,11 @@ export function LayersPanel({
           <footer className="layers-footer">
             <span>{editor.document.layers.length} слоёв</span>
             <div>
+              <IconButton
+                icon={SlidersHorizontal}
+                label="Новый корректирующий слой"
+                onClick={onCorrection}
+              />
               <IconButton icon={FolderPlus} label="Группировать слои (Ctrl+G)" onClick={group} />
               <IconButton
                 icon={SquareDashed}
@@ -521,7 +531,7 @@ export function LayersPanel({
               {contextual.mask ? 'Редактировать маску' : 'Добавить маску'}
             </button>
             <button
-              disabled={contextual.locked || !!contextual.smart}
+              disabled={contextual.locked || !!contextual.smart || contextual.kind === 'adjustment'}
               onClick={() => {
                 onSmart()
                 setContext(null)

@@ -1,9 +1,11 @@
+import { parseCorrection } from './adjustmentTypes'
 import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
 import { parseTextFrame } from './textLayout'
 export type ActionProperties = Partial<
   Pick<
     Layer,
+    | 'correction'
     | 'name'
     | 'visible'
     | 'opacity'
@@ -106,7 +108,8 @@ export function parseActionProperties(input: unknown): ActionProperties {
     throw new Error('Некорректные свойства операции')
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
-    if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
+    if (key === 'correction') out[key] = parseCorrection(value)
+    else if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
     else if (

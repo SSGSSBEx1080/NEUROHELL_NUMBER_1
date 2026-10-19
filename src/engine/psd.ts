@@ -1,3 +1,4 @@
+import { exportAdjustment, importAdjustment } from './psdAdjustments'
 import { sealProject } from './psdIntegrity'
 import { gaussianSmartFilter, nativeSmartPlacement, translateNativePlacement } from './psdSmart'
 import { affineText, exportNativeText, importNativeText } from './psdText'
@@ -316,7 +317,29 @@ export async function importPsd(
           sourceText: src.text?.text?.replace(/\r\n?/g, '\n'),
           styles: importStyles(src),
         })
-        if (!group) {
+        const correction =
+          !group && !src.vectorMask && !src.realMask && !src.effects
+            ? importAdjustment(src.adjustment)
+            : undefined
+        if (correction)
+          Object.assign(layer, {
+            kind: 'adjustment',
+            correction,
+            x: 0,
+            y: 0,
+            width: doc.width,
+            height: doc.height,
+            styles: undefined,
+          })
+        if (src.adjustment && !correction)
+          warnings.add(
+            'Неподдерживаемый вариант корректирующего слоя сохранён с исходными данными. После правок его перерасчёт не гарантируется.',
+          )
+        if (correction)
+          warnings.add(
+            'Нативные корректирующие слои доступны для правки. Перерасчёт использует RGB/8 алгоритмы ФШ777 и может отличаться от Adobe; неизменённый оригинал сохраняется побайтно.',
+          )
+        if (!group && !correction) {
           if (src.imageData?.width && src.imageData.height) layer.src = imageSource(src.imageData)
           else {
             layer.src = canvas(1, 1).toDataURL()
@@ -613,6 +636,11 @@ export async function exportPsd(
         // the working renderer as well as the merged image. Keep the original
         // placement/linked PSD/metadata; refresh pixels only, never flatten contents.
         if (layer.smart && !appearanceUnchanged) Object.assign(out, rasterPreview(layer))
+      } else if (layer.kind === 'adjustment' && layer.correction) {
+        out.adjustment = exportAdjustment(layer.correction)
+        notes.push(
+          'Корректирующие слои записаны как native adjustment layers с масками/opacity/clipping, не растрированы. Merged использует RGB/8 движок ФШ777; перерасчёт Adobe может отличаться, особенно в curves/HSL/vibrance/балансе цвета.',
+        )
       } else if (layer.kind !== 'group') {
         out = rasterPreview(layer, embeddedAppearance)
         if (layer.kind === 'shape' || layer.kind === 'text') {

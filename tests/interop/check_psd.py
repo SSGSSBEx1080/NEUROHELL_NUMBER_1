@@ -9,7 +9,7 @@ from io import BytesIO
 import numpy as np
 from PIL import Image, ImageFilter
 from psd_tools import PSDImage
-from psd_tools.constants import Resource
+from psd_tools.constants import Resource, Tag
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "test-results"
@@ -146,4 +146,24 @@ for source, image in [("merged", document.topil()), ("native layers", document.c
     assert float(delta.max()) <= 2.0, ("native smart edit", source, float(delta.max()))
     print(f"PASS XMP-free smart edit, {source}: max premultiplied RGBA error {delta.max():.4f}/255; edited nested native shape and type retained")
 
-print("Scope: RGB/8, these nineteen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+# Twelve genuine adjustment records. psd-tools classifies the obsolete but valid
+# legacy `brit` record as PixelLayer; verify its native parameters/no pixel plane
+# directly instead of claiming an unsupported modern CgEd renderer.
+document = PSDImage.open(RESULTS / "native-adjustments.psd")
+assert len(document) == 13
+legacy = document[1]
+assert legacy.tagged_blocks.get_data(Tag.BRIGHTNESS_AND_CONTRAST) is not None
+assert not legacy.has_pixels()
+assert [layer.kind for layer in list(document)[2:]] == ["levels", "curves", "exposure", "huesaturation", "vibrance", "colorbalance", "blackandwhite", "channelmixer", "invert", "posterize", "threshold"]
+assert all(not layer.has_pixels() for layer in list(document)[1:])
+print("PASS native adjustments: 11 recognized AdjustmentLayer classes + genuine legacy brit; no raster replacement. Not a test of every Adobe color algorithm.")
+
+document = PSDImage.open(RESULTS / "adjustment-clipped.psd")
+reference = premultiplied(Image.open(RESULTS / "adjustment-clipped.png"))
+assert document[1].kind == "invert" and document[1].clipping and document[1].has_mask()
+for source, image in [("merged", document.topil()), ("native recomputation", document.composite(force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2.0, ("clipped adjustment", source, float(delta.max()))
+    print(f"PASS masked clipped inversion, {source}: max premultiplied RGBA error {delta.max():.4f}/255; original alpha retained")
+
+print("Scope: RGB/8, these twenty-one fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")

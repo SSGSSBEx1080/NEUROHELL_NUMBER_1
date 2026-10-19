@@ -1,3 +1,6 @@
+import { CorrectionDialog } from './components/CorrectionDialog'
+import { insertAdjustment } from './engine/adjustmentLayers'
+import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
 import { PsdReportDialog } from './components/PsdReportDialog'
 import type { PsdExportReport } from './engine/psdReport'
 import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
@@ -175,6 +178,7 @@ export default function App() {
     | 'canvas-size'
     | 'repair'
     | 'psd-report'
+    | 'correction'
     | null
   >(null)
   const recorder = useActionRecorder(editor)
@@ -381,6 +385,21 @@ export default function App() {
     if (selectedId && !doc.layers.some((l) => l.id === selectedId)) setSelectedId(null)
   }, [doc.layers, selectedId])
 
+  const addCorrection = (type: CorrectionKind) => {
+    try {
+      editor.finish('Перед коррекцией')
+      const result = insertAdjustment(editor.documentRef.current, type, selectedId, selection)
+      editor.change(() => result.document, `Коррекция: ${correctionNames[type]}`)
+      setSelectedId(result.selectedId)
+      setSelection(null)
+      setSettings({ editMask: false })
+      setDockTab('properties')
+      setTool('move')
+      setModal(null)
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Не удалось создать коррекцию')
+    }
+  }
   const addText = () => {
     if (doc.layers.length >= MAX_LAYERS) return toastMessage('В проекте уже 100 слоёв')
     const layer = makeLayer({
@@ -550,10 +569,10 @@ export default function App() {
         dpi,
         layers: d.layers.map((l) => ({
           ...l,
-          x: scale ? l.x * sx : l.x + dx,
-          y: scale ? l.y * sy : l.y + dy,
-          width: scale ? l.width * sx : l.width,
-          height: scale ? l.height * sy : l.height,
+          x: l.kind === 'adjustment' ? 0 : scale ? l.x * sx : l.x + dx,
+          y: l.kind === 'adjustment' ? 0 : scale ? l.y * sy : l.y + dy,
+          width: l.kind === 'adjustment' ? width : scale ? l.width * sx : l.width,
+          height: l.kind === 'adjustment' ? height : scale ? l.height * sy : l.height,
           fontSize: l.fontSize && scale ? l.fontSize * sy : l.fontSize,
           textScaleX: scale && l.kind === 'text' ? ((l.textScaleX || 1) * sx) / sy : l.textScaleX,
           letterSpacing: l.letterSpacing && scale ? l.letterSpacing * sy : l.letterSpacing,
@@ -592,13 +611,18 @@ export default function App() {
       ...clipboardLayer,
       id: uid(),
       name: `${clipboardLayer.name} — вставка`,
-      x: clipboardLayer.x + 24,
-      y: clipboardLayer.y + 24,
+      x: clipboardLayer.kind === 'adjustment' ? 0 : clipboardLayer.x + 24,
+      y: clipboardLayer.kind === 'adjustment' ? 0 : clipboardLayer.y + 24,
+      ...(clipboardLayer.kind === 'adjustment' ? { width: doc.width, height: doc.height } : {}),
       locked: false,
       parentId: undefined,
       sourcePath: undefined,
       mask: clipboardLayer.mask
-        ? { ...clipboardLayer.mask, x: clipboardLayer.mask.x + 24, y: clipboardLayer.mask.y + 24 }
+        ? {
+            ...clipboardLayer.mask,
+            x: clipboardLayer.mask.x + (clipboardLayer.kind === 'adjustment' ? 0 : 24),
+            y: clipboardLayer.mask.y + (clipboardLayer.kind === 'adjustment' ? 0 : 24),
+          }
         : undefined,
     }
     try {
@@ -612,6 +636,16 @@ export default function App() {
   }
   const rasterizeSelected = async () => {
     if (!selected || selected.locked) return
+    if (selected.kind === 'adjustment')
+      return toastMessage('Коррекция зависит от нижнего стека. Используй «Объединить видимые».')
+    if (
+      selected.kind === 'group' &&
+      !selected.isolated &&
+      doc.layers.some((l) => subtree(doc, selected.id).has(l.id) && l.kind === 'adjustment')
+    )
+      return toastMessage(
+        'Сначала изолируй группу с коррекциями, чтобы её действие не зависело от нижнего стека.',
+      )
     setBusy('Растрируем содержимое слоя…')
     try {
       const ids = subtree(doc, selected.id)
@@ -1160,7 +1194,7 @@ export default function App() {
             return
           case 'KeyI':
             e.preventDefault()
-            if (selected && !selected.locked)
+            if (selected && !selected.locked && selected.kind !== 'adjustment')
               editor.patchLayer(
                 selected.id,
                 {
@@ -1172,8 +1206,21 @@ export default function App() {
                 'Инверсия',
               )
             return
+          case 'KeyL':
+            e.preventDefault()
+            addCorrection('levels')
+            return
+          case 'KeyM':
+            e.preventDefault()
+            addCorrection('curves')
+            return
           case 'KeyU':
-            if (e.shiftKey && selected && !selected.locked) {
+            if (!e.shiftKey) {
+              e.preventDefault()
+              addCorrection('hue/saturation')
+              return
+            }
+            if (e.shiftKey && selected && !selected.locked && selected.kind !== 'adjustment') {
               e.preventDefault()
               editor.patchLayer(
                 selected.id,
@@ -1227,7 +1274,12 @@ export default function App() {
         else deleteLayer()
         return
       }
-      if (e.key.startsWith('Arrow') && selected && !selected.locked) {
+      if (
+        e.key.startsWith('Arrow') &&
+        selected &&
+        !selected.locked &&
+        selected.kind !== 'adjustment'
+      ) {
         e.preventDefault()
         const amount = e.shiftKey ? 10 : 1
         editor.patchLayer(
@@ -1428,7 +1480,17 @@ export default function App() {
     },
     { label: 'Панель свойств и слоёв', checked: inspector, action: () => setInspector(!inspector) },
   ]
+  const correctionMenu: MenuItem[] = Object.entries(correctionNames).map(([type, label]) => ({
+    label,
+    action: () => addCorrection(type as CorrectionKind),
+    disabled: !!busy || doc.layers.length >= MAX_LAYERS,
+  }))
   const layerMenu: MenuItem[] = [
+    {
+      label: 'Новый корректирующий слой…',
+      icon: SlidersHorizontal,
+      action: () => setModal('correction'),
+    },
     {
       label: 'Группировать выбранное',
       icon: FolderPlus,
@@ -1452,7 +1514,7 @@ export default function App() {
       label: 'Преобразовать в смарт-объект',
       icon: SquareStack,
       action: () => void convertSmart(),
-      disabled: !selected || selected.locked || !!selected.smart,
+      disabled: !selected || selected.locked || !!selected.smart || selected.kind === 'adjustment',
     },
     {
       label: 'Открыть содержимое смарт-объекта',
@@ -1467,14 +1529,14 @@ export default function App() {
       label: 'Стиль слоя…',
       icon: Sparkles,
       action: () => setModal('styles'),
-      disabled: !selected || selected.locked,
+      disabled: !selected || selected.locked || selected.kind === 'adjustment',
       divider: true,
     },
     {
       label: 'Растрировать содержимое',
       icon: ImagePlus,
       action: () => void rasterizeSelected(),
-      disabled: !selected || selected.locked,
+      disabled: !selected || selected.locked || selected.kind === 'adjustment',
     },
     {
       label: 'Объединить видимые',
@@ -1546,7 +1608,8 @@ export default function App() {
           { adjustments: { ...selected.adjustments, ...adjustment } },
           label,
         ),
-      disabled: !selected || selected.locked || selected.kind === 'group',
+      disabled:
+        !selected || selected.locked || selected.kind === 'group' || selected.kind === 'adjustment',
     })),
     {
       label: 'Удалить связанный фон',
@@ -1707,6 +1770,7 @@ export default function App() {
             <Dropdown label="Правка" items={editMenu} />
             <Dropdown label="Изображение" items={imageMenu} />
             <Dropdown label="Слой" items={layerMenu} />
+            <Dropdown label="Коррекция" items={correctionMenu} />
             <Dropdown label="Вид" items={viewMenu} />
             <Dropdown label="Фильтры" items={filterMenu} />
             <Dropdown label="Окно" items={windowMenu} />
@@ -2218,6 +2282,7 @@ export default function App() {
               }
               layers={
                 <LayersPanel
+                  onCorrection={() => setModal('correction')}
                   editor={editor}
                   selectedId={selectedId}
                   onSelect={setSelectedId}
@@ -2395,6 +2460,7 @@ export default function App() {
           onConfirm={() => openDocument(pendingDocument)}
         />
       )}
+      {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
       {busy && (
         <div className="busy-overlay" role="status">
           <div>

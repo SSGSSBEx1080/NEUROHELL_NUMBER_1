@@ -1,3 +1,4 @@
+import { parseCorrection } from './adjustmentTypes'
 import { localBounds } from './layerGeometry'
 import { parseShapePaths, shapeNames } from './shapeGeometry'
 import { hitShape } from './shapeRenderer'
@@ -159,7 +160,7 @@ export function localPoint(layer: Layer, point: Point, undoWarp = true): Point {
   return local
 }
 export function hitTest(layer: Layer, point: Point): boolean {
-  if (!layer.visible || layer.locked) return false
+  if (!layer.visible || layer.locked || layer.kind === 'adjustment') return false
   const p = localPoint(layer, point)
   if (layer.flipX) p.x = layer.width - p.x
   if (layer.flipY) p.y = layer.height - p.y
@@ -224,7 +225,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
   const layers = d.layers.map((value: unknown): Layer => {
     if (!value || typeof value !== 'object') throw new Error('Повреждённый слой')
     const l = value as Record<string, unknown>
-    if (!['image', 'text', 'shape', 'group'].includes(String(l.kind)))
+    if (!['image', 'text', 'shape', 'group', 'adjustment'].includes(String(l.kind)))
       throw new Error('Неизвестный тип слоя')
     const a = (l.adjustments || {}) as Record<string, unknown>
     if (
@@ -240,22 +241,23 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       id: typeof l.id === 'string' && l.id.length < 100 ? l.id : uid(),
       name: typeof l.name === 'string' ? l.name.slice(0, 100) : 'Слой',
       kind: l.kind as Layer['kind'],
+      correction: l.kind === 'adjustment' ? parseCorrection(l.correction) : undefined,
       visible: l.visible !== false,
       locked: l.locked === true,
-      x: finite(l.x, -16384, 16384, 0),
-      y: finite(l.y, -16384, 16384, 0),
-      width: finite(l.width, 1, 16384, 100),
-      height: finite(l.height, 1, 16384, 100),
-      rotation: finite(l.rotation, -360, 360, 0),
+      x: l.kind === 'adjustment' ? 0 : finite(l.x, -16384, 16384, 0),
+      y: l.kind === 'adjustment' ? 0 : finite(l.y, -16384, 16384, 0),
+      width: l.kind === 'adjustment' ? (d.width as number) : finite(l.width, 1, 16384, 100),
+      height: l.kind === 'adjustment' ? (d.height as number) : finite(l.height, 1, 16384, 100),
+      rotation: l.kind === 'adjustment' ? 0 : finite(l.rotation, -360, 360, 0),
       opacity: finite(l.opacity, 0, 1, 1),
       blendMode: blends.has(String(l.blendMode))
         ? (l.blendMode as Layer['blendMode'])
         : 'source-over',
-      warp: validQuad(l.warp) ? l.warp : undefined,
+      warp: l.kind !== 'adjustment' && validQuad(l.warp) ? l.warp : undefined,
       textScaleX: finite(l.textScaleX, 0.01, 100, 1),
       textBaseline: l.textBaseline === 'alphabetic' ? 'alphabetic' : 'top',
       textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
-      styles: normalizeStyles(l.styles),
+      styles: l.kind === 'adjustment' ? undefined : normalizeStyles(l.styles),
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff',
       src: typeof l.src === 'string' ? l.src : undefined,
@@ -296,8 +298,8 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       radius: finite(l.radius, 0, 2000, 0),
       strokeColor: isColor(l.strokeColor) ? l.strokeColor : undefined,
       strokeWidth: finite(l.strokeWidth, 0, 200, 0),
-      flipX: l.flipX === true,
-      flipY: l.flipY === true,
+      flipX: l.kind !== 'adjustment' && l.flipX === true,
+      flipY: l.kind !== 'adjustment' && l.flipY === true,
       parentId: typeof l.parentId === 'string' ? l.parentId.slice(0, 100) : undefined,
       expanded: l.expanded !== false,
       isolated: l.isolated !== false,
@@ -310,16 +312,19 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
           : undefined,
       mask: parseMask(l.mask),
       smart: l.smart ? parseProject(l.smart, depth + 1) : undefined,
-      adjustments: {
-        brightness: finite(a.brightness, -100, 100, 0),
-        contrast: finite(a.contrast, -100, 100, 0),
-        saturation: finite(a.saturation, -100, 100, 0),
-        blur: finite(a.blur, 0, 30, 0),
-        hue: finite(a.hue, -180, 180, 0),
-        grayscale: finite(a.grayscale, 0, 100, 0),
-        sepia: finite(a.sepia, 0, 100, 0),
-        invert: finite(a.invert, 0, 100, 0),
-      },
+      adjustments:
+        l.kind === 'adjustment'
+          ? { ...DEFAULT_ADJUSTMENTS }
+          : {
+              brightness: finite(a.brightness, -100, 100, 0),
+              contrast: finite(a.contrast, -100, 100, 0),
+              saturation: finite(a.saturation, -100, 100, 0),
+              blur: finite(a.blur, 0, 30, 0),
+              hue: finite(a.hue, -180, 180, 0),
+              grayscale: finite(a.grayscale, 0, 100, 0),
+              sepia: finite(a.sepia, 0, 100, 0),
+              invert: finite(a.invert, 0, 100, 0),
+            },
     })
   })
   const ids = new Set<string>()

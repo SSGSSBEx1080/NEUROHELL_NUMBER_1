@@ -180,7 +180,8 @@ export function CanvasStage({
     selected.visible &&
     !isLayerLocked(doc, selected.id) &&
     tool === 'move' &&
-    selected.kind !== 'group'
+    selected.kind !== 'group' &&
+    selected.kind !== 'adjustment'
 
   useLayoutEffect(() => {
     if (!viewport.current) return
@@ -427,7 +428,7 @@ export function CanvasStage({
           ? [...effectiveLayers(doc)].reverse().find((l) => hitTest(l, p))
           : selected)
       onSelect(hit?.id || null)
-      if (hit && !isLayerLocked(doc, hit.id) && hit.visible) {
+      if (hit && hit.kind !== 'adjustment' && !isLayerLocked(doc, hit.id) && hit.visible) {
         if (e.altKey) {
           if (doc.layers.length >= MAX_LAYERS) {
             onToast('В одном проекте доступно до 100 слоёв')
@@ -562,7 +563,10 @@ export function CanvasStage({
     } else if (tool === 'wand' || tool === 'bucket') onPixelAction(tool, p)
     else if (tool === 'brush' || tool === 'eraser' || tool === 'clone') {
       const maskMode = settings.editMask && !!selected?.mask
-      if ((selected?.smart || selected?.kind === 'group') && !maskMode)
+      if (
+        (selected?.smart || selected?.kind === 'group' || selected?.kind === 'adjustment') &&
+        !maskMode
+      )
         return onToast('Открой содержимое смарт-объекта или выбери растровый слой')
       if (tool === 'clone' && (!selected || selected.kind !== 'image'))
         return onToast('Штамп работает на выбранном растровом слое. Alt+клик задаёт источник.')

@@ -1,3 +1,4 @@
+import { CorrectionProperties } from './CorrectionProperties'
 import { localBounds, worldBounds, resizePointText, rotateVisual } from '../engine/layerGeometry'
 import { ShapeProperties } from './ShapeProperties'
 import { TextFrameSettings } from './TextFrameSettings'
@@ -90,7 +91,7 @@ export function PropertiesPanel({
   busy,
 }: Props) {
   useLayoutEffect(() => {
-    if (layer?.kind === 'text') setTab('properties')
+    if (layer?.kind === 'text' || layer?.kind === 'adjustment') setTab('properties')
   }, [layer?.id, layer?.kind])
   const fonts = useFonts()
   const [tab, setTab] = useState<'properties' | 'effects'>('properties')
@@ -154,7 +155,11 @@ export function PropertiesPanel({
         >
           Свойства
         </button>
-        <button className={tab === 'effects' ? 'selected' : ''} onClick={() => setTab('effects')}>
+        <button
+          disabled={layer?.kind === 'adjustment'}
+          className={tab === 'effects' ? 'selected' : ''}
+          onClick={() => setTab('effects')}
+        >
           <Sparkles size={13} />
           Эффекты
         </button>
@@ -252,15 +257,17 @@ export function PropertiesPanel({
               </span>
               <div>
                 <strong>
-                  {layer.smart
-                    ? 'Смарт-объект'
-                    : layer.kind === 'group'
-                      ? 'Группа слоёв'
-                      : layer.kind === 'text'
-                        ? 'Текстовый слой'
-                        : layer.kind === 'image'
-                          ? 'Изображение'
-                          : 'Фигура'}
+                  {layer.kind === 'adjustment'
+                    ? 'Корректирующий слой'
+                    : layer.smart
+                      ? 'Смарт-объект'
+                      : layer.kind === 'group'
+                        ? 'Группа слоёв'
+                        : layer.kind === 'text'
+                          ? 'Текстовый слой'
+                          : layer.kind === 'image'
+                            ? 'Изображение'
+                            : 'Фигура'}
                 </strong>
                 <span>{layer.name}</span>
               </div>
@@ -268,15 +275,17 @@ export function PropertiesPanel({
                 <LockKeyhole size={14} />
               ) : (
                 <span className="small-badge">
-                  {layer.smart
-                    ? 'SMART'
-                    : layer.kind === 'group'
-                      ? 'ГРУППА'
-                      : layer.kind === 'image'
-                        ? 'РАСТР'
-                        : layer.kind === 'text'
-                          ? 'ТЕКСТ'
-                          : 'ВЕКТОР'}
+                  {layer.kind === 'adjustment'
+                    ? 'ADJUST'
+                    : layer.smart
+                      ? 'SMART'
+                      : layer.kind === 'group'
+                        ? 'ГРУППА'
+                        : layer.kind === 'image'
+                          ? 'РАСТР'
+                          : layer.kind === 'text'
+                            ? 'ТЕКСТ'
+                            : 'ВЕКТОР'}
                 </span>
               )}
             </div>
@@ -288,7 +297,7 @@ export function PropertiesPanel({
             )}
             <button
               className="action-button style-open-button"
-              disabled={layer.locked || busy}
+              disabled={layer.locked || busy || layer.kind === 'adjustment'}
               onClick={onStyle}
             >
               <Sparkles size={14} />
@@ -300,7 +309,7 @@ export function PropertiesPanel({
                 Редактировать содержимое<span>↗</span>
               </button>
             )}
-            {layer.sourceText && (
+            {layer.sourceText && layer.kind !== 'text' && (
               <button
                 className="action-button style-open-button"
                 disabled={layer.locked || busy}
@@ -313,6 +322,24 @@ export function PropertiesPanel({
             <fieldset disabled={layer.locked || busy} className="properties-fieldset">
               {tab === 'properties' ? (
                 <>
+                  {layer.kind === 'adjustment' && layer.correction && (
+                    <>
+                      <CorrectionProperties
+                        key={layer.id}
+                        layer={layer}
+                        doc={doc}
+                        onChange={(correction, temporary) =>
+                          patch({ correction }, 'Корректирующий слой', temporary)
+                        }
+                        onFinish={() => editor.finish('Корректирующий слой')}
+                      />
+                      {!layer.mask && (
+                        <button className="action-button" onClick={onMask}>
+                          Добавить маску коррекции
+                        </button>
+                      )}
+                    </>
+                  )}
                   {layer.mask && (
                     <div className="property-section mask-properties">
                       <div className="section-heading">
@@ -378,88 +405,96 @@ export function PropertiesPanel({
                       />
                     </div>
                   )}
-                  <div className="property-section transform-section">
-                    <div className="section-heading">
-                      Трансформация
-                      <IconButton
-                        icon={linked ? Link2 : Unlink2}
-                        label={linked ? 'Отключить сохранение пропорций' : 'Сохранять пропорции'}
-                        active={linked}
-                        onClick={() => setLinked(!linked)}
-                      />
-                    </div>
-                    <div className="field-grid">
-                      <Field
-                        label="X"
-                        value={position!.x}
-                        onChange={(x) => patch({ x: layer.x + x - position!.x }, '', true)}
-                        onCommit={finish}
-                      />
-                      <Field
-                        label="Y"
-                        value={position!.y}
-                        onChange={(y) => patch({ y: layer.y + y - position!.y }, '', true)}
-                        onCommit={finish}
-                      />
-                      <Field
-                        label="Ш"
-                        value={inkBounds!.width}
-                        disabled={layer.kind === 'group'}
-                        min={1}
-                        onChange={(v) => setDimension('width', v)}
-                        onCommit={finish}
-                      />
-                      <Field
-                        label="В"
-                        value={inkBounds!.height}
-                        disabled={layer.kind === 'group'}
-                        min={1}
-                        onChange={(v) => setDimension('height', v)}
-                        onCommit={finish}
-                      />
-                      <Field
-                        label="∠"
-                        value={layer.rotation}
-                        disabled={layer.kind === 'group'}
-                        min={-360}
-                        max={360}
-                        suffix="°"
-                        onChange={(rotation) =>
-                          patch(pointText ? rotateVisual(layer, rotation) : { rotation }, '', true)
-                        }
-                        onCommit={finish}
-                      />
-                      <div className="transform-buttons">
+                  {layer.kind !== 'adjustment' && (
+                    <div className="property-section transform-section">
+                      <div className="section-heading">
+                        Трансформация
                         <IconButton
-                          icon={FlipHorizontal2}
-                          disabled={layer.kind === 'group'}
-                          label="Отразить по горизонтали"
-                          onClick={() => patch({ flipX: !layer.flipX }, 'Отражение по горизонтали')}
-                        />
-                        <IconButton
-                          icon={FlipVertical2}
-                          disabled={layer.kind === 'group'}
-                          label="Отразить по вертикали"
-                          onClick={() => patch({ flipY: !layer.flipY }, 'Отражение по вертикали')}
-                        />
-                        <IconButton
-                          icon={RotateCcw}
-                          disabled={layer.kind === 'group'}
-                          label="Сбросить поворот"
-                          onClick={() => patch({ rotation: 0 }, 'Сброс поворота')}
+                          icon={linked ? Link2 : Unlink2}
+                          label={linked ? 'Отключить сохранение пропорций' : 'Сохранять пропорции'}
+                          active={linked}
+                          onClick={() => setLinked(!linked)}
                         />
                       </div>
+                      <div className="field-grid">
+                        <Field
+                          label="X"
+                          value={position!.x}
+                          onChange={(x) => patch({ x: layer.x + x - position!.x }, '', true)}
+                          onCommit={finish}
+                        />
+                        <Field
+                          label="Y"
+                          value={position!.y}
+                          onChange={(y) => patch({ y: layer.y + y - position!.y }, '', true)}
+                          onCommit={finish}
+                        />
+                        <Field
+                          label="Ш"
+                          value={inkBounds!.width}
+                          disabled={layer.kind === 'group'}
+                          min={1}
+                          onChange={(v) => setDimension('width', v)}
+                          onCommit={finish}
+                        />
+                        <Field
+                          label="В"
+                          value={inkBounds!.height}
+                          disabled={layer.kind === 'group'}
+                          min={1}
+                          onChange={(v) => setDimension('height', v)}
+                          onCommit={finish}
+                        />
+                        <Field
+                          label="∠"
+                          value={layer.rotation}
+                          disabled={layer.kind === 'group'}
+                          min={-360}
+                          max={360}
+                          suffix="°"
+                          onChange={(rotation) =>
+                            patch(
+                              pointText ? rotateVisual(layer, rotation) : { rotation },
+                              '',
+                              true,
+                            )
+                          }
+                          onCommit={finish}
+                        />
+                        <div className="transform-buttons">
+                          <IconButton
+                            icon={FlipHorizontal2}
+                            disabled={layer.kind === 'group'}
+                            label="Отразить по горизонтали"
+                            onClick={() =>
+                              patch({ flipX: !layer.flipX }, 'Отражение по горизонтали')
+                            }
+                          />
+                          <IconButton
+                            icon={FlipVertical2}
+                            disabled={layer.kind === 'group'}
+                            label="Отразить по вертикали"
+                            onClick={() => patch({ flipY: !layer.flipY }, 'Отражение по вертикали')}
+                          />
+                          <IconButton
+                            icon={RotateCcw}
+                            disabled={layer.kind === 'group'}
+                            label="Сбросить поворот"
+                            onClick={() => patch({ rotation: 0 }, 'Сброс поворота')}
+                          />
+                        </div>
+                      </div>
+                      {layer.warp && (
+                        <button
+                          className="text-button"
+                          style={{ marginTop: 10 }}
+                          onClick={() => patch({ warp: undefined }, 'Сброс перспективы')}
+                        >
+                          Сбросить перспективу
+                        </button>
+                      )}
                     </div>
-                    {layer.warp && (
-                      <button
-                        className="text-button"
-                        style={{ marginTop: 10 }}
-                        onClick={() => patch({ warp: undefined }, 'Сброс перспективы')}
-                      >
-                        Сбросить перспективу
-                      </button>
-                    )}
-                  </div>
+                  )}
                   {pointText && (
                     <p className="panel-note text-geometry-note">
                       Размер — по глифам выбранного шрифта. X/Y — край выделения на холсте. Обычный
@@ -692,43 +727,45 @@ export function PropertiesPanel({
                       </div>
                     </div>
                   )}
-                  <div className="property-section adjustment-section">
-                    <button
-                      className="section-heading section-toggle"
-                      onClick={() => setAdjustOpen(!adjustOpen)}
-                    >
-                      <span>
-                        <SlidersHorizontal size={13} />
-                        Цветокоррекция
-                      </span>
-                      {adjustOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    </button>
-                    {adjustOpen && (
-                      <div className="adjustment-sliders">
-                        <Slider
-                          label="Яркость"
-                          value={layer.adjustments.brightness}
-                          min={-100}
-                          onChange={(v) => adjust('brightness', v)}
-                          onCommit={finish}
-                        />
-                        <Slider
-                          label="Контраст"
-                          value={layer.adjustments.contrast}
-                          min={-100}
-                          onChange={(v) => adjust('contrast', v)}
-                          onCommit={finish}
-                        />
-                        <Slider
-                          label="Насыщенность"
-                          value={layer.adjustments.saturation}
-                          min={-100}
-                          onChange={(v) => adjust('saturation', v)}
-                          onCommit={finish}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  {layer.kind !== 'adjustment' && (
+                    <div className="property-section adjustment-section">
+                      <button
+                        className="section-heading section-toggle"
+                        onClick={() => setAdjustOpen(!adjustOpen)}
+                      >
+                        <span>
+                          <SlidersHorizontal size={13} />
+                          Цветокоррекция
+                        </span>
+                        {adjustOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      </button>
+                      {adjustOpen && (
+                        <div className="adjustment-sliders">
+                          <Slider
+                            label="Яркость"
+                            value={layer.adjustments.brightness}
+                            min={-100}
+                            onChange={(v) => adjust('brightness', v)}
+                            onCommit={finish}
+                          />
+                          <Slider
+                            label="Контраст"
+                            value={layer.adjustments.contrast}
+                            min={-100}
+                            onChange={(v) => adjust('contrast', v)}
+                            onCommit={finish}
+                          />
+                          <Slider
+                            label="Насыщенность"
+                            value={layer.adjustments.saturation}
+                            min={-100}
+                            onChange={(v) => adjust('saturation', v)}
+                            onCommit={finish}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : (
                 <>

@@ -1,3 +1,4 @@
+import type { Correction } from './engine/adjustmentTypes'
 export type Tool =
   | 'move'
   | 'select'
@@ -23,7 +24,7 @@ export type Tool =
   | 'gradient'
   | 'repair'
   | 'repair-box'
-export type LayerKind = 'image' | 'text' | 'shape' | 'group'
+export type LayerKind = 'image' | 'text' | 'shape' | 'group' | 'adjustment'
 export type BlendMode =
   | 'source-over'
   | 'multiply'
@@ -80,6 +81,7 @@ export interface Layer {
   opacity: number
   blendMode: BlendMode
   adjustments: Adjustments
+  correction?: Correction
   src?: string
   text?: string
   fontFamily?: string

@@ -5,6 +5,7 @@ export interface PsdExportReport {
   shapes: number
   smart: number
   groups: number
+  adjustments: number
   images: number
   masks: number
   vectorMasks: number
@@ -24,6 +25,7 @@ export function inspectNativeLayers(
     shapes: 0,
     smart: 0,
     groups: 0,
+    adjustments: 0,
     images: 0,
     masks: 0,
     vectorMasks: 0,
@@ -42,6 +44,7 @@ export function inspectNativeLayers(
         if (l.text.style?.font?.name) report.fonts.push(l.text.style.font.name)
       } else if (l.placedLayer) report.smart++
       else if (l.vectorFill && l.vectorMask) report.shapes++
+      else if (l.adjustment) report.adjustments++
       else report.images++
       if (l.mask) report.masks++
       if (l.vectorMask) report.vectorMasks++

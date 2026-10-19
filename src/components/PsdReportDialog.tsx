@@ -30,6 +30,7 @@ export function PsdReportDialog({
               [
                 ['Текстовые слои', report.text],
                 ['Векторные фигуры', report.shapes],
+                ['Корректирующие слои', report.adjustments],
                 ['Смарт-объекты', report.smart],
                 ['Группы', report.groups],
                 ['Растровые слои', report.images],
