@@ -109,3 +109,26 @@ export function trimInactiveHistories<
     }
   return changed
 }
+
+/** Structural equality only at the END of a gesture, short-circuiting shared
+ * immutable subtrees. No visual-field exclusions: names, guides and smart data
+ * still count as real changes. Missing and undefined serialize equivalently. */
+export function sameProjectData(a: unknown, b: unknown, depth = 0): boolean {
+  if (a === b) return true
+  if (depth > 64 || !a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((v, i) => sameProjectData(v, b[i], depth + 1))
+    )
+  if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false
+  if (Object.getPrototypeOf(a) !== Object.prototype && Object.getPrototypeOf(a) !== null)
+    return false
+  const x = a as Record<string, unknown>,
+    y = b as Record<string, unknown>
+  for (const key of new Set([...Object.keys(x), ...Object.keys(y)]))
+    if (!sameProjectData(x[key], y[key], depth + 1)) return false
+  return true
+}

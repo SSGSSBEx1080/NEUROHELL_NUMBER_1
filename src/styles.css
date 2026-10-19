@@ -5578,3 +5578,6 @@ canvas {
   float: right;
   color: var(--muted);
 }
+.number-field.invalid-number {
+  border-color: #d58e71;
+}

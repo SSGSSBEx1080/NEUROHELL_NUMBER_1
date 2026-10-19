@@ -3,7 +3,7 @@ import { loadPreferences } from '../engine/preferences'
 import { useCallback, useRef, useState } from 'react'
 import type { EditorDocument, HistoryEntry, Layer, Selection } from '../types'
 import { descendants, isLayerLocked } from '../engine/document'
-import { ReplaceDocumentCommand, trimHistory } from '../engine/history'
+import { ReplaceDocumentCommand, trimHistory, sameProjectData } from '../engine/history'
 import { pruneImageCache } from '../engine/render'
 
 export interface EditorSession {
@@ -163,7 +163,20 @@ export function useEditor(initial: EditorDocument) {
     },
     [change],
   )
-  const finish = useCallback((label: string) => record(documentRef.current, label), [record])
+  const finish = useCallback(
+    (label: string) => {
+      const baseline = entriesRef.current[indexRef.current]
+      if (
+        (baseline.pixelSelection || null) === pixelsRef.current &&
+        sameProjectData(baseline.document, documentRef.current)
+      ) {
+        setCurrent(baseline.document)
+        return
+      }
+      record(documentRef.current, label)
+    },
+    [record, setCurrent],
+  )
   const travel = useCallback(
     (to: number) => {
       if (to < 0 || to >= entriesRef.current.length) return

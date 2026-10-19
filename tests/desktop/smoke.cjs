@@ -445,14 +445,80 @@ watchdog.unref()
       false,
     )
     assert.equal(expanded.children.find((l) => l.name === 'Native smart').hidden, false)
-    await page.locator('.layer-row').filter({ hasText: 'Кривые' }).click()
+    progress('0.7 Pen creates real Bezier points; exact node expressions persist as native paths')
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('p')
+    const region07 = await page.getByTestId('editor-canvas').boundingBox()
+    const point07 = (x, y) => [region07.x + region07.width * x, region07.y + region07.height * y]
+    await page.mouse.click(...point07(0.65, 0.35))
+    await page.mouse.move(...point07(0.83, 0.35))
+    await page.mouse.down()
+    await page.mouse.move(...point07(0.84, 0.47), { steps: 5 })
+    await page.mouse.up()
+    await page.mouse.click(...point07(0.74, 0.7))
+    await page.mouse.click(...point07(0.65, 0.35))
+    await expect(page.getByTestId('path-anchor')).toHaveCount(3)
+    await page.getByTestId('path-anchor').nth(1).click()
+    const nodeX07 = page.getByRole('spinbutton', { name: 'X узла', exact: true })
+    const originalX07 = Number(await nodeX07.inputValue())
+    await nodeX07.fill('+=24')
+    await nodeX07.press('Enter')
+    expanded = await save06()
+    const path07 = expanded.children.find((l) => l.name.startsWith('Контур ') && l.vectorMask)
+    assert.equal(path07.vectorMask.paths[0].knots.length, 3)
+    assert.equal(path07.vectorMask.paths[0].open, false)
+    assert.ok(Math.abs(path07.vectorMask.paths[0].knots[1].points[2] - originalX07 - 24) < 0.05)
+    assert.notEqual(
+      path07.vectorMask.paths[0].knots[1].points[0],
+      path07.vectorMask.paths[0].knots[1].points[2],
+    )
+
+    progress('0.7 native photo filter and editable gradient-map stops in packaged renderer')
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Фотофильтр', exact: true }).click()
+    await page.getByLabel('Плотность фотофильтра', { exact: true }).fill('2*29')
+    await page.getByLabel('Плотность фотофильтра', { exact: true }).press('Enter')
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Карта градиента', exact: true }).click()
+    await page.getByLabel('Пресет карты градиента').selectOption('2')
+    expanded = await save06()
+    assert.equal(
+      expanded.children.find((l) => l.adjustment?.type === 'photo filter').adjustment.density,
+      0.58,
+    )
+    assert.equal(
+      expanded.children.find((l) => l.adjustment?.type === 'gradient map').adjustment.colorStops
+        .length,
+      3,
+    )
+
+    progress(
+      '0.7 color-stack CUBE uses trusted atomic disk save, then reimports as embedded native LUT',
+    )
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Экспорт цветового стека CUBE…', exact: true }).click()
+    await page.getByRole('button', { name: 'Сохранить цветовой стек .cube', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 30000 })
+    const cube07 = await fs.readFile(path.join(temp, 'native-only-look.cube'))
+    assert.ok(cube07.toString().includes('LUT_3D_SIZE 17'))
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Поиск цвета · 3D LUT', exact: true }).click()
+    await page
+      .getByLabel('Загрузить файл CUBE')
+      .setInputFiles({ name: 'native-only-look.cube', mimeType: 'text/plain', buffer: cube07 })
+    await expect(page.getByTestId('lut-properties')).toContainText('17 × 17 × 17')
+    expanded = await save06()
+    const lookup07 = expanded.children.find((l) => l.adjustment?.type === 'color lookup').adjustment
+    assert.equal(lookup07.lutFormat, 'cube')
+    assert.ok(Buffer.from(lookup07.lut3DFileData).toString().includes('LUT_3D_SIZE 17'))
+    await page.locator('.layer-row').filter({ hasText: 'Карта градиента' }).click()
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
     progress(
-      'passed: standalone sandbox/exports, J/recording, native text/vector/smart, command search, native adjustments/masks/guides, Quick Mask, Magic Wand and raster-filter worker/source preservation',
+      'passed: standalone sandbox/exports, J/recording, native text/vector/smart, command search, native adjustments/masks/guides, Quick Mask, Magic Wand, raster-filter worker/source preservation, native Bezier editing, numeric expressions, Photo/GradientMap and native CUBE I/O',
     )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })

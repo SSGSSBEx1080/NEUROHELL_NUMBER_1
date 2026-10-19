@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { evaluateNumericInput } from '../engine/numericExpression'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, X, type LucideIcon } from 'lucide-react'
 
 export function IconButton({
@@ -46,30 +47,112 @@ export function Field({
   suffix?: string
   disabled?: boolean
 }) {
+  const format = (n: number) => String(Number.isFinite(n) ? Math.round(n * 100) / 100 : 0)
+  const [text, setText] = useState(() => format(value)),
+    [focused, setFocused] = useState(false),
+    [error, setError] = useState('')
+  const base = useRef(value),
+    draft = useRef(text),
+    cancelled = useRef(false),
+    edited = useRef(false),
+    current = useRef(value)
+  current.current = value
+  useLayoutEffect(() => {
+    if (!focused) {
+      const next = format(value)
+      draft.current = next
+      setText(next)
+    }
+  }, [value, focused])
+  const apply = (raw: string) => {
+    const n = Math.max(min, Math.min(max, evaluateNumericInput(raw, base.current, suffix)))
+    if (n !== current.current) onChange(n)
+    return n
+  }
+  const update = (raw: string) => {
+    edited.current = true
+    draft.current = raw
+    setText(raw)
+    setError('')
+    try {
+      apply(raw)
+    } catch {
+      /* Incomplete expression is only a draft; never write NaN. */
+    }
+  }
   return (
-    <label className="number-field">
+    <label
+      className={`number-field ${error ? 'invalid-number' : ''}`}
+      title={
+        error ||
+        'Число или выражение: 1600/2, (40+12)*2, +=10. Enter — применить; Escape — отменить.'
+      }
+    >
       <span>{label}</span>
       <input
         aria-label={label}
-        type="number"
-        value={Number.isFinite(value) ? Math.round(value * 100) / 100 : 0}
-        min={min}
-        max={max}
-        step={step}
+        type="text"
+        role="spinbutton"
+        inputMode="decimal"
+        aria-valuenow={value}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-invalid={!!error}
+        value={text}
         disabled={disabled}
-        onChange={(e) => {
-          if (e.target.value !== '' && Number.isFinite(+e.target.value))
-            onChange(Math.min(max, Math.max(min, +e.target.value)))
+        onFocus={() => {
+          base.current = value
+          edited.current = false
+          cancelled.current = false
+          setFocused(true)
+          setError('')
         }}
-        onBlur={onCommit}
+        onChange={(e) => update(e.target.value)}
+        onBlur={() => {
+          if (!cancelled.current && edited.current) {
+            try {
+              apply(draft.current)
+            } catch (e) {
+              onChange(base.current)
+              setError(e instanceof Error ? e.message : 'Некорректное выражение')
+            }
+          }
+          cancelled.current = false
+          setFocused(false)
+          onCommit?.()
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            e.currentTarget.blur()
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            e.stopPropagation()
+            cancelled.current = true
+            onChange(base.current)
+            setError('')
+            draft.current = format(base.current)
+            setText(draft.current)
+            e.currentTarget.blur()
+          }
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault()
+            e.stopPropagation()
+            const amount = step * (e.shiftKey ? 10 : 1) * (e.key === 'ArrowUp' ? 1 : -1)
+            update(
+              String(
+                Math.max(min, Math.min(max, Math.round((current.current + amount) * 1e8) / 1e8)),
+              ),
+            )
+          }
         }}
       />
       {suffix && <span className="field-suffix">{suffix}</span>}
     </label>
   )
 }
+
 export function Slider({
   label,
   value,
