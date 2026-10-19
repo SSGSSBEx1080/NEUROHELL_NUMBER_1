@@ -1,22 +1,13 @@
-import { ExportLutDialog } from './components/ExportLutDialog'
 import { usePathTool } from './hooks/usePathTool'
-import { RasterFilterDialog } from './components/RasterFilterDialog'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
 import { insertFilteredCopy } from './engine/filterLayers'
-import { CommandPalette, type EditorCommand } from './components/CommandPalette'
 import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
-import { ArrangeDialog } from './components/ArrangeDialog'
-import { GuidesDialog } from './components/GuidesDialog'
 import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
-import { ColorRangeDialog, selectionModeNames } from './components/ColorRangeDialog'
-import { SelectionModifyDialog, selectionModifyNames } from './components/SelectionModifyDialog'
 import { rasterSelection, type SelectionModify } from './engine/selectionPixels'
 import { runSelection } from './engine/selectionJob'
 import { selectionSource } from './engine/selectionSource'
-import { CorrectionDialog } from './components/CorrectionDialog'
 import { insertAdjustment } from './engine/adjustmentLayers'
 import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
-import { PsdReportDialog } from './components/PsdReportDialog'
 import type { PsdExportReport } from './engine/psdReport'
 import { parseTextEntriesFile, MAX_TEXT_ENTRIES } from './engine/textEntriesFormat'
 import { insertRepairLayer } from './engine/repairPlacement'
@@ -32,11 +23,8 @@ import {
 } from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
 import { TextEntriesPanel } from './components/TextEntriesPanel'
-import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
-import { ImageSizeDialog } from './components/ImageSizeDialog'
-import { CloseDocumentDialog } from './components/CloseDocumentDialog'
 import { useWorkspace } from './hooks/useWorkspace'
 import {
   groupLayers,
@@ -48,18 +36,98 @@ import {
 } from './engine/layerOperations'
 import { makeSmartObject } from './engine/smartObjects'
 import { Home, FolderPlus, Layers3, SquareStack, RectangleHorizontal } from 'lucide-react'
-import { FontsDialog } from './components/FontsDialog'
-import { SettingsDialog } from './components/SettingsDialog'
+import type { EditorCommand } from './components/CommandPalette'
+import { selectionModeNames, selectionModifyNames } from './components/selection-labels'
+
+// Dialogs load on first open so the initial workspace bundle stays small; behavior is identical.
+const ExportLutDialog = lazy(() =>
+  import('./components/ExportLutDialog').then((m) => ({ default: m.ExportLutDialog })),
+)
+const RasterFilterDialog = lazy(() =>
+  import('./components/RasterFilterDialog').then((m) => ({ default: m.RasterFilterDialog })),
+)
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+const ArrangeDialog = lazy(() =>
+  import('./components/ArrangeDialog').then((m) => ({ default: m.ArrangeDialog })),
+)
+const GuidesDialog = lazy(() =>
+  import('./components/GuidesDialog').then((m) => ({ default: m.GuidesDialog })),
+)
+const ColorRangeDialog = lazy(() =>
+  import('./components/ColorRangeDialog').then((m) => ({ default: m.ColorRangeDialog })),
+)
+const SelectionModifyDialog = lazy(() =>
+  import('./components/SelectionModifyDialog').then((m) => ({ default: m.SelectionModifyDialog })),
+)
+const CorrectionDialog = lazy(() =>
+  import('./components/CorrectionDialog').then((m) => ({ default: m.CorrectionDialog })),
+)
+const PsdReportDialog = lazy(() =>
+  import('./components/PsdReportDialog').then((m) => ({ default: m.PsdReportDialog })),
+)
+const RepairDialog = lazy(() =>
+  import('./components/RepairDialog').then((m) => ({ default: m.RepairDialog })),
+)
+const ImageSizeDialog = lazy(() =>
+  import('./components/ImageSizeDialog').then((m) => ({ default: m.ImageSizeDialog })),
+)
+const CloseDocumentDialog = lazy(() =>
+  import('./components/CloseDocumentDialog').then((m) => ({ default: m.CloseDocumentDialog })),
+)
+const FontsDialog = lazy(() =>
+  import('./components/FontsDialog').then((m) => ({ default: m.FontsDialog })),
+)
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+)
+const ColorDialog = lazy(() =>
+  import('./components/ColorDialog').then((m) => ({ default: m.ColorDialog })),
+)
+const ActionsDialog = lazy(() =>
+  import('./components/ActionsDialog').then((m) => ({ default: m.ActionsDialog })),
+)
+const LayerStyleDialog = lazy(() =>
+  import('./components/LayerStyleDialog').then((m) => ({ default: m.LayerStyleDialog })),
+)
+const GradientToolDialog = lazy(() =>
+  import('./components/GradientToolDialog').then((m) => ({ default: m.GradientToolDialog })),
+)
+const BatchDialog = lazy(() =>
+  import('./components/BatchDialog').then((m) => ({ default: m.BatchDialog })),
+)
+const CompatibilityDialog = lazy(() =>
+  import('./components/CompatibilityDialog').then((m) => ({ default: m.CompatibilityDialog })),
+)
+const ExportDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.ExportDialog })),
+)
+const HelpDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.HelpDialog })),
+)
+const NewDocumentDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.NewDocumentDialog })),
+)
+const ReplaceDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.ReplaceDialog })),
+)
+const dialogFallback = (
+  <div className="busy-overlay" role="status">
+    <div>
+      <LoaderCircle className="spin" size={22} />
+      <span>Загружаем окно…</span>
+    </div>
+  </div>
+)
 import { loadSystemFonts, restoreFonts } from './engine/fonts'
 import { ToolRail, TOOLS as tools, cycleTool, selectionTools } from './components/ToolRail'
 import { selectionMask, combineSelection, invertSelection } from './engine/selection'
 import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
-import { ColorDialog } from './components/ColorDialog'
-import { ActionsDialog } from './components/ActionsDialog'
 import { parseActionSet, runAction, type StudioAction } from './engine/actions'
 import { parseAtn } from './engine/atn'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
   Blend,
@@ -94,17 +162,12 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { LayerStyleDialog } from './components/LayerStyleDialog'
-import { GradientToolDialog } from './components/GradientToolDialog'
-import { BatchDialog } from './components/BatchDialog'
 import { BrandMark } from './components/Brand'
 import { gradientCss, solidGradient } from './engine/gradientRamp'
-import { CompatibilityDialog } from './components/CompatibilityDialog'
 import type { CompatibilityReport } from './engine/psd'
 import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
-import { ExportDialog, HelpDialog, NewDocumentDialog, ReplaceDialog } from './components/Dialogs'
 import { Dropdown, type MenuItem } from './components/Dropdown'
 import { Field, IconButton, Select } from './components/ui'
 import { useEditor } from './hooks/useEditor'
@@ -2823,238 +2886,242 @@ export default function App() {
           e.target.value = ''
         }}
       />
-      {workspace.closing && workspace.closingDocument && (
-        <CloseDocumentDialog
-          name={workspace.closingDocument.name}
-          smart={!!workspace.tabs.find((t) => t.id === workspace.closing)?.parent}
-          onSave={() => {
-            const closing = workspace.closingDocument!
-            setBusy('Сохраняем PSD…')
-            void FileManager.save(closing)
-              .catch((e) => toastMessage(e.message))
-              .finally(() => setBusy(null))
-          }}
-          onApply={() => void workspace.applySmart(workspace.closing!)}
-          onConfirm={() => void workspace.close()}
-          onCancel={() => workspace.setClosing(null)}
-        />
-      )}
-      {(modal === 'image-size' || modal === 'canvas-size') && (
-        <ImageSizeDialog
-          doc={doc}
-          resize={modal === 'image-size'}
-          onApply={imageSize}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'repair' && selection && (
-        <RepairDialog
-          doc={doc}
-          selection={selection}
-          onClose={closeModal}
-          onApply={(layer, belowText) => {
-            if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
-            validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
-            editor.change(
-              (d) => insertRepairLayer(d, layer, belowText),
-              'Восстановление области · новый слой',
-            )
-            setSelectedId(layer.id)
-            closeModal()
-            toastMessage(
-              'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
-            )
-          }}
-        />
-      )}
-      {modal === 'settings' && (
-        <SettingsDialog value={preferences} onChange={setPreferences} onClose={closeModal} />
-      )}
-      {modal === 'fonts' && (
-        <FontsDialog
-          onClose={closeModal}
-          onChoose={(fontFamily) => {
-            if (selected?.kind === 'text' && !selected.locked)
-              editor.patchLayer(selected.id, { fontFamily }, 'Шрифт')
-            else toastMessage(`Шрифт ${fontFamily} доступен в свойствах текста`)
-          }}
-        />
-      )}
-      {modal === 'new' && (
-        <NewDocumentDialog
-          onClose={closeModal}
-          onSave={() => void saveProject()}
-          onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))}
-        />
-      )}
-      {modal === 'export' && (
-        <ExportDialog
-          doc={doc}
-          onClose={closeModal}
-          onSave={() => void saveProject()}
-          onToast={toastMessage}
-        />
-      )}
-      {(modal === 'help' || modal === 'about') && (
-        <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />
-      )}
-      {modal === 'color' && (
-        <ColorDialog
-          color={settings.color}
-          onClose={closeModal}
-          onApply={(color) => {
-            setSettings({ color })
-            if (
-              selected &&
-              !selected.locked &&
-              ['shape', 'text'].includes(selected.kind) &&
-              !settings.quickMask &&
-              !settings.editMask
-            )
-              editor.patchLayer(selected.id, { color }, 'Цвет слоя')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'actions' && (
-        <ActionsDialog
-          actions={actions}
-          storageError={actionsError}
-          recording={!!recorder.recording}
-          onRecord={startActionRecording}
-          onUpdate={(action) => setActions((a) => a.map((v) => (v.id === action.id ? action : v)))}
-          onClose={closeModal}
-          onImport={() => input.current?.click()}
-          onRun={executeAction}
-          onCapture={captureAction}
-          onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
-          canRun={!!selected && !selected.locked && !workspace.home}
-        />
-      )}
-      {modal === 'batch' && (
-        <BatchDialog actions={actions} onClose={closeModal} onToast={toastMessage} />
-      )}
-      {modal === 'gradient-tool' && (
-        <GradientToolDialog
-          gradient={settings.gradient}
-          color={settings.color}
-          secondaryColor={settings.secondaryColor}
-          onChange={(gradient) => setSettings({ gradient })}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'styles' && selected && (
-        <LayerStyleDialog
-          layer={selected}
-          onClose={closeModal}
-          onApply={(styles) => {
-            editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'export-lut' && (
-        <ExportLutDialog
-          doc={doc}
-          onClose={closeModal}
-          onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
-        />
-      )}
-      {modal === 'psd-report' && lastExport && (
-        <PsdReportDialog
-          report={lastExport.report}
-          filename={lastExport.filename}
-          onClose={closeModal}
-        />
-      )}
-      {pendingDocument && compatibility && (
-        <CompatibilityDialog
-          report={compatibility}
-          onClose={() => {
-            setPendingDocument(null)
-            setCompatibility(null)
-          }}
-          onSave={() => void saveProject()}
-          onConfirm={() => openDocument(pendingDocument)}
-        />
-      )}
-      {pendingDocument && !compatibility && (
-        <ReplaceDialog
-          name={pendingDocument.name}
-          onClose={closeReplace}
-          onSave={() => void saveProject()}
-          onConfirm={() => openDocument(pendingDocument)}
-        />
-      )}
-      {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
-      {modal === 'raster-filter' && selectedId && (
-        <RasterFilterDialog
-          doc={doc}
-          id={selectedId}
-          selection={selection}
-          initial={lastFilter || defaultRasterFilter('unsharp')}
-          onClose={closeModal}
-          onApply={(copy, filter, hide) => {
-            if (editor.documentRef.current !== doc)
-              throw new Error('Документ изменился. Открой фильтр заново.')
-            const next = insertFilteredCopy(doc, selectedId, copy, hide)
-            editor.change(() => next, 'Фильтр на растровой копии')
-            setSelectedId(copy.id)
-            setLastFilter(filter)
-            setSettings({ editMask: false, quickMask: false })
-            setTool('move')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'arrange' && (
-        <ArrangeDialog
-          doc={doc}
-          ids={arrangeIds}
-          onClose={closeModal}
-          onApply={(next, label) => {
-            if (editor.documentRef.current !== doc)
-              throw new Error('Документ изменился во время компоновки. Открой окно заново.')
-            editor.change(() => next, label)
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'guides' && (
-        <GuidesDialog
-          doc={doc}
-          onClose={closeModal}
-          onApply={(value) => {
-            updateLayout(value, 'Настройка направляющих и сетки')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'color-range' && (
-        <ColorRangeDialog
-          doc={doc}
-          initialMode={settings.selectionMode || 'replace'}
-          onApply={(area, mode) => {
-            applySelection(area, mode, 'Цветовой диапазон')
-            closeModal()
-          }}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'selection-modify' && selection && (
-        <SelectionModifyDialog
-          selection={selection}
-          width={doc.width}
-          height={doc.height}
-          initial={selectionModify}
-          onApply={(area, kind) => {
-            setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
-            closeModal()
-          }}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
+      <Suspense fallback={dialogFallback}>
+        {workspace.closing && workspace.closingDocument && (
+          <CloseDocumentDialog
+            name={workspace.closingDocument.name}
+            smart={!!workspace.tabs.find((t) => t.id === workspace.closing)?.parent}
+            onSave={() => {
+              const closing = workspace.closingDocument!
+              setBusy('Сохраняем PSD…')
+              void FileManager.save(closing)
+                .catch((e) => toastMessage(e.message))
+                .finally(() => setBusy(null))
+            }}
+            onApply={() => void workspace.applySmart(workspace.closing!)}
+            onConfirm={() => void workspace.close()}
+            onCancel={() => workspace.setClosing(null)}
+          />
+        )}
+        {(modal === 'image-size' || modal === 'canvas-size') && (
+          <ImageSizeDialog
+            doc={doc}
+            resize={modal === 'image-size'}
+            onApply={imageSize}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'repair' && selection && (
+          <RepairDialog
+            doc={doc}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(layer, belowText) => {
+              if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
+              validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
+              editor.change(
+                (d) => insertRepairLayer(d, layer, belowText),
+                'Восстановление области · новый слой',
+              )
+              setSelectedId(layer.id)
+              closeModal()
+              toastMessage(
+                'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
+              )
+            }}
+          />
+        )}
+        {modal === 'settings' && (
+          <SettingsDialog value={preferences} onChange={setPreferences} onClose={closeModal} />
+        )}
+        {modal === 'fonts' && (
+          <FontsDialog
+            onClose={closeModal}
+            onChoose={(fontFamily) => {
+              if (selected?.kind === 'text' && !selected.locked)
+                editor.patchLayer(selected.id, { fontFamily }, 'Шрифт')
+              else toastMessage(`Шрифт ${fontFamily} доступен в свойствах текста`)
+            }}
+          />
+        )}
+        {modal === 'new' && (
+          <NewDocumentDialog
+            onClose={closeModal}
+            onSave={() => void saveProject()}
+            onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))}
+          />
+        )}
+        {modal === 'export' && (
+          <ExportDialog
+            doc={doc}
+            onClose={closeModal}
+            onSave={() => void saveProject()}
+            onToast={toastMessage}
+          />
+        )}
+        {(modal === 'help' || modal === 'about') && (
+          <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />
+        )}
+        {modal === 'color' && (
+          <ColorDialog
+            color={settings.color}
+            onClose={closeModal}
+            onApply={(color) => {
+              setSettings({ color })
+              if (
+                selected &&
+                !selected.locked &&
+                ['shape', 'text'].includes(selected.kind) &&
+                !settings.quickMask &&
+                !settings.editMask
+              )
+                editor.patchLayer(selected.id, { color }, 'Цвет слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'actions' && (
+          <ActionsDialog
+            actions={actions}
+            storageError={actionsError}
+            recording={!!recorder.recording}
+            onRecord={startActionRecording}
+            onUpdate={(action) =>
+              setActions((a) => a.map((v) => (v.id === action.id ? action : v)))
+            }
+            onClose={closeModal}
+            onImport={() => input.current?.click()}
+            onRun={executeAction}
+            onCapture={captureAction}
+            onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
+            canRun={!!selected && !selected.locked && !workspace.home}
+          />
+        )}
+        {modal === 'batch' && (
+          <BatchDialog actions={actions} onClose={closeModal} onToast={toastMessage} />
+        )}
+        {modal === 'gradient-tool' && (
+          <GradientToolDialog
+            gradient={settings.gradient}
+            color={settings.color}
+            secondaryColor={settings.secondaryColor}
+            onChange={(gradient) => setSettings({ gradient })}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'styles' && selected && (
+          <LayerStyleDialog
+            layer={selected}
+            onClose={closeModal}
+            onApply={(styles) => {
+              editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'export-lut' && (
+          <ExportLutDialog
+            doc={doc}
+            onClose={closeModal}
+            onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
+          />
+        )}
+        {modal === 'psd-report' && lastExport && (
+          <PsdReportDialog
+            report={lastExport.report}
+            filename={lastExport.filename}
+            onClose={closeModal}
+          />
+        )}
+        {pendingDocument && compatibility && (
+          <CompatibilityDialog
+            report={compatibility}
+            onClose={() => {
+              setPendingDocument(null)
+              setCompatibility(null)
+            }}
+            onSave={() => void saveProject()}
+            onConfirm={() => openDocument(pendingDocument)}
+          />
+        )}
+        {pendingDocument && !compatibility && (
+          <ReplaceDialog
+            name={pendingDocument.name}
+            onClose={closeReplace}
+            onSave={() => void saveProject()}
+            onConfirm={() => openDocument(pendingDocument)}
+          />
+        )}
+        {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
+        {modal === 'raster-filter' && selectedId && (
+          <RasterFilterDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            initial={lastFilter || defaultRasterFilter('unsharp')}
+            onClose={closeModal}
+            onApply={(copy, filter, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой фильтр заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Фильтр на растровой копии')
+              setSelectedId(copy.id)
+              setLastFilter(filter)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'arrange' && (
+          <ArrangeDialog
+            doc={doc}
+            ids={arrangeIds}
+            onClose={closeModal}
+            onApply={(next, label) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился во время компоновки. Открой окно заново.')
+              editor.change(() => next, label)
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'guides' && (
+          <GuidesDialog
+            doc={doc}
+            onClose={closeModal}
+            onApply={(value) => {
+              updateLayout(value, 'Настройка направляющих и сетки')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'color-range' && (
+          <ColorRangeDialog
+            doc={doc}
+            initialMode={settings.selectionMode || 'replace'}
+            onApply={(area, mode) => {
+              applySelection(area, mode, 'Цветовой диапазон')
+              closeModal()
+            }}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'selection-modify' && selection && (
+          <SelectionModifyDialog
+            selection={selection}
+            width={doc.width}
+            height={doc.height}
+            initial={selectionModify}
+            onApply={(area, kind) => {
+              setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
+              closeModal()
+            }}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
+      </Suspense>
       {busy && (
         <div className="busy-overlay" role="status">
           <div>

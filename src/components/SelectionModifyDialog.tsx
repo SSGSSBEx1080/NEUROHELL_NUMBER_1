@@ -4,13 +4,8 @@ import { selectionCoverage } from '../engine/selection'
 import { rasterSelection, type SelectionModify } from '../engine/selectionPixels'
 import { runSelection } from '../engine/selectionJob'
 import { Field, Modal, Select } from './ui'
-export const selectionModifyNames: Record<SelectionModify, string> = {
-  expand: 'Расширить',
-  contract: 'Сузить',
-  border: 'Граница',
-  smooth: 'Сгладить',
-  feather: 'Растушевать',
-}
+export { selectionModifyNames } from './selection-labels'
+import { selectionModifyNames } from './selection-labels'
 export function SelectionModifyDialog({
   selection,
   width,
