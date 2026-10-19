@@ -1,9 +1,8 @@
-import { DEFAULT_ADJUSTMENTS, type Adjustments, type EditorDocument, type Layer } from '../types'
-import { uid } from './document'
-export type ActionCommand =
-  | { type: 'adjust'; values: Partial<Adjustments> }
-  | { type: 'invert' | 'duplicate' | 'flipX' | 'flipY' | 'reset' }
-  | { type: 'rotate'; angle: number }
+import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
+import { isLayerLocked, uid } from './document'
+import { deleteLayers, duplicateLayers } from './layerOperations'
+import { parseActionCommand, type ActionCommand } from './actionSchema'
+export { parseActionCommand, type ActionCommand, type ActionProperties } from './actionSchema'
 export interface ActionStep {
   name: string
   enabled: boolean
@@ -81,29 +80,102 @@ export const builtinActions: StudioAction[] = [
 export function actionBlockers(action: StudioAction) {
   return action.steps.filter((s) => s.enabled && !s.command)
 }
+function checkedGeometry(layer: Layer): Layer {
+  if (
+    ![layer.x, layer.y, layer.width, layer.height, layer.rotation].every(Number.isFinite) ||
+    Math.abs(layer.x) > 16384 ||
+    Math.abs(layer.y) > 16384 ||
+    layer.width < 1 ||
+    layer.height < 1 ||
+    layer.width > 16384 ||
+    layer.height > 16384
+  )
+    throw new Error('Трансформация операции выходит за допустимые размеры слоя')
+  return layer
+}
+function geometry(layer: Layer, patch: Partial<Layer>): Layer {
+  const next = checkedGeometry({ ...layer, ...patch })
+  if (layer.mask?.linked) {
+    const sx = next.width / layer.width,
+      sy = next.height / layer.height
+    next.mask = {
+      ...layer.mask,
+      x: next.x + (layer.mask.x - layer.x) * sx,
+      y: next.y + (layer.mask.y - layer.y) * sy,
+      width: layer.mask.width * sx,
+      height: layer.mask.height * sy,
+    }
+  }
+  return next
+}
+/** Build an immutable result first. Nothing is committed if ANY enabled step fails. */
 export function runAction(
   doc: EditorDocument,
   selectedId: string | null,
-  action: StudioAction,
-): { document: EditorDocument; selectedId: string } {
+  input: StudioAction,
+): { document: EditorDocument; selectedId: string | null } {
+  const action = parseActionSet({ version: 2, actions: [input] })[0]
   if (actionBlockers(action).length)
     throw new Error('Операция содержит неподдерживаемые шаги и не будет запущена частично')
   if (!action.steps.some((s) => s.enabled)) throw new Error('В операции нет включённых шагов')
-  const original = doc.layers.find((l) => l.id === selectedId)
-  if (!original) throw new Error('Выбери слой для операции')
-  if (original.locked) throw new Error('Разблокируй слой перед выполнением операции')
-  let selected: Layer = original
-  const layers = [...doc.layers]
+  let current = doc,
+    id = selectedId
+  if (!doc.layers.some((l) => l.id === id)) throw new Error('Выбери слой для операции')
+  if (isLayerLocked(doc, id!))
+    throw new Error('Разблокируй слой или его группу перед выполнением операции')
   for (const step of action.steps) {
     if (!step.enabled || !step.command) continue
-    const c = step.command
-    let next: Layer = { ...selected, adjustments: { ...selected.adjustments } }
+    const c = step.command,
+      selected = current.layers.find((l) => l.id === id)
+    if (!selected) throw new Error('После удаления активного слоя заверши операцию')
+    if (c.type === 'select') {
+      const index = current.layers.indexOf(selected) + c.offset,
+        target = current.layers[index]
+      if (!target) throw new Error('Относительный выбор слоя выходит за границы стека')
+      id = target.id
+      continue
+    }
+    if (isLayerLocked(current, selected.id))
+      throw new Error(`Шаг «${step.name}»: слой или группа заблокированы`)
+    if (c.type === 'duplicate') {
+      const result = duplicateLayers(current, selected.id, 0),
+        offset = c.offset || { x: 24, y: 24 }
+      const oldIds = new Set(current.layers.map((l) => l.id))
+      current = {
+        ...result.document,
+        layers: result.document.layers.map((l) =>
+          oldIds.has(l.id)
+            ? l
+            : checkedGeometry({
+                ...l,
+                x: l.x + offset.x,
+                y: l.y + offset.y,
+                mask: l.mask
+                  ? { ...l.mask, x: l.mask.x + offset.x, y: l.mask.y + offset.y }
+                  : undefined,
+              }),
+        ),
+      }
+      id = result.selectedId
+      continue
+    }
+    if (c.type === 'delete') {
+      current = deleteLayers(current, selected.id)
+      id = null
+      continue
+    }
+    if (selected.kind === 'group')
+      throw new Error('Этот шаг рассчитан на обычный слой, не на группу')
+    let next: Layer = { ...selected }
     switch (c.type) {
       case 'adjust':
-        next.adjustments = { ...next.adjustments, ...c.values }
+        next.adjustments = { ...selected.adjustments, ...c.values }
         break
       case 'invert':
-        next.adjustments.invert = next.adjustments.invert ? 0 : 100
+        next.adjustments = {
+          ...selected.adjustments,
+          invert: selected.adjustments.invert ? 0 : 100,
+        }
         break
       case 'reset':
         next.adjustments = { ...DEFAULT_ADJUSTMENTS }
@@ -117,87 +189,110 @@ export function runAction(
       case 'rotate':
         next.rotation = (next.rotation + c.angle + 360) % 360
         break
-      case 'duplicate':
-        if (layers.length >= 100) throw new Error('В документе не может быть больше 100 слоёв')
-        next = { ...next, id: uid(), name: `${next.name} — копия`, x: next.x + 24, y: next.y + 24 }
-        layers.splice(layers.findIndex((l) => l.id === selected!.id) + 1, 0, next)
-        selected = next
-        continue
+      case 'transform':
+        next = geometry(selected, {
+          x: selected.x + c.dx,
+          y: selected.y + c.dy,
+          width: selected.width * c.scaleX,
+          height: selected.height * c.scaleY,
+          rotation: (((selected.rotation + c.angle) % 360) + 360) % 360,
+        })
+        break
+      case 'properties': {
+        const textKeys = [
+          'text',
+          'fontFamily',
+          'fontSize',
+          'fontWeight',
+          'italic',
+          'textAlign',
+          'lineHeight',
+          'letterSpacing',
+          'textScaleX',
+          'textFrame',
+        ]
+        if (selected.kind !== 'text' && Object.keys(c.values).some((k) => textKeys.includes(k)))
+          throw new Error('Шаг типографики требует текстовый слой')
+        if (
+          selected.kind !== 'shape' &&
+          [
+            'shape',
+            'shapeFill',
+            'cornerRadii',
+            'sides',
+            'starRatio',
+            'strokeAlign',
+            'strokeCap',
+            'strokeJoin',
+            'strokeMiterLimit',
+            'strokeDash',
+            'strokeDashOffset',
+            'radius',
+            'strokeColor',
+            'strokeWidth',
+          ].some((k) => k in c.values)
+        )
+          throw new Error('Шаг фигуры требует векторный слой')
+        const { styles, textFrame, ...values } = c.values
+        next = {
+          ...next,
+          ...values,
+          ...(styles !== undefined ? { styles: styles || undefined } : {}),
+          ...(textFrame !== undefined ? { textFrame: textFrame || undefined } : {}),
+        }
+        break
+      }
     }
-    layers[layers.findIndex((l) => l.id === selected!.id)] = next
-    selected = next
+    current = { ...current, layers: current.layers.map((l) => (l.id === selected.id ? next : l)) }
   }
-  return { document: { ...doc, layers }, selectedId: selected.id }
-}
-const limits: Record<keyof Adjustments, [number, number]> = {
-  brightness: [-100, 100],
-  contrast: [-100, 100],
-  saturation: [-100, 100],
-  blur: [0, 30],
-  hue: [-180, 180],
-  grayscale: [0, 100],
-  sepia: [0, 100],
-  invert: [0, 100],
+  return { document: current, selectedId: id }
 }
 export function parseActionSet(input: unknown): StudioAction[] {
   if (
     !input ||
     typeof input !== 'object' ||
     !('version' in input) ||
-    input.version !== 1 ||
+    (input.version !== 1 && input.version !== 2) ||
     !('actions' in input) ||
     !Array.isArray(input.actions) ||
     input.actions.length > 100
   )
     throw new Error('Некорректный набор операций .777actions.json')
-  return input.actions.map((a: unknown) => {
+  return input.actions.map((value: unknown) => {
     if (
-      !a ||
-      typeof a !== 'object' ||
-      !('name' in a) ||
-      typeof a.name !== 'string' ||
-      !('steps' in a) ||
-      !Array.isArray(a.steps) ||
-      a.steps.length > 200
+      !value ||
+      typeof value !== 'object' ||
+      !('name' in value) ||
+      typeof value.name !== 'string' ||
+      !('steps' in value) ||
+      !Array.isArray(value.steps) ||
+      value.steps.length > 200
     )
       throw new Error('Некорректная операция')
-    const steps: ActionStep[] = a.steps.map((s: unknown) => {
-      if (!s || typeof s !== 'object' || !('name' in s) || typeof s.name !== 'string')
+    const a = value as Record<string, unknown>
+    const steps: ActionStep[] = value.steps.map((v: unknown) => {
+      if (!v || typeof v !== 'object' || !('name' in v) || typeof v.name !== 'string')
         throw new Error('Некорректный шаг операции')
-      const step: ActionStep = {
-        name: s.name.slice(0, 100),
-        enabled: !('enabled' in s) || s.enabled !== false,
+      const s = v as Record<string, unknown>,
+        command = parseActionCommand(s.command)
+      return {
+        name: v.name.slice(0, 100),
+        enabled: s.enabled !== false,
+        ...(command
+          ? { command }
+          : {
+              unsupported:
+                typeof s.unsupported === 'string'
+                  ? s.unsupported.slice(0, 300)
+                  : 'Команда не поддерживается',
+            }),
       }
-      if (
-        !('command' in s) ||
-        !s.command ||
-        typeof s.command !== 'object' ||
-        !('type' in s.command)
-      )
-        return { ...step, unsupported: 'Команда не поддерживается' }
-      const c = s.command as Record<string, unknown>
-      if (c.type === 'adjust' && c.values && typeof c.values === 'object') {
-        const values: Partial<Adjustments> = {}
-        for (const [key, value] of Object.entries(c.values)) {
-          if (!Object.hasOwn(limits, key) || typeof value !== 'number' || !Number.isFinite(value))
-            throw new Error('Некорректная цветокоррекция в операции')
-          const [min, max] = limits[key as keyof Adjustments]
-          values[key as keyof Adjustments] = Math.max(min, Math.min(max, value))
-        }
-        step.command = { type: 'adjust', values }
-      } else if (c.type === 'rotate' && typeof c.angle === 'number' && Number.isFinite(c.angle))
-        step.command = { type: 'rotate', angle: c.angle % 360 }
-      else if (['invert', 'duplicate', 'flipX', 'flipY', 'reset'].includes(String(c.type)))
-        step.command = { type: c.type as 'invert' }
-      else step.unsupported = `Неподдерживаемая команда: ${String(c.type).slice(0, 50)}`
-      return step
     })
-    const raw = a as Record<string, unknown>,
-      shortcut = raw.shortcut as Record<string, unknown> | undefined
+    const shortcut = a.shortcut as Record<string, unknown> | undefined
     return {
       id: uid(),
-      name: a.name.slice(0, 100),
-      source: typeof raw.source === 'string' ? raw.source.slice(0, 100) : 'Импорт 777',
+      name: value.name.slice(0, 100),
+      source: typeof a.source === 'string' ? a.source.slice(0, 100) : 'Импорт 777',
       steps,
       ...(shortcut && typeof shortcut.key === 'string' && /^F([1-9]|1[0-2])$/.test(shortcut.key)
         ? {

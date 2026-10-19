@@ -1,3 +1,20 @@
+import { PsdReportDialog } from './components/PsdReportDialog'
+import type { PsdExportReport } from './engine/psdReport'
+import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
+import { insertRepairLayer } from './engine/repairPlacement'
+import { ActionsPanel } from './components/ActionsPanel'
+import { PanelDock } from './components/PanelDock'
+import { loadPanelLayout, savePanelLayout, panelPreset, type DockTab } from './engine/panelLayout'
+import { useActionRecorder } from './hooks/useActionRecorder'
+import {
+  loadActionLibrary,
+  storeActionLibrary,
+  recoverActionDraft,
+  hasPendingActionDraft,
+} from './engine/actionStorage'
+import { RecordingBar } from './components/RecordingBar'
+import { TranslationPanel } from './components/TranslationPanel'
+import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
 import { ImageSizeDialog } from './components/ImageSizeDialog'
@@ -22,7 +39,7 @@ import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
 import { ActionsDialog } from './components/ActionsDialog'
-import { builtinActions, parseActionSet, runAction, type StudioAction } from './engine/actions'
+import { parseActionSet, runAction, type StudioAction } from './engine/actions'
 import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -140,6 +157,10 @@ export default function App() {
   }, [preferences])
   const [rulers, setRulers] = useState(true)
   const [inspector, setInspector] = useState(true)
+  const [panelLayout, setPanelLayout] = useState(loadPanelLayout)
+  const dockTab = panelLayout.tab
+  const setDockTab = (tab: DockTab) => setPanelLayout((p) => ({ ...p, tab }))
+  useEffect(() => savePanelLayout(panelLayout), [panelLayout])
   const [modal, setModal] = useState<
     | 'new'
     | 'export'
@@ -152,17 +173,19 @@ export default function App() {
     | 'fonts'
     | 'image-size'
     | 'canvas-size'
+    | 'repair'
+    | 'psd-report'
     | null
   >(null)
-  const [actions, setActions] = useState<StudioAction[]>(() => {
-    try {
-      const stored = localStorage.getItem('fsh777-actions')
-      return stored ? parseActionSet(JSON.parse(stored)) : builtinActions
-    } catch {
-      return builtinActions
-    }
-  })
+  const recorder = useActionRecorder(editor)
+  const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
+  const [actionsError, setActionsError] = useState('')
   const [clipboardLayer, setClipboardLayer] = useState<Layer | null>(null)
+  const [lastExport, setLastExport] = useState<{
+    documentId: string
+    filename: string
+    report: PsdExportReport
+  } | null>(null)
   const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
@@ -181,13 +204,55 @@ export default function App() {
   }, [])
   useEffect(() => {
     try {
-      localStorage.setItem('fsh777-actions', JSON.stringify({ version: 1, actions }))
+      if (!recorder.recording) {
+        const recovered = recoverActionDraft(actions)
+        if (recovered !== actions) {
+          setActions(recovered)
+          return
+        }
+      }
+      storeActionLibrary(actions, !!recorder.recording)
+      setActionsError(
+        !recorder.recording && hasPendingActionDraft(actions)
+          ? 'Сохранён черновик записи, но набор заполнен. Удали ненужную операцию — черновик восстановится автоматически.'
+          : '',
+      )
     } catch {
-      /* Manual export remains available. */
+      setActionsError(
+        'Набор не сохранён в локальном хранилище. Экспортируй JSON, чтобы не потерять операции.',
+      )
     }
-  }, [actions])
+  }, [actions, !!recorder.recording])
+  const startActionRecording = (name: string) => {
+    try {
+      if (workspace.home) throw new Error('Сначала открой документ')
+      if (actions.length >= 100)
+        throw new Error('До 100 операций; удали ненужные или экспортируй набор')
+      if (hasPendingActionDraft(actions))
+        throw new Error('Сначала восстанови прежнюю запись: освободи место в наборе операций.')
+      recorder.start(name)
+      setModal(null)
+      toastMessage(
+        'Запись начата. Поддерживаются свойства, стиль, геометрия, дублирование и удаление. Пиксельные операции будут отмечены как неподдерживаемые.',
+      )
+    } catch (e) {
+      toastMessage(e instanceof Error ? e.message : 'Ошибка записи')
+    }
+  }
+  const stopActionRecording = () => {
+    try {
+      if (actions.length >= 100) throw new Error('Освободи место в наборе: предел 100 операций')
+      const action = recorder.stop()
+      setActions((a) => [...a, action])
+      setModal('actions')
+      toastMessage(`Запись сохранена: ${action.steps.length} шагов. Проверь их перед запуском.`)
+    } catch (e) {
+      toastMessage(e instanceof Error ? e.message : 'Ошибка записи')
+    }
+  }
   const executeAction = (action: StudioAction) => {
     try {
+      if (recorder.recording) throw new Error('Заверши запись перед запуском операции')
       const result = runAction(editor.documentRef.current, selectedId, action)
       editor.change(() => result.document, `Операция: ${action.name}`)
       setSelectedId(result.selectedId)
@@ -637,11 +702,14 @@ export default function App() {
     }
     setBusy('Сохраняем настоящий PSD со слоями…')
     try {
-      const result = await FileManager.save(editor.documentRef.current)
+      const saving = editor.documentRef.current
+      const result = await FileManager.save(saving)
+      if (result.report)
+        setLastExport({ documentId: saving.id, filename: result.filename, report: result.report })
       toastMessage(
         window.fsh777?.saveFile
           ? `Файл сохранён: ${result.filename}`
-          : 'PSD подготовлен к скачиванию.',
+          : 'PSD подготовлен к скачиванию. Структура — в «Отчёт PSD».',
       )
     } catch (error) {
       toastMessage(error instanceof Error ? error.message : 'Ошибка сохранения PSD')
@@ -692,6 +760,25 @@ export default function App() {
         setActions((a) => [...a, ...imported])
         setModal('actions')
         toastMessage(`Импортировано операций: ${imported.length}. Проверь поддержку шагов.`)
+        return
+      }
+      const scriptFile = files.find((f) => /\.777script\.json$/i.test(f.name))
+      if (scriptFile) {
+        if (workspace.home) throw new Error('Открой страницу перед импортом сценария')
+        if (scriptFile.size > 8 * 1024 * 1024) throw new Error('Сценарий должен быть до 8 МиБ')
+        const id = editor.documentRef.current.id
+        const imported = parseScriptFile(JSON.parse(await scriptFile.text()))
+        if (editor.documentRef.current.id !== id)
+          throw new Error('Страница изменилась — импортируй сценарий ещё раз')
+        if ((editor.documentRef.current.script?.length || 0) + imported.length > MAX_SCRIPT_ENTRIES)
+          throw new Error('До 200 реплик в сценарии')
+        editor.change(
+          (d) => ({ ...d, script: [...(d.script || []), ...imported] }),
+          'Импорт сценария',
+        )
+        setInspector(true)
+        setDockTab('translation')
+        toastMessage(`Добавлено ${imported.length} реплик без чужих привязок`)
         return
       }
       const layered = files.find((f) => /\.(psd|psb)$/i.test(f.name))
@@ -877,6 +964,13 @@ export default function App() {
       setBusy(null)
     }
   }
+  const openRepair = (area: Selection | null = selection) => {
+    if (!area || area.width < 1 || area.height < 1)
+      return toastMessage('Обведи область инструментом J или создай выделение.')
+    if (!doc.layers.length) return toastMessage('Сначала открой страницу или добавь изображение.')
+    setSelection(area)
+    setModal('repair')
+  }
   const crop = () => {
     if (!selection || selection.width < 1 || selection.height < 1) return
     const x = Math.round(selection.x),
@@ -947,6 +1041,7 @@ export default function App() {
   }
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
       if (
         (e.ctrlKey || e.metaKey) &&
         e.code === 'KeyS' &&
@@ -960,6 +1055,25 @@ export default function App() {
         ;(document.activeElement as HTMLElement)?.blur()
         editor.finish('Редактирование')
         void saveProject()
+        return
+      }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.altKey &&
+        e.code === 'KeyR' &&
+        !busy &&
+        !modal &&
+        !pendingDocument &&
+        !workspace.closing &&
+        !workspace.home
+      ) {
+        e.preventDefault()
+        ;(document.activeElement as HTMLElement)?.blur()
+        if (recorder.recording) stopActionRecording()
+        else {
+          editor.finish('Перед записью')
+          setModal('actions')
+        }
         return
       }
       if (typing(e.target) || busy || modal || pendingDocument || workspace.closing) return
@@ -986,7 +1100,10 @@ export default function App() {
       }
       const action = actions.find(
         (a) =>
-          a.shortcut?.key === e.code && a.shortcut.shift === e.shiftKey && a.shortcut.ctrl === mod,
+          !e.altKey &&
+          a.shortcut?.key === e.code &&
+          a.shortcut.shift === e.shiftKey &&
+          a.shortcut.ctrl === mod,
       )
       if (action) {
         e.preventDefault()
@@ -1193,15 +1310,24 @@ export default function App() {
       icon: Save,
       action: () => {
         setBusy('Сохраняем PSD…')
-        void FileManager.save(editor.documentRef.current, false, true)
-          .then((r) =>
+        const saving = editor.documentRef.current
+        void FileManager.save(saving, false, true)
+          .then((r) => {
+            if (r.report)
+              setLastExport({ documentId: saving.id, filename: r.filename, report: r.report })
             toastMessage(
               window.fsh777?.saveFile ? `Файл сохранён: ${r.filename}` : 'PSD готов к скачиванию',
-            ),
-          )
+            )
+          })
           .catch((e) => toastMessage(e.message))
           .finally(() => setBusy(null))
       },
+    },
+    {
+      label: 'Отчёт последнего PSD',
+      icon: Save,
+      disabled: lastExport?.documentId !== doc.id,
+      action: () => setModal('psd-report'),
     },
     { label: 'Резервная копия (старый .777)', icon: Save, action: () => void saveBackup() },
     {
@@ -1397,6 +1523,12 @@ export default function App() {
     },
   ]
   const filterMenu: MenuItem[] = [
+    {
+      label: 'Восстановление области…',
+      shortcut: 'J',
+      action: () => openRepair(),
+      disabled: !selection,
+    },
     ...(
       [
         ['Обесцветить', { grayscale: 100 }],
@@ -1429,6 +1561,50 @@ export default function App() {
       label: 'Свойства / слои / история',
       checked: inspector,
       action: () => setInspector(!inspector),
+    },
+    {
+      label: 'Сценарий перевода',
+      checked: inspector && dockTab === 'translation',
+      action: () => {
+        setInspector(true)
+        setDockTab('translation')
+      },
+    },
+    {
+      label: 'Панель операций',
+      checked: inspector && dockTab === 'actions',
+      action: () => {
+        setInspector(true)
+        setDockTab('actions')
+      },
+    },
+    ...(
+      [
+        ['layout', 'Макет'],
+        ['type', 'Тайпсет'],
+        ['retouch', 'Ретушь'],
+      ] as const
+    ).map(([id, name]) => ({
+      label: `Рабочая среда: ${name}`,
+      checked: panelLayout.preset === id,
+      action: () => {
+        setPanelLayout(panelPreset(id))
+        setInspector(true)
+      },
+    })),
+    {
+      label: panelLayout.floating ? 'Закрепить панели' : 'Открепить панели',
+      action: () => {
+        setPanelLayout((p) => ({ ...p, floating: !p.floating, preset: 'custom' }))
+        setInspector(true)
+      },
+    },
+    {
+      label: 'Сбросить рабочую среду',
+      action: () => {
+        setPanelLayout(panelPreset('retouch'))
+        setInspector(true)
+      },
     },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Настройки…', icon: SlidersHorizontal, action: () => setModal('settings') },
@@ -1480,6 +1656,27 @@ export default function App() {
           onNew={() => setModal('new')}
           onOpen={() => input.current?.click()}
           onDemo={() => openDocument(demoDocument())}
+          onPractice={() => {
+            if (workspace.tabs.length >= 6) {
+              toastMessage('Закрой ненужную вкладку: доступно до 6 документов')
+              return
+            }
+            setBusy('Готовим учебную страницу…')
+            void import('./engine/layoutDemo')
+              .then((module) => module.layoutDemoDocument())
+              .then((doc) => {
+                openDocument(doc)
+                setPanelLayout(panelPreset('layout'))
+                setInspector(true)
+                toastMessage(
+                  'Практика: обведи английский текст инструментом J, затем обнови связанный перевод. Скрытый слой хранит чистый эталон.',
+                )
+              })
+              .catch((e) =>
+                toastMessage(e instanceof Error ? e.message : 'Не удалось открыть практику'),
+              )
+              .finally(() => setBusy(null))
+          }}
           onResume={workspace.resume}
           onRecent={(r) => void workspace.openRecent(r)}
           onRestore={() => workspace.recovery && void workspace.openRecent(workspace.recovery)}
@@ -1668,20 +1865,34 @@ export default function App() {
               </Select>
             ) : (
               <span className="tool-instruction">
-                {tool === 'text'
-                  ? 'Нажми на холст и напиши свою историю'
-                  : tool === 'crop'
-                    ? 'Выдели область, которую хочешь оставить'
-                    : tool === 'select'
-                      ? 'Выдели область для стирания или заливки'
-                      : tool === 'eyedropper'
-                        ? 'Выбери любой цвет на холсте'
-                        : tool === 'hand'
-                          ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
-                          : 'Потяни на холсте. Shift — ровные пропорции'}
+                {tool === 'repair' || tool === 'repair-box'
+                  ? 'Обведи надпись → предпросмотр → новый слой · Shift+J меняет подтип'
+                  : tool === 'text-frame'
+                    ? 'Протяни рамку пузыря · текст и переносы в панели справа'
+                    : tool === 'text'
+                      ? 'Нажми на холст и напиши свою историю'
+                      : tool === 'crop'
+                        ? 'Выдели область, которую хочешь оставить'
+                        : tool === 'select'
+                          ? 'Выдели область для стирания или заливки'
+                          : tool === 'eyedropper'
+                            ? 'Выбери любой цвет на холсте'
+                            : tool === 'hand'
+                              ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
+                              : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
             )}
-            {['brush', 'rectangle', 'ellipse', 'text', 'bucket', 'gradient'].includes(tool) && (
+            {[
+              'brush',
+              'rectangle',
+              'ellipse',
+              'polygon',
+              'star',
+              'line',
+              'text',
+              'bucket',
+              'gradient',
+            ].includes(tool) && (
               <label className="option-color" title="Основной цвет">
                 <input
                   type="color"
@@ -1710,7 +1921,25 @@ export default function App() {
             />
           </div>
         </div>
-        <div className="editor-body">
+        {recorder.recording && (
+          <RecordingBar
+            recording={recorder.recording}
+            storageError={recorder.storageError}
+            onPause={recorder.pause}
+            onResume={() => {
+              try {
+                recorder.resume()
+              } catch (e) {
+                toastMessage(e instanceof Error ? e.message : 'Ошибка продолжения')
+              }
+            }}
+            onStop={stopActionRecording}
+            onCancel={recorder.cancel}
+          />
+        )}
+        <div
+          className={`editor-body ${panelLayout.side === 'left' && !panelLayout.floating ? 'panels-on-left' : ''}`}
+        >
           <aside className="toolbar" aria-label="Инструменты">
             <ToolRail tool={tool} onSelect={setTool} />
             <div className="toolbar-colors">
@@ -1856,23 +2085,33 @@ export default function App() {
                 selection={selection}
                 setSelection={setSelection}
                 onCrop={crop}
+                onRepair={openRepair}
+                onEditText={() => {
+                  setInspector(true)
+                  setDockTab('properties')
+                }}
                 onPixelAction={(op, point) => void pixelAction(op, point)}
                 onToast={toastMessage}
                 onBusy={setBusy}
                 smooth={preferences.smooth}
                 showPerformance={preferences.showPerformance}
                 rulers={rulers}
-                busy={!!busy}
+                busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
                 onOpenSmart={(id) => void workspace.openSmart(id)}
               />
             )}
             <footer className="workspace-status">
               <span className="status-left">
                 <span className="status-dot" />
-                Все инструменты — на твоей стороне
+                {doc.width} × {doc.height} px · {doc.layers.length} слоёв · RGB/8
                 <span className="status-divider" />
                 {selected ? selected.name : 'Холст'}
               </span>
+              {lastExport?.documentId === doc.id && (
+                <button className="psd-report-button" onClick={() => setModal('psd-report')}>
+                  Отчёт PSD
+                </button>
+              )}
               <div className="zoom-controls">
                 <IconButton
                   icon={Minus}
@@ -1915,56 +2154,94 @@ export default function App() {
             </footer>
           </main>
           {inspector && (
-            <aside className="inspector" aria-label="Свойства и слои">
-              <PropertiesPanel
-                editor={editor}
-                layer={selected}
-                onStyle={() => setModal('styles')}
-                onFonts={() => setModal('fonts')}
-                onExtractText={extractText}
-                onRemoveBackground={() => void pixelAction('background')}
-                onFitLayer={fitLayer}
-                onImport={() => input.current?.click()}
-                onAddText={addText}
-                onMask={() => void addMask()}
-                onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
-                onParent={(parent) => {
-                  if (selectedId)
-                    try {
-                      editor.change(
-                        (d) => moveLayer(d, selectedId, 0, parent),
-                        'Родительская группа',
-                      )
-                    } catch (e) {
-                      toastMessage(e instanceof Error ? e.message : 'Ошибка группы')
-                    }
-                }}
-                settings={settings}
-                setSettings={setSettings}
-                busy={!!busy}
-              />
-              <LayersPanel
-                editor={editor}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onAdd={addEmpty}
-                onDuplicate={duplicate}
-                onDelete={deleteLayer}
-                onReorder={reorder}
-                onGroup={group}
-                onUngroup={ungroup}
-                onMask={(id) => void addMask(id)}
-                onSmart={() => void convertSmart()}
-                onOpenSmart={(id) => void workspace.openSmart(id)}
-                editingMask={!!settings.editMask}
-                onPixels={() => setSettings({ editMask: false })}
-              />
-              <div className="inspector-footer">
-                <ShieldCheck size={12} />
-                <span>Твои файлы остаются у тебя</span>
-                <span className="footer-777">777</span>
-              </div>
-            </aside>
+            <PanelDock
+              value={panelLayout}
+              onChange={setPanelLayout}
+              properties={
+                <PropertiesPanel
+                  editor={editor}
+                  layer={selected}
+                  onStyle={() => setModal('styles')}
+                  onFonts={() => setModal('fonts')}
+                  onExtractText={extractText}
+                  onRemoveBackground={() => void pixelAction('background')}
+                  onFitLayer={fitLayer}
+                  onImport={() => input.current?.click()}
+                  onAddText={addText}
+                  onMask={() => void addMask()}
+                  onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
+                  onParent={(parent) => {
+                    if (selectedId)
+                      try {
+                        editor.change(
+                          (d) => moveLayer(d, selectedId, 0, parent),
+                          'Родительская группа',
+                        )
+                      } catch (e) {
+                        toastMessage(e instanceof Error ? e.message : 'Ошибка группы')
+                      }
+                  }}
+                  settings={settings}
+                  setSettings={setSettings}
+                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                />
+              }
+              translation={
+                <TranslationPanel
+                  key={doc.id}
+                  editor={editor}
+                  selection={selection}
+                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                  onToast={toastMessage}
+                  onDraw={() => {
+                    setTool('text-frame')
+                    toastMessage('Протяни рамку на холсте. Затем вставь перевод в выбранный текст.')
+                  }}
+                />
+              }
+              actions={
+                <ActionsPanel
+                  actions={actions}
+                  onRun={executeAction}
+                  onManage={() => setModal('actions')}
+                  onRecord={startActionRecording}
+                  canRun={
+                    !!selected &&
+                    !selected.locked &&
+                    !busy &&
+                    !modal &&
+                    !pendingDocument &&
+                    !workspace.closing
+                  }
+                  recording={!!recorder.recording}
+                />
+              }
+              layers={
+                <LayersPanel
+                  editor={editor}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onAdd={addEmpty}
+                  onDuplicate={duplicate}
+                  onDelete={deleteLayer}
+                  onReorder={reorder}
+                  onGroup={group}
+                  onUngroup={ungroup}
+                  onMask={(id) => void addMask(id)}
+                  onSmart={() => void convertSmart()}
+                  onOpenSmart={(id) => void workspace.openSmart(id)}
+                  editingMask={!!settings.editMask}
+                  onPixels={() => setSettings({ editMask: false })}
+                />
+              }
+              footer={
+                <div className="inspector-footer">
+                  <ShieldCheck size={12} />
+                  <span>Твои файлы остаются у тебя</span>
+                  <span className="footer-777">777</span>
+                </div>
+              }
+            />
           )}
         </div>
       </div>
@@ -1972,7 +2249,7 @@ export default function App() {
         ref={input}
         className="visually-hidden"
         type="file"
-        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json"
+        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json,.777script.json"
         multiple
         aria-label="Открыть изображение или проект"
         onChange={(e) => {
@@ -2002,6 +2279,26 @@ export default function App() {
           resize={modal === 'image-size'}
           onApply={imageSize}
           onClose={closeModal}
+        />
+      )}
+      {modal === 'repair' && selection && (
+        <RepairDialog
+          doc={doc}
+          selection={selection}
+          onClose={closeModal}
+          onApply={(layer, belowText) => {
+            if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
+            validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
+            editor.change(
+              (d) => insertRepairLayer(d, layer, belowText),
+              'Восстановление области · новый слой',
+            )
+            setSelectedId(layer.id)
+            closeModal()
+            toastMessage(
+              'Клин на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет результат.',
+            )
+          }}
         />
       )}
       {modal === 'settings' && (
@@ -2050,12 +2347,16 @@ export default function App() {
       {modal === 'actions' && (
         <ActionsDialog
           actions={actions}
+          storageError={actionsError}
+          recording={!!recorder.recording}
+          onRecord={startActionRecording}
+          onUpdate={(action) => setActions((a) => a.map((v) => (v.id === action.id ? action : v)))}
           onClose={closeModal}
           onImport={() => input.current?.click()}
           onRun={executeAction}
           onCapture={captureAction}
           onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
-          canRun={!!selected && !selected.locked}
+          canRun={!!selected && !selected.locked && !workspace.home}
         />
       )}
       {modal === 'styles' && selected && (
@@ -2066,6 +2367,13 @@ export default function App() {
             editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
             closeModal()
           }}
+        />
+      )}
+      {modal === 'psd-report' && lastExport && (
+        <PsdReportDialog
+          report={lastExport.report}
+          filename={lastExport.filename}
+          onClose={closeModal}
         />
       )}
       {pendingDocument && compatibility && (

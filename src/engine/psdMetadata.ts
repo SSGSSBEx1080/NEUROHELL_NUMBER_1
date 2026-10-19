@@ -9,7 +9,7 @@ export function encodeProject(project: unknown, originalXmp = '') {
   let binary = ''
   for (let i = 0; i < bytes.length; i += 8192)
     binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
-  const value = `<fsh777:project xmlns:fsh777="https://fsh777.local/project/1/" encoding="deflate-base64">${btoa(binary)}</fsh777:project>`
+  const value = `<fsh777:project xmlns:fsh777="https://fsh777.local/project/1/" encoding="deflate-base64" sha256="${'0'.repeat(64)}">${btoa(binary)}</fsh777:project>`
   const xmp = originalXmp.replace(/<fsh777:project\b[^>]*>[A-Za-z0-9+/=\s]*<\/fsh777:project>/g, '')
   if (xmp.includes('</rdf:RDF>'))
     return xmp.replace(

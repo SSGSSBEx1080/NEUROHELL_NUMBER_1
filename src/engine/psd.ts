@@ -1,9 +1,23 @@
-import { nativeFontStyle } from './fonts'
+import { sealProject } from './psdIntegrity'
+import { gaussianSmartFilter, nativeSmartPlacement, translateNativePlacement } from './psdSmart'
+import { affineText, exportNativeText, importNativeText } from './psdText'
+import { exportVectorShape, importVectorShape, translateNativeVector } from './psdVector'
+import { rasterBounds, rectPoints, worldBounds } from './layerGeometry'
+import { layerPoint } from './shapeGeometry'
+import { inspectNativeLayers, type PsdExportReport } from './psdReport'
+import { DEFAULT_ADJUSTMENTS } from '../types'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
 import type { Color, Layer as PsdLayer, LayerEffectsInfo, Psd, PixelData } from 'ag-psd'
 import type { BlendMode, EditorDocument, Layer, LayerStyles } from '../types'
 import { makeLayer, newDocument, parseProject, uid } from './document'
-import { cacheImage, exportCanvas, loadImage, prepareDocument, renderLayer } from './render'
+import {
+  cacheImage,
+  exportCanvas,
+  filterString,
+  loadImage,
+  prepareDocument,
+  renderLayer,
+} from './render'
 import { defaultStyles, hasStyles } from './styles'
 import {
   isOriginalAppearance,
@@ -236,9 +250,16 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
     ]
   return effects
 }
+interface EmbeddedImport {
+  depth: number
+  budget: { documents: number; bytes: number; pixels: number }
+}
+const smartDepth = (doc: EditorDocument): number =>
+  Math.max(0, ...doc.layers.map((l) => (l.smart ? 1 + smartDepth(l.smart) : 0)))
 export async function importPsd(
   buffer: ArrayBuffer,
   name: string,
+  nested: EmbeddedImport = { depth: 0, budget: { documents: 0, bytes: 0, pixels: 0 } },
 ): Promise<{ document: EditorDocument; report: CompatibilityReport }> {
   const header = validatePsdHeader(buffer),
     original = buffer.slice(0)
@@ -248,6 +269,18 @@ export async function importPsd(
     project?: unknown
   }>({ operation: 'read', buffer }, [buffer])
   const warnings = new Set<string>()
+  if (messages.includes('FSH777_STALE_XMP'))
+    warnings.add(
+      'Файл изменён после сохранения ФШ777. Устаревший внутренний проект проигнорирован: читаются настоящие слои PSD, включая внешние изменения текста и фигур.',
+    )
+  if (messages.includes('FSH777_INVALID_XMP'))
+    warnings.add(
+      'Внутренние метаданные проекта повреждены или превышают лимит. Читаются настоящие слои PSD; исходный файл сохранён отдельно.',
+    )
+  if (messages.includes('FSH777_LEGACY_XMP'))
+    warnings.add(
+      'Это старый PSD ФШ777 без проверки целостности XMP. Для защиты от устаревших внутренних данных сохрани новую копию в текущей версии.',
+    )
   let doc = newDocument(psd.width, psd.height, name.replace(/\.(psd|psb)$/i, ''), 'transparent')
   if (project) {
     const own = parseProject(project)
@@ -258,7 +291,7 @@ export async function importPsd(
       'Восстановлены редактируемые данные ФШ777 из стандартного XMP-блока. Файл также содержит обычные PSD-слои и объединённое изображение.',
     )
   } else {
-    const visit = (items: PsdLayer[], parentId?: string, path: number[] = []) => {
+    const visit = async (items: PsdLayer[], parentId?: string, path: number[] = []) => {
       for (const [index, src] of items.entries()) {
         if (doc.layers.length >= 100 || path.length > 12)
           throw new Error('До 100 слоёв и 12 уровней групп')
@@ -292,13 +325,73 @@ export async function importPsd(
             )
           }
         }
-        if (src.mask?.imageData) {
+        const editableShape = !group ? importVectorShape(src) : undefined
+        const editableText = src.text
+          ? await importNativeText(src.text, layer, (s) => warnings.add(s))
+          : undefined
+        if (editableText) Object.assign(layer, editableText)
+        if (editableShape) Object.assign(layer, editableShape)
+        if (src.placedLayer) {
+          try {
+            const linked = psd.linkedFiles?.find((f) => f.id === src.placedLayer!.id)
+            const data = linked?.data
+            if (!data?.byteLength) throw new Error('внешняя связь или нет встроенных данных')
+            const bytes = data.slice().buffer as ArrayBuffer
+            const embeddedHeader = validatePsdHeader(bytes)
+            const placement = nativeSmartPlacement(
+              src,
+              embeddedHeader.width,
+              embeddedHeader.height,
+              layer.styles,
+            )
+            if (!placement)
+              throw new Error(
+                'неподдерживаемая внешняя маска, деформация, композиция, FX или smart filter',
+              )
+            const budget = nested.budget
+            if (
+              nested.depth >= 3 ||
+              budget.documents >= 8 ||
+              budget.bytes + bytes.byteLength > 32 * 1024 * 1024 ||
+              budget.pixels + embeddedHeader.width * embeddedHeader.height > 32_000_000
+            )
+              throw new Error('достигнут бюджет раскрытия: 3 уровня, 8 PSD, 32 МиБ / 32 Мп')
+            budget.documents++
+            budget.bytes += bytes.byteLength
+            budget.pixels += embeddedHeader.width * embeddedHeader.height
+            const contents = await importPsd(bytes, linked?.name || layer.name + '.psd', {
+              depth: nested.depth + 1,
+              budget,
+            })
+            if (nested.depth + 1 + smartDepth(contents.document) > 3)
+              throw new Error('более трёх уровней содержимого')
+            const smart = { ...contents.document, id: uid() },
+              pixels = await exportCanvas(smart),
+              preview = pixels.toDataURL('image/png')
+            cacheImage(preview, pixels)
+            Object.assign(layer, placement, { kind: 'image', smart, src: preview })
+            warnings.add(
+              'Встроенные поддерживаемые PSD открываются как редактируемое смарт-содержимое без собственного XMP. После изменения предпросмотр и поддерживаемый Gaussian Blur пересчитываются движком ФШ777.',
+            )
+            for (const warning of contents.report.warnings)
+              warnings.add(`Вложенный PSD «${layer.name.slice(0, 100)}»: ${warning}`)
+          } catch (error) {
+            warnings.add(
+              `Смарт-объект «${layer.name.slice(0, 100)}» оставлен исходным с растровым предпросмотром: ${error instanceof Error ? error.message : 'не удалось раскрыть PSD'}. Native-данные сохраняются, пока содержимое не заменено.`,
+            )
+          }
+        }
+        if (!editableShape && src.vectorFill && src.vectorMask)
+          warnings.add(
+            'Часть векторных фигур использует неподдерживаемую заливку или логические операции контуров: исходная структура сохраняется, предпросмотр растровый.',
+          )
+        if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
           const m = src.mask,
             data = m.imageData!
           layer.mask = {
             src: imageSource(data),
-            x: (m.left || 0) + (m.positionRelativeToLayer ? layer.x : 0),
-            y: (m.top || 0) + (m.positionRelativeToLayer ? layer.y : 0),
+            x: (m.left || 0) + (m.positionRelativeToLayer ? src.left || 0 : 0),
+            y: (m.top || 0) + (m.positionRelativeToLayer ? src.top || 0 : 0),
             width: data.width,
             height: data.height,
             enabled: !m.disabled,
@@ -309,26 +402,26 @@ export async function importPsd(
           }
         }
         doc.layers.push(layer)
-        if (group) visit(src.children!, layer.id, sourcePath)
+        if (group) await visit(src.children!, layer.id, sourcePath)
         if (src.effects)
           warnings.add(
             'Исходные эффекты сохраняются для неизменённого содержимого слоёв. Их рабочий предпросмотр может отличаться; до первого изменения показывается исходный композит.',
           )
-        if (src.text)
+        if (src.text && !editableText)
           warnings.add(
-            'Импортированный текст сохраняет исходные пиксели и текстовые данные PSD. «Извлечь текст» создаёт собственный редактируемый текст с подбором шрифта.',
+            'Сложный, вертикальный или неоднородно оформленный текст сохранён с исходными native-данными и пиксельным предпросмотром. «Извлечь текст» создаст редактируемую упрощённую копию; оригинал остаётся в PSD.',
           )
-        if (src.placedLayer)
-          warnings.add(
-            'Исходные смарт-объекты и вложенные данные сохраняются при неизменённом содержимом. Поддерживаемый вложенный PSD можно открыть отдельно.',
-          )
-        if (src.vectorMask || src.realMask || !toCanvas[src.blendMode || 'normal'])
+        if (
+          (src.vectorMask && !editableShape) ||
+          src.realMask ||
+          !toCanvas[src.blendMode || 'normal']
+        )
           warnings.add(
             'Сложные маски или режимы смешивания не полностью воспроизводятся после редактирования; не перезаписывай единственный оригинал.',
           )
       }
     }
-    visit(psd.children || [])
+    await visit(psd.children || [])
     if (!doc.layers.length && psd.imageData)
       doc.layers.push(
         makeLayer({
@@ -401,19 +494,53 @@ function unchangedContent(a: Layer, b?: Layer) {
   })
   return sameVisual(clean(a), clean(b))
 }
-export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Promise<Blob> {
+/** Bake scalar colour adjustments into editable paint, never into the layer type. */
+function nativePaint(layer: Layer): Layer {
+  const adjusted = Object.entries(layer.adjustments).some(
+    ([key, value]) => key !== 'blur' && value !== 0,
+  )
+  if (!adjusted) return { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS } }
+  const c = canvas(3, 3),
+    ctx = c.getContext('2d', { willReadFrequently: true })!
+  ctx.filter = filterString({ ...layer, adjustments: { ...layer.adjustments, blur: 0 } })
+  const color = (value: string) => {
+    ctx.clearRect(0, 0, 3, 3)
+    ctx.fillStyle = value
+    ctx.fillRect(0, 0, 3, 3)
+    const p = ctx.getImageData(1, 1, 1, 1).data
+    return '#' + [...p.slice(0, 3)].map((n) => n.toString(16).padStart(2, '0')).join('')
+  }
+  return {
+    ...layer,
+    color: color(layer.color),
+    strokeColor: layer.strokeColor ? color(layer.strokeColor) : undefined,
+    adjustments: { ...DEFAULT_ADJUSTMENTS },
+  }
+}
+export async function exportPsd(
+  doc: EditorDocument,
+  psb = false,
+  depth = 0,
+  report?: (summary: PsdExportReport) => void,
+): Promise<Blob> {
   if (depth > 3) throw new Error('Слишком глубокий смарт-объект')
   await prepareDocument(doc)
   const source = originalSource(doc)
-  if (source && source.psb === psb && isOriginalDocument(doc))
+  if (source && source.psb === psb && isOriginalDocument(doc)) {
+    report?.({
+      ...inspectNativeLayers({ width: doc.width, height: doc.height }, []),
+      original: true,
+    })
     return new Blob([source.bytes], { type: 'image/vnd.adobe.photoshop' })
+  }
   let original: Psd | undefined
   if (source) {
     const copy = source.bytes.slice(0)
     original = (await runCodec<{ psd: Psd }>({ operation: 'read', buffer: copy }, [copy])).psd
   }
+  const appearanceUnchanged = !!source && isOriginalAppearance(doc)
   const imageData =
-    original?.imageData && isOriginalAppearance(doc)
+    original?.imageData && appearanceUnchanged
       ? original.imageData
       : (await exportCanvas(doc)).getContext('2d')!.getImageData(0, 0, doc.width, doc.height)
   let budget = doc.width * doc.height * 4
@@ -423,6 +550,27 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
       throw new Error('PSD: более 192 МиБ растров. Объедини часть слоёв.')
     return canvas(width, height)
   }
+  const rasterPreview = (layer: Layer, embeddedAppearance = false): PsdLayer => {
+    const bounds = worldBounds(layer, true, embeddedAppearance)
+    const left = Math.floor(bounds.x),
+      top = Math.floor(bounds.y)
+    const right = Math.ceil(bounds.x + bounds.width),
+      bottom = Math.ceil(bounds.y + bounds.height)
+    const c = allocate(right - left, bottom - top),
+      ctx = c.getContext('2d')!
+    ctx.translate(-left, -top)
+    renderLayer(ctx, {
+      ...layer,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      styles: embeddedAppearance ? layer.styles : undefined,
+      mask: embeddedAppearance ? layer.mask : undefined,
+    })
+    return { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
+  }
+  const notes: string[] = []
+  let editableContents = 0
   const paths = new Map<string, number[]>(),
     linkedFiles = [...(original?.linkedFiles || [])]
   const build = async (
@@ -437,6 +585,14 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
       const before = source?.baseline.layers.find((l) => l.id === layer.id),
         raw = layerAt(original, layer.sourcePath)
       const preserved = raw && unchangedContent(layer, before)
+      // The working renderer transforms local effects together with the source. Native
+      // outer FX would instead redraw them in document space. Keep those effects AND
+      // their source mask inside the editable placed contents, not flattened or doubled.
+      const embeddedAppearance =
+        !preserved &&
+        (layer.kind === 'text' || layer.kind === 'shape') &&
+        !!layer.warp &&
+        hasStyles(layer.styles)
       let out: PsdLayer = {}
       if (preserved) {
         out = { ...raw }
@@ -444,6 +600,7 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           dy = Math.round(layer.y - before!.y)
         for (const key of ['left', 'right'] as const) if (out[key] !== undefined) out[key] += dx
         for (const key of ['top', 'bottom'] as const) if (out[key] !== undefined) out[key] += dy
+        if (dx || dy) Object.assign(out, translateNativeVector(out, dx, dy))
         if (out.text && (dx || dy)) {
           const transform = [...(out.text.transform || [1, 0, 0, 1, 0, 0])]
           transform[4] += dx
@@ -451,80 +608,115 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           out.text = { ...out.text, transform }
         }
         if (out.placedLayer && (dx || dy))
-          out.placedLayer = {
-            ...out.placedLayer,
-            transform: out.placedLayer.transform.map((n, i) => n + (i % 2 ? dy : dx)),
-          }
+          out.placedLayer = translateNativePlacement(out.placedLayer, dx, dy)
+        // Once the document has visual edits, native cached previews must match
+        // the working renderer as well as the merged image. Keep the original
+        // placement/linked PSD/metadata; refresh pixels only, never flatten contents.
+        if (layer.smart && !appearanceUnchanged) Object.assign(out, rasterPreview(layer))
       } else if (layer.kind !== 'group') {
-        const angle = (layer.rotation * Math.PI) / 180
-        const padding = Math.ceil(layer.adjustments.blur * 3 + (layer.strokeWidth || 0) + 2)
-        const corners = (
-          layer.warp || [
-            { x: 0, y: 0 },
-            { x: 1, y: 0 },
-            { x: 1, y: 1 },
-            { x: 0, y: 1 },
-          ]
-        ).map((p) => {
-          const x = (p.x - 0.5) * layer.width,
-            y = (p.y - 0.5) * layer.height
-          return {
-            x: layer.x + layer.width / 2 + x * Math.cos(angle) - y * Math.sin(angle),
-            y: layer.y + layer.height / 2 + x * Math.sin(angle) + y * Math.cos(angle),
-          }
-        })
-        const left = Math.floor(Math.min(...corners.map((p) => p.x)) - padding),
-          top = Math.floor(Math.min(...corners.map((p) => p.y)) - padding)
-        const right = Math.ceil(Math.max(...corners.map((p) => p.x)) + padding),
-          bottom = Math.ceil(Math.max(...corners.map((p) => p.y)) + padding)
-        const c = allocate(right - left, bottom - top),
-          ctx = c.getContext('2d')!
-        ctx.translate(-left, -top)
-        renderLayer(ctx, {
-          ...layer,
-          visible: true,
-          opacity: 1,
-          blendMode: 'source-over',
-          styles: undefined,
-          mask: undefined,
-        })
-        out = { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
-        if (
-          layer.kind === 'text' &&
-          !layer.warp &&
-          !layer.flipX &&
-          !layer.flipY &&
-          Object.values(layer.adjustments).every((v) => v === 0)
-        ) {
-          const a = angle,
-            cx = layer.x + layer.width / 2,
-            cy = layer.y + layer.height / 2
-          out.text = {
-            text: (layer.text || '').replace(/\n/g, '\r'),
-            transform: [
-              Math.cos(a),
-              Math.sin(a),
-              -Math.sin(a),
-              Math.cos(a),
-              cx - (Math.cos(a) * layer.width) / 2 + (Math.sin(a) * layer.height) / 2,
-              cy - (Math.sin(a) * layer.width) / 2 - (Math.cos(a) * layer.height) / 2,
-            ],
-            shapeType: 'box',
-            boxBounds: [0, 0, layer.width, layer.height],
-            style: {
-              ...nativeFontStyle(
-                layer.fontFamily || 'Manrope',
-                layer.fontWeight || 400,
-                layer.italic,
-              ),
-              fontSize: layer.fontSize || 48,
-              horizontalScale: layer.textScaleX || 1,
-              fillColor: rgb(layer.color),
-              leading: (layer.fontSize || 48) * (layer.lineHeight || 1.2),
-              autoLeading: false,
-              tracking: ((layer.letterSpacing || 0) / (layer.fontSize || 48)) * 1000,
-            },
-            paragraphStyle: { justification: layer.textAlign || 'left' },
+        out = rasterPreview(layer, embeddedAppearance)
+        if (layer.kind === 'shape' || layer.kind === 'text') {
+          const native = nativePaint(layer)
+          if (Object.entries(layer.adjustments).some(([k, v]) => k !== 'blur' && v !== 0))
+            notes.push(
+              'Цветокоррекции текста и однотонных фигур пересчитаны в цвет редактируемой заливки/обводки. Исходные ползунки ФШ777 дополнительно хранятся в XMP.',
+            )
+          const warpedStroke =
+            layer.kind === 'shape' && !!layer.warp && !!layer.strokeColor && !!layer.strokeWidth
+          const embedded =
+            embeddedAppearance ||
+            warpedStroke ||
+            !!layer.adjustments.blur ||
+            (layer.kind === 'text' && !affineText(layer))
+          if (!embedded) {
+            if (layer.kind === 'shape') Object.assign(out, exportVectorShape(native, doc.dpi || 72))
+            else out.text = exportNativeText(native)
+          } else {
+            const contents = {
+              ...native,
+              // Blur stays at the same stage relative to local FX. The nested export
+              // supplies another editable smart filter instead of blurring the FX too.
+              adjustments: {
+                ...native.adjustments,
+                blur: embeddedAppearance ? layer.adjustments.blur : 0,
+              },
+            }
+            const bounds = rasterBounds(
+              { ...contents, flipX: false, flipY: false },
+              embeddedAppearance,
+            )
+            const inner = newDocument(
+              Math.ceil(bounds.width),
+              Math.ceil(bounds.height),
+              layer.name,
+              'transparent',
+            )
+            if (inner.width > 4096 || inner.height > 4096)
+              throw new Error(
+                'Редактируемый вложенный слой превышает 4096 px. Уменьши размер текста/фигуры перед экспортом сложного преобразования.',
+              )
+            inner.dpi = doc.dpi || 72
+            inner.layers = [
+              {
+                ...contents,
+                id: uid(),
+                x: -bounds.x,
+                y: -bounds.y,
+                rotation: 0,
+                warp: undefined,
+                flipX: false,
+                flipY: false,
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'source-over',
+                clipping: false,
+                parentId: undefined,
+                styles: embeddedAppearance ? native.styles : undefined,
+                mask:
+                  embeddedAppearance && layer.mask
+                    ? {
+                        ...layer.mask,
+                        x: layer.mask.x - layer.x - bounds.x,
+                        y: layer.mask.y - layer.y - bounds.y,
+                      }
+                    : undefined,
+                sourcePath: undefined,
+                src: undefined,
+                smart: undefined,
+              },
+            ]
+            const nested = await exportPsd(inner, false, depth + 1),
+              id = uid()
+            linkedFiles.push({
+              id,
+              name: `${layer.name}.psd`,
+              type: '8BPS',
+              creator: '8BIM',
+              data: new Uint8Array(await nested.arrayBuffer()),
+            })
+            const corners = rectPoints({
+              ...bounds,
+              width: inner.width,
+              height: inner.height,
+            }).flatMap((p) => {
+              const q = layerPoint(layer, p)
+              return [q.x, q.y]
+            })
+            out.placedLayer = {
+              id,
+              type: 'raster',
+              width: inner.width,
+              height: inner.height,
+              transform: corners,
+              nonAffineTransform: corners,
+              resolution: { units: 'Density', value: inner.dpi },
+              filter: gaussianSmartFilter(embeddedAppearance ? 0 : layer.adjustments.blur),
+            }
+            editableContents++
+            notes.push(
+              'Размытие, проективный текст или деформированная обводка/эффекты сохранены в стандартном смарт-объекте с вложенным редактируемым PSD, а не сведены в единственную картинку. Локальные эффекты и их маски находятся внутри, если это необходимо для порядка преобразований. Открой содержимое для правки текста/контуров; перерасчёт фильтра в другом редакторе может отличаться.',
+            )
           }
         }
       }
@@ -543,10 +735,10 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
       out.clipping = layer.clipping
       out.protected = { ...out.protected, composite: layer.locked, position: layer.locked }
       if (!preserved || !sameVisual(layer.styles, before?.styles)) {
-        out.effects = layer.styles ? exportStyles(layer.styles) : undefined
-        out.fillOpacity = layer.styles?.fillOpacity ?? 1
+        out.effects = !embeddedAppearance && layer.styles ? exportStyles(layer.styles) : undefined
+        out.fillOpacity = embeddedAppearance ? 1 : (layer.styles?.fillOpacity ?? 1)
       }
-      if (layer.mask) {
+      if (layer.mask && !embeddedAppearance) {
         const m = layer.mask,
           old = before?.mask
         const unchangedMask =
@@ -634,7 +826,7 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
         }
       } else out.mask = undefined
       if (layer.smart && !preserved) {
-        const nested = await exportPsd({ ...layer.smart, sourceId: undefined }, false, depth + 1),
+        const nested = await exportPsd(layer.smart, false, depth + 1),
           id = uid()
         linkedFiles.push({
           id,
@@ -673,7 +865,9 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
           width: layer.smart.width,
           height: layer.smart.height,
           transform: corners,
+          nonAffineTransform: corners,
           resolution: { units: 'Density', value: layer.smart.dpi || 72 },
+          filter: gaussianSmartFilter(layer.adjustments.blur),
         }
       }
       output.push(out)
@@ -734,6 +928,11 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
       },
     },
   }
+  const summary = inspectNativeLayers(psd, notes, editableContents)
+  if (summary.text || summary.editableContents)
+    summary.warnings.push(
+      'PSD не встраивает шрифты. Для одинаковой типографики они должны быть доступны принимающему редактору. Некоторые редакторы могут предложить обновить текстовый движок.',
+    )
   const { buffer } = await runCodec<{ buffer: ArrayBuffer }>({
     operation: 'write',
     psd,
@@ -741,12 +940,14 @@ export async function exportPsd(doc: EditorDocument, psb = false, depth = 0): Pr
     project: portable,
   })
   const bytes =
-    source && isOriginalAppearance(doc)
+    source && appearanceUnchanged
       ? preserveMergedPixels(source.bytes, preserveUnknownResources(source.bytes, buffer))
       : buffer
   if (bytes.byteLength > 80 * 1024 * 1024)
     throw new Error(
       'PSD превышает 80 МБ — лимит повторного открытия. Уменьши изображения или объедини слои.',
     )
+  await sealProject(bytes)
+  report?.(summary)
   return new Blob([bytes], { type: 'image/vnd.adobe.photoshop' })
 }

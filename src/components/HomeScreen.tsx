@@ -23,6 +23,7 @@ export function HomeScreen({
   onNew,
   onOpen,
   onDemo,
+  onPractice,
   onResume,
   onRecent,
   onRestore,
@@ -36,6 +37,7 @@ export function HomeScreen({
   onNew: () => void
   onOpen: () => void
   onDemo: () => void
+  onPractice: () => void
   onResume: () => void
   onRecent: (r: RecentProject) => void
   onRestore: () => void
@@ -145,6 +147,27 @@ export function HomeScreen({
               <span className="hero-art-caption">MAKE SOMETHING / YOURS</span>
               <div className="hero-curve" />
             </div>
+          </section>
+        )}
+        {!recentOnly && (
+          <section className="home-layout-card">
+            <img src="/demo-layout.webp" alt="Учебная иллюстрация: курьер на ночной крыше" />
+            <div>
+              <span className="eyebrow">LAYOUT WORKSPACE</span>
+              <h2>Восстановление и работа с текстом.</h2>
+              <p>
+                Восстановление области, редактируемые рамки и связанный текст — на учебном
+                документе. Без установки шрифтов и поиска исходников.
+              </p>
+            </div>
+            <button
+              className="secondary-button"
+              data-testid="open-layout-demo"
+              onClick={onPractice}
+            >
+              Открыть практику
+              <ArrowUpRight size={15} />
+            </button>
           </section>
         )}
         {recovery && (

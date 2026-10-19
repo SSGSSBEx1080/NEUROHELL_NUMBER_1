@@ -24,8 +24,14 @@ export function trimHistory(entries: HistoryEntry[], limit = 50, byteLimit = 128
     const sources = new Set<string>()
     let bytes = 0
     const collect = (doc: EditorDocument) => {
+      for (const entry of doc.script || [])
+        for (const value of [entry.source, entry.translation, entry.note])
+          if (!sources.has(value)) {
+            sources.add(value)
+            bytes += value.length * 2
+          }
       for (const layer of doc.layers) {
-        for (const src of [layer.src, layer.mask?.src])
+        for (const src of [layer.src, layer.mask?.src, layer.text, layer.sourceText])
           if (src && !sources.has(src)) {
             sources.add(src)
             bytes += src.length * 2
@@ -47,7 +53,11 @@ export function trimInactiveHistories<
 >(sessions: Map<string, T>, activeId: string, target = 256 * 1024 * 1024) {
   const strings = new Set<string>()
   const collect = (doc: EditorDocument) => {
+    for (const entry of doc.script || [])
+      for (const value of [entry.source, entry.translation, entry.note]) strings.add(value)
     for (const layer of doc.layers) {
+      if (layer.text) strings.add(layer.text)
+      if (layer.sourceText) strings.add(layer.sourceText)
       if (layer.src) strings.add(layer.src)
       if (layer.mask?.src) strings.add(layer.mask.src)
       if (layer.smart) collect(layer.smart)

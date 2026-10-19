@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Pentagon,
+  Star,
+  Minus,
+  Bandage,
   Circle,
   Crop,
   Eraser,
@@ -35,6 +39,10 @@ const groups = [
   ],
   [{ id: 'crop', name: 'Кадрирование', icon: Crop, key: 'C' }],
   [{ id: 'brush', name: 'Кисть', icon: Paintbrush, key: 'B' }],
+  [
+    { id: 'repair', name: 'Восстановление области', icon: Bandage, key: 'J' },
+    { id: 'repair-box', name: 'Восстановление прямоугольника', icon: SquareDashed, key: 'J' },
+  ],
   [{ id: 'clone', name: 'Штамп', icon: Stamp, key: 'S' }],
   [
     { id: 'eraser', name: 'Ластик', icon: Eraser, key: 'E' },
@@ -44,10 +52,16 @@ const groups = [
     { id: 'bucket', name: 'Заливка', icon: PaintBucket, key: 'G' },
     { id: 'gradient', name: 'Градиент', icon: Blend, key: 'G' },
   ],
-  [{ id: 'text', name: 'Текст', icon: Type, key: 'T' }],
+  [
+    { id: 'text', name: 'Текст', icon: Type, key: 'T' },
+    { id: 'text-frame', name: 'Текстовая рамка', icon: SquareDashed, key: 'T' },
+  ],
   [
     { id: 'rectangle', name: 'Прямоугольник', icon: Square, key: 'U' },
     { id: 'ellipse', name: 'Эллипс', icon: Circle, key: 'U' },
+    { id: 'polygon', name: 'Многоугольник', icon: Pentagon, key: 'U' },
+    { id: 'star', name: 'Звезда', icon: Star, key: 'U' },
+    { id: 'line', name: 'Линия', icon: Minus, key: 'U' },
   ],
   [{ id: 'eyedropper', name: 'Пипетка', icon: Pipette, key: 'I' }],
   [{ id: 'hand', name: 'Рука', icon: Hand, key: 'H' }],

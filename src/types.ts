@@ -6,8 +6,12 @@ export type Tool =
   | 'eraser'
   | 'wand'
   | 'text'
+  | 'text-frame'
   | 'rectangle'
   | 'ellipse'
+  | 'polygon'
+  | 'star'
+  | 'line'
   | 'eyedropper'
   | 'hand'
   | 'lasso'
@@ -17,6 +21,8 @@ export type Tool =
   | 'clone'
   | 'bucket'
   | 'gradient'
+  | 'repair'
+  | 'repair-box'
 export type LayerKind = 'image' | 'text' | 'shape' | 'group'
 export type BlendMode =
   | 'source-over'
@@ -46,6 +52,20 @@ export interface Adjustments {
   sepia: number
   invert: number
 }
+export interface TextFrame {
+  shape: 'rectangle' | 'ellipse'
+  padding: number
+  verticalAlign: 'top' | 'middle' | 'bottom'
+  autoFit: boolean
+  minFontSize: number
+}
+export type ShapeKind = 'rectangle' | 'ellipse' | 'polygon' | 'star' | 'line' | 'path'
+export interface ShapePath {
+  open: boolean
+  operation?: 'combine' | 'subtract' | 'intersect' | 'exclude'
+  fillRule: 'non-zero' | 'even-odd'
+  knots: { linked: boolean; points: number[] }[]
+}
 export interface Layer {
   id: string
   name: string
@@ -70,12 +90,25 @@ export interface Layer {
   lineHeight?: number
   letterSpacing?: number
   color: string
-  shape?: 'rectangle' | 'ellipse'
+  shape?: ShapeKind
+  shapeFill?: boolean
+  cornerRadii?: [number, number, number, number]
+  sides?: number
+  starRatio?: number
+  shapePaths?: ShapePath[]
+  strokeAlign?: 'inside' | 'center' | 'outside'
+  strokeCap?: 'butt' | 'round' | 'square'
+  strokeJoin?: 'miter' | 'round' | 'bevel'
+  strokeMiterLimit?: number
+  strokeDash?: number[]
+  strokeDashOffset?: number
   radius?: number
   strokeColor?: string
   strokeWidth?: number
   warp?: Quad
   textScaleX?: number
+  textBaseline?: 'top' | 'alphabetic'
+  textFrame?: TextFrame
   styles?: LayerStyles
   parentId?: string
   expanded?: boolean
@@ -88,6 +121,15 @@ export interface Layer {
   flipX?: boolean
   flipY?: boolean
 }
+export interface TranslationEntry {
+  id: string
+  source: string
+  translation: string
+  speaker: string
+  note: string
+  status: 'draft' | 'translated' | 'proofread'
+  layerId?: string
+}
 export interface EditorDocument {
   version: 1
   id: string
@@ -98,6 +140,7 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   dpi?: number
+  script?: TranslationEntry[]
 }
 export interface Point {
   x: number

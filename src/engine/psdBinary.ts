@@ -45,7 +45,7 @@ function resources(buffer: ArrayBuffer) {
   if (lengthAt + 4 > buffer.byteLength) throw new Error('Обрезанные ресурсы PSD')
   const start = lengthAt + 4,
     end = start + v.getUint32(lengthAt),
-    blocks: { id: number; start: number; end: number }[] = []
+    blocks: { id: number; start: number; end: number; dataStart: number; length: number }[] = []
   if (end > buffer.byteLength) throw new Error('Ресурсы PSD выходят за границы файла')
   for (let p = start; p < end;) {
     if (p + 8 > end) throw new Error('Обрезанный блок ресурсов PSD')
@@ -55,7 +55,7 @@ function resources(buffer: ArrayBuffer) {
     const length = v.getUint32(sizeAt),
       next = sizeAt + 4 + length + (length % 2)
     if (next > end) throw new Error('Обрезанные данные ресурса PSD')
-    blocks.push({ id: v.getUint16(p + 4), start: p, end: next })
+    blocks.push({ id: v.getUint16(p + 4), start: p, end: next, dataStart: sizeAt + 4, length })
     p = next
   }
   return { lengthAt, start, end, blocks }
@@ -78,4 +78,9 @@ export function preserveUnknownResources(original: ArrayBuffer, output: ArrayBuf
   bytes.set(new Uint8Array(output, to.end), p)
   new DataView(bytes.buffer).setUint32(to.lengthAt, to.end - to.start + extra)
   return bytes.buffer
+}
+
+export function xmpResource(buffer: ArrayBuffer) {
+  const block = resources(buffer).blocks.find((b) => b.id === 1060)
+  return block ? { start: block.dataStart, length: block.length } : undefined
 }

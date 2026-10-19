@@ -187,7 +187,7 @@ describe('Actions and ATN', () => {
     expect(() => runAction(d, d.layers[0].id, builtinActions[0])).toThrow()
     expect(() => parseAtn(atnFixture().slice(0, 20))).toThrow()
     expect(() => parseAtn(new ArrayBuffer(8))).toThrow()
-    expect(() => parseActionSet({ version: 2, actions: [] })).toThrow()
+    expect(() => parseActionSet({ version: 3, actions: [] })).toThrow()
   })
   it('does not turn an imported script into executable code', () => {
     const a = parseActionSet({

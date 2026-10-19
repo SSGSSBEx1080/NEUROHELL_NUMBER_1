@@ -1,6 +1,12 @@
+import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
+import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
+import { layerPoint } from './shapeGeometry'
+import { homography, project, validQuad } from './projection'
+import { renderShape } from './shapeRenderer'
+import { clearTextLayoutCache, textFont } from './textLayout'
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
 import { clearWarpCache, renderWarped } from './warpRenderer'
-import { sourceDimensions } from './imageSafety'
+import { sourceDimensions, bundledImageSource } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
@@ -43,7 +49,7 @@ export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasEle
       loading.delete(src)
       reject(new Error('Не удалось прочитать изображение'))
     }
-    image.src = src
+    image.src = bundledImageSource(src)
   })
   loading.set(src, promise)
   return promise
@@ -63,13 +69,27 @@ export function validateRasterBudget(doc: EditorDocument) {
   }
   return sources
 }
+const documentFonts = (doc: EditorDocument) =>
+  doc.layers
+    .filter((l) => l.kind === 'text')
+    .map((l) => ({ font: textFont(l, 32), sample: (l.text || 'AaБб').slice(0, 256) }))
 export async function prepareDocument(doc: EditorDocument) {
   await prepareSource(doc)
   const sources = validateRasterBudget(doc),
     composite = originalSource(doc)?.composite
   if (composite) sources.push(composite)
-  await Promise.all(sources.map(loadImage))
+  const needed = documentFonts(doc).filter(
+    ({ font, sample }) => !document.fonts.check(font, sample),
+  )
+  await Promise.all([
+    ...sources.map(loadImage),
+    ...needed.map(({ font, sample }) => document.fonts.load(font, sample)),
+  ])
   await document.fonts.ready
+  if (needed.length) {
+    clearRenderCaches()
+    window.dispatchEvent(new Event('fsh777-fonts-changed'))
+  }
 }
 export function pruneImageCache(documents: EditorDocument[]) {
   const keep = new Set(
@@ -92,12 +112,10 @@ export function renderLayer(
 ) {
   if (!flat && (!layer.visible || layer.opacity === 0)) return
   ctx.save()
+  ctx.imageSmoothingQuality = 'high'
   if (!flat) {
     ctx.globalAlpha = layer.opacity
     ctx.globalCompositeOperation = layer.blendMode
-    ctx.translate(layer.x + layer.width / 2, layer.y + layer.height / 2)
-    ctx.rotate((layer.rotation * Math.PI) / 180)
-    ctx.translate(-layer.width / 2, -layer.height / 2)
   }
   if (layer.warp && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
     renderWarped(
@@ -105,9 +123,15 @@ export function renderLayer(
       layer,
       (base) => renderLayer(base, { ...layer, warp: undefined }, override, true),
       !!override || !!layer.mask?.src.startsWith('mask-preview:'),
+      !flat,
     )
     ctx.restore()
     return
+  }
+  if (!flat) {
+    ctx.translate(layer.x + layer.width / 2, layer.y + layer.height / 2)
+    ctx.rotate((layer.rotation * Math.PI) / 180)
+    ctx.translate(-layer.width / 2, -layer.height / 2)
   }
   if (layer.flipX || layer.flipY) {
     ctx.translate(layer.flipX ? layer.width : 0, layer.flipY ? layer.height : 0)
@@ -143,52 +167,37 @@ export function renderLayer(
     const image = images.get(layer.src)
     if (image) ctx.drawImage(image, 0, 0, layer.width, layer.height)
   } else if (layer.kind === 'shape') {
-    ctx.fillStyle = layer.color
-    ctx.beginPath()
-    if (layer.shape === 'ellipse')
-      ctx.ellipse(
-        layer.width / 2,
-        layer.height / 2,
-        layer.width / 2,
-        layer.height / 2,
-        0,
-        0,
-        Math.PI * 2,
-      )
-    else
-      ctx.roundRect(
-        0,
-        0,
-        layer.width,
-        layer.height,
-        Math.min(layer.radius || 0, layer.width / 2, layer.height / 2),
-      )
-    ctx.fill()
-    if (layer.strokeWidth && layer.strokeColor) {
-      ctx.strokeStyle = layer.strokeColor
-      ctx.lineWidth = layer.strokeWidth
-      ctx.stroke()
-    }
+    renderShape(ctx, layer)
   } else if (layer.kind === 'text') {
+    if (ctx.canvas.style.fontSynthesis !== 'weight style')
+      ctx.canvas.style.fontSynthesis = 'weight style'
     const textScale = layer.textScaleX || 1
+    const geometry = getTextGeometry(layer)
+    if (layer.textFrame) {
+      const p = layer.textFrame.padding,
+        w = layer.width - p * 2,
+        h = layer.height - p * 2
+      ctx.beginPath()
+      if (layer.textFrame.shape === 'ellipse' && w > 0 && h > 0)
+        ctx.ellipse(layer.width / 2, layer.height / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
+      else ctx.rect(p, p, Math.max(0, w), Math.max(0, h))
+      ctx.clip()
+    }
     ctx.scale(textScale, 1)
-    const size = layer.fontSize || 48
-    ctx.font = `${layer.italic ? 'italic ' : ''}${layer.fontWeight || 500} ${size}px "${layer.fontFamily || 'Manrope'}"`
+    const size = geometry.fontSize
+    ctx.font = textFont(layer, size)
     ctx.fillStyle = layer.color
-    ctx.textBaseline = 'top'
+    ctx.textBaseline = layer.textBaseline || 'top'
     ctx.textAlign = layer.textAlign || 'left'
     if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
-    const x =
-      layer.textAlign === 'center' ? layer.width / 2 : layer.textAlign === 'right' ? layer.width : 0
-    ;(layer.text || '')
-      .split('\n')
-      .forEach((line, i) => ctx.fillText(line, x / textScale, i * size * (layer.lineHeight || 1.2)))
+    for (const line of geometry.lines) ctx.fillText(line.text, line.x / textScale, line.y)
   }
   ctx.restore()
 }
 export function isPrepared(doc: EditorDocument) {
   return (
     document.fonts.status === 'loaded' &&
+    documentFonts(doc).every(({ font, sample }) => document.fonts.check(font, sample)) &&
     (!doc.sourceId || !!originalSource(doc)) &&
     doc.layers.every((l) => (!l.src || images.has(l.src)) && (!l.mask || images.has(l.mask.src)))
   )
@@ -321,19 +330,24 @@ export function renderDocument(
   }
   draw(ctx)
 }
-const maskCache = new Map<string, { key: Layer; image: HTMLCanvasElement }>()
+const maskCache = new Map<
+  string,
+  { key: Layer; image: HTMLCanvasElement; bounds: ReturnType<typeof rasterBounds> }
+>()
 function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HTMLCanvasElement) {
   const m = layer.mask!,
     mask = images.get(m.src)!
   const key = { ...layer, x: 0, y: 0, mask: { ...m, x: m.x - layer.x, y: m.y - layer.y } }
   let cached = maskCache.get(layer.id)
   if (override || m.src.startsWith('mask-preview:') || !cached || !sameVisual(key, cached.key)) {
-    const scale = Math.min(1, 4096 / layer.width, 4096 / layer.height)
+    const bounds = rasterBounds(layer),
+      scale = Math.min(1, 4096 / bounds.width, 4096 / bounds.height)
     const c = document.createElement('canvas')
-    c.width = Math.max(1, Math.ceil(layer.width * scale))
-    c.height = Math.max(1, Math.ceil(layer.height * scale))
+    c.width = Math.max(1, Math.ceil(bounds.width * scale))
+    c.height = Math.max(1, Math.ceil(bounds.height * scale))
     const x = c.getContext('2d')!
-    x.scale(c.width / layer.width, c.height / layer.height)
+    x.scale(c.width / bounds.width, c.height / bounds.height)
+    x.translate(-bounds.x, -bounds.y)
     renderLayer(x, { ...layer, mask: undefined, flipX: false, flipY: false }, override, true)
     const plane = document.createElement('canvas')
     plane.width = c.width
@@ -344,10 +358,10 @@ function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HT
     if (m.feather) p.filter = `blur(${m.feather * scale}px)`
     p.drawImage(
       mask,
-      (m.x - layer.x) * scale,
-      (m.y - layer.y) * scale,
-      m.width * scale,
-      m.height * scale,
+      ((m.x - layer.x - bounds.x) * c.width) / bounds.width,
+      ((m.y - layer.y - bounds.y) * c.height) / bounds.height,
+      (m.width * c.width) / bounds.width,
+      (m.height * c.height) / bounds.height,
     )
     const pixels = p.getImageData(0, 0, c.width, c.height)
     for (let i = 0; i < pixels.data.length; i += 4) {
@@ -358,7 +372,7 @@ function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HT
     x.setTransform(1, 0, 0, 1, 0, 0)
     x.globalCompositeOperation = 'destination-in'
     x.drawImage(plane, 0, 0)
-    cached = { key, image: c }
+    cached = { key, image: c, bounds }
     maskCache.set(layer.id, cached)
     let bytes = [...maskCache.values()].reduce(
       (sum, v) => sum + v.image.width * v.image.height * 4,
@@ -372,24 +386,99 @@ function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HT
       }
     }
   }
-  ctx.drawImage(cached.image, 0, 0, layer.width, layer.height)
+  const b = cached.bounds
+  ctx.drawImage(cached.image, b.x, b.y, b.width, b.height)
 }
+const rasterGeometry = new WeakMap<HTMLCanvasElement, { source: Layer; patch: Partial<Layer> }>()
 export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   if (layer.src) await loadImage(layer.src)
+  if (layer.mask) await loadImage(layer.mask.src)
+  if (layer.kind === 'text') {
+    await document.fonts.load(textFont(layer), (layer.text || 'AaБб').slice(0, 256))
+    clearTextGeometryCache()
+  }
+  const bounds = pixelBounds(
+    layer.kind === 'text' || layer.kind === 'shape'
+      ? rasterBounds(layer, false, true)
+      : { x: 0, y: 0, width: layer.width, height: layer.height },
+  )
   const canvas = document.createElement('canvas')
-  // Raster editing is bounded even when a layer has been enlarged far beyond the artboard.
-  const scale = Math.min(1, 4096 / layer.width, 4096 / layer.height)
-  canvas.width = Math.max(1, Math.round(layer.width * scale))
-  canvas.height = Math.max(1, Math.round(layer.height * scale))
+  const scale = Math.min(1, 4096 / bounds.width, 4096 / bounds.height)
+  canvas.width = Math.max(1, Math.ceil(bounds.width * scale))
+  canvas.height = Math.max(1, Math.ceil(bounds.height * scale))
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-  ctx.scale(canvas.width / layer.width, canvas.height / layer.height)
+  ctx.scale(canvas.width / bounds.width, canvas.height / bounds.height)
+  ctx.translate(-bounds.x, -bounds.y)
   renderLayer(
     ctx,
     { ...layer, styles: undefined, warp: undefined, mask: undefined },
     undefined,
     true,
   )
+  const center = layerPoint(
+    { ...layer, warp: undefined, flipX: false, flipY: false },
+    { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 },
+  )
+  const x = center.x - bounds.width / 2,
+    y = center.y - bounds.height / 2
+  let warp = layer.warp
+  if (warp) {
+    const matrix = homography(warp)
+    const q = rectPoints(bounds).map((p) => {
+      const v = project(matrix, p.x / layer.width, p.y / layer.height)
+      return {
+        x: (v.x * layer.width - bounds.x) / bounds.width,
+        y: (v.y * layer.height - bounds.y) / bounds.height,
+      }
+    })
+    if (!validQuad(q))
+      throw new Error(
+        'Эту перспективу нельзя растрировать в локальные границы. Сначала сбрось перспективу или объедини видимые слои.',
+      )
+    warp = q
+  }
+  const mask = rasterMask(layer),
+    styles = layer.styles
+  const angle = ((styles?.gradient.angle || 0) * Math.PI) / 180
+  rasterGeometry.set(canvas, {
+    source: layer,
+    patch: {
+      x,
+      y,
+      width: bounds.width,
+      height: bounds.height,
+      warp,
+      mask: mask
+        ? { ...mask, x: x + mask.x - layer.x - bounds.x, y: y + mask.y - layer.y - bounds.y }
+        : undefined,
+      styles:
+        styles && (layer.flipX || layer.flipY)
+          ? {
+              ...styles,
+              shadow: {
+                ...styles.shadow,
+                x: styles.shadow.x * (layer.flipX ? -1 : 1),
+                y: styles.shadow.y * (layer.flipY ? -1 : 1),
+              },
+              gradient: {
+                ...styles.gradient,
+                angle:
+                  (Math.atan2(
+                    Math.sin(angle) * (layer.flipY ? -1 : 1),
+                    Math.cos(angle) * (layer.flipX ? -1 : 1),
+                  ) *
+                    180) /
+                  Math.PI,
+              },
+            }
+          : styles,
+    },
+  })
   return canvas
+}
+export const rasterizedGeometry = (layer: Layer, canvas: HTMLCanvasElement): Partial<Layer> => {
+  const metadata = rasterGeometry.get(canvas)
+  return metadata?.source === layer ? metadata.patch : { mask: rasterMask(layer) }
 }
 export async function exportCanvas(doc: EditorDocument, scale = 1, background?: string) {
   await prepareDocument(doc)
@@ -454,7 +543,7 @@ export function bitmapLayer(layer: Layer, canvas: HTMLCanvasElement): Layer {
     ...layer,
     kind: 'image',
     src,
-    mask: rasterMask(layer),
+    ...rasterizedGeometry(layer, canvas),
     flipX: false,
     flipY: false,
     adjustments: { ...DEFAULT_ADJUSTMENTS },
@@ -474,7 +563,7 @@ export async function encodeBitmap(layer: Layer, canvas: HTMLCanvasElement): Pro
     ...layer,
     kind: 'image',
     src,
-    mask: rasterMask(layer),
+    ...rasterizedGeometry(layer, canvas),
     flipX: false,
     flipY: false,
     adjustments: { ...DEFAULT_ADJUSTMENTS },
@@ -485,6 +574,8 @@ export function clearRenderCaches() {
   maskCache.clear()
   clearStyleCache()
   clearWarpCache()
+  clearTextLayoutCache()
+  clearTextGeometryCache()
 }
 
 function rasterMask(layer: Layer): Layer['mask'] {

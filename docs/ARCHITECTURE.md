@@ -1,23 +1,27 @@
-# Архитектура ФШ777 · 0.3
+# Архитектура ФШ777 · 0.5
 
 Независимый TypeScript/React-редактор с Canvas 2D и отдельной Electron-оболочкой. Сервер обработки изображений не нужен. Adobe-код не используется; ag-psd — MIT-кодек формата, не готовый движок Photoshop.
 
 ## Модули и границы
 
-| Область | Файлы | Ответственность |
-|---|---|---|
-| Модель | `types.ts`, `engine/document.ts` | Immutable document/layers, валидация импортированных данных, геометрия, эффективная блокировка с учётом предков |
-| Команды / история | `engine/history.ts`, `hooks/useEditor.ts` | `DocumentCommand.execute/undo`, `ReplaceDocumentCommand`, commit жеста один раз, redo/travel, снимки и бюджеты |
-| Рабочая среда | `hooks/useWorkspace.ts`, `HomeScreen.tsx` | До 6 сессий, независимая история, стабильные вкладки, главная, восстановление, безопасное закрытие, применение smart-content |
-| Дерево слоёв | `engine/layerOperations.ts`, `smartObjects.ts` | Целые поддеревья, parentId, предотвращение циклов, группировка/дублирование/удаление, вложенные документы |
-| Инструменты | `components/ToolRail.tsx`, `engine/brush.ts`, `selection.ts`, `pixels.ts`, `CanvasStage.tsx` | Pointer gestures, подтипы, магнитная привязка лассо, маски выделения, кисть/штамп/заливка; preview и единичный commit |
-| Отрисовка | `engine/render.ts`, `scene.ts`, `warpRenderer.ts`, `projection.ts`, `styles.ts` | RAF coalescing, cache нижнего неизменённого prefix, scene/group compositing, стили, маски, перспектива, экспорт |
-| Тяжёлые операции | `engine/pixel.worker.ts`, `psd.worker.ts`, `processing.ts`, codec dispatcher в `psd.ts` | Обработка пикселей и PSD-кодирование вне UI-потока, transferable buffers, ошибки/лимиты |
-| Файлы | `engine/fileManager.ts`, `psd.ts`, `psdBinary.ts`, `psdMetadata.ts` | Выбор представления PSD, native layers/masks/smart objects, сохранение исходных секций, supplemental XMP |
-| Исходники / восстановление | `engine/psdSource.ts`, `storage.ts` | Ограниченный source LRU, оригинальные bytes/composite/baseline, IndexedDB projects/sources/fonts, порядок асинхронных сохранений |
-| Шрифты | `engine/fonts.ts`, `fontCatalog.json`, `fontNames.json`, `FontsDialog.tsx` | SFNT name parser, FontFace, bounded upload/cache, native PostScript names, Google Fonts/OFL |
-| Интерфейс | `components/`, `styles.css`, `App.tsx` | Панели/меню/диалоги и оркестрация, не PSD-парсер. Текстовые настройки справа |
-| Настольная граница | `desktop/main.cjs`, `preload.cjs`, `protocol.cjs`, `fonts.cjs`, `files.cjs` | Custom app protocol, доверенный main frame, whitelist IPC, native save dialog, atomic write, фиксированный Windows font query |
+| Область                    | Файлы                                                                                                               | Ответственность                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Модель                     | `types.ts`, `engine/document.ts`                                                                                    | Immutable document/layers, валидация импортированных данных, геометрия, эффективная блокировка с учётом предков                  |
+| Команды / история          | `engine/history.ts`, `hooks/useEditor.ts`                                                                           | `DocumentCommand.execute/undo`, `ReplaceDocumentCommand`, commit жеста один раз, redo/travel, снимки и бюджеты                   |
+| Рабочая среда              | `hooks/useWorkspace.ts`, `HomeScreen.tsx`                                                                           | До 6 сессий, независимая история, стабильные вкладки, главная, восстановление, безопасное закрытие, применение smart-content     |
+| Дерево слоёв               | `engine/layerOperations.ts`, `smartObjects.ts`                                                                      | Целые поддеревья, parentId, предотвращение циклов, группировка/дублирование/удаление, вложенные документы                        |
+| Инструменты                | `components/ToolRail.tsx`, `engine/brush.ts`, `selection.ts`, `pixels.ts`, `CanvasStage.tsx`                        | Pointer gestures, подтипы, магнитная привязка лассо, маски выделения, кисть/штамп/заливка; preview и единичный commit            |
+| Отрисовка                  | `engine/render.ts`, `scene.ts`, `warpRenderer.ts`, `projectiveTexture.ts`, `projection.ts`, `styles.ts`                                     | RAF coalescing, cache нижнего неизменённого prefix, scene/group compositing, стили, маски, перспектива, экспорт                  |
+| Тяжёлые операции           | `engine/pixel.worker.ts`, `psd.worker.ts`, `processing.ts`, codec dispatcher в `psd.ts`                             | Обработка пикселей и PSD-кодирование вне UI-потока, transferable buffers, ошибки/лимиты                                          |
+| Файлы                      | `engine/fileManager.ts`, `psd.ts`, `psdBinary.ts`, `psdMetadata.ts`, `psdIntegrity.ts`                                                 | Выбор представления PSD, native layers/masks/smart objects, сохранение исходных секций, supplemental XMP                         |
+| Исходники / восстановление | `engine/psdSource.ts`, `storage.ts`                                                                                 | Ограниченный source LRU, оригинальные bytes/composite/baseline, IndexedDB projects/sources/fonts, порядок асинхронных сохранений |
+| Шрифты                     | `engine/fonts.ts`, `fontCatalog.json`, `fontNames.json`, `FontsDialog.tsx`                                          | SFNT name parser, FontFace, bounded upload/cache, native PostScript names, Google Fonts/OFL                                      |
+| Интерфейс                  | `components/`, `styles.css`, `App.tsx`                                                                              | Панели/меню/диалоги и оркестрация, не PSD-парсер. Текстовые настройки справа                                                     |
+| J-клининг                  | `engine/repair.ts`, `repair.worker.ts`, `repairJob.ts`, `repairPreview.ts`, `repairPlacement.ts`                    | Paper-plane/exemplar, ROI/target/work limits, abort/timeout, cached preview and donor overlay, explicit source/stack placement   |
+| Рамочный текст                | `engine/textLayout.ts`, `script.ts`, `scriptFormat.ts`, `TextFrameSettings.tsx`, `TranslationPanel.tsx`             | Bounded Unicode layout, font fitting, rectangles/ellipse, validated local script and atomic linking                              |
+| Запись операций            | `editorEvents.ts`, `actionRecorder.ts`, `actionSchema.ts`, `actionStorage.ts`, `actions.ts`, `useActionRecorder.ts` | Final commits → validated commands; explicit blockers; immutable transactional replay, bounded recovery                          |
+| Док-панели                 | `engine/panelLayout.ts`, `PanelDock.tsx`, `ActionsPanel.tsx`                                                        | Validated persistent layout, RAF gesture preview, commit/cancel, viewport clamp, mounted tabs                                    |
+| Настольная граница         | `desktop/main.cjs`, `preload.cjs`, `protocol.cjs`, `fonts.cjs`, `files.cjs`                                         | Custom app protocol, доверенный main frame, whitelist IPC, native save dialog, atomic write, фиксированный Windows font query    |
 
 Точные имена renderer-подмодулей смотри в `src/engine/`: декомпозиция сохраняет общие cache/geometry helpers. `App`/`CanvasStage` всё ещё крупные координаторы; дальнейшее выделение каждого gesture handler возможно без изменения файлового формата.
 
@@ -43,7 +47,7 @@ Pointer / клавиша / контрол
 1. Нет изменений + тот же контейнер PSD/PSB + исходные байты доступны → byte-for-byte оригинал.
 2. Внешний вид не изменился → native metadata update, сохранение совместимой исходной merged-секции и неизвестных image resources. Layout/color-mode checks не позволяют копировать incompatible PSD/PSB RLE/gray sections.
 3. Визуальные изменения → пересборка native layer tree, mask/placement/FX metadata в доступном объёме и реальный merged raster текущего документа.
-4. Дополнительный XMP содержит собственный документ, а **не заменяет** пункты 1–3.
+4. Дополнительный XMP содержит собственный документ, а **не заменяет** пункты 1–3. SHA-256 считается по финальному файлу с обнулённым integrity-slot. Внешнее изменение → чтение настоящих native-слоёв; это контроль актуальности, не аутентификация.
 5. Worker возвращает bounded `ArrayBuffer`. Веб скачивает Blob; Electron показывает диалог и пишет через ограниченный IPC.
 
 Для transformed native mask покрытие выводится из той же отрисованной alpha, что используется в редакторе. Исходные скрытые пиксели не удаляются. Density/feather для такого native mask запекаются; управляющие параметры остаются в XMP. При выключенной маске native source color/alpha не подменяются изображением с включённой маской.
@@ -83,6 +87,29 @@ npm audit --audit-level=moderate
 
 Windows: Python находится в `.venv\\Scripts\\python.exe`; native smoke — `npm run test:desktop`. После `npm run desktop:windows` можно задать `FSH777_SMOKE_EXECUTABLE` путём к `release/win-unpacked/ФШ 777.exe` и повторить smoke. GitHub Actions делает оба запуска автоматически перед release draft.
 
-Браузерные тесты используют **production bundle**, не vite dev. Fixture pixels проверяются отдельно от UI; крупные массивы сравниваются без огромного assert diff. Python psd-tools — независимый reader/compositor. Допуск 2/255 относится только к перечисленным масочным fixtures; он не доказывает полную Adobe/XnConvert совместимость.
+Браузерные тесты используют **production bundle**, не vite dev. Fixture pixels проверяются отдельно от UI; крупные массивы сравниваются без огромного assert diff. Python psd-tools — независимый reader/compositor. Допуск 2/255 относится только к перечисленным масочным fixtures и учебному редакторскому процессу; он не доказывает полную Adobe/XnConvert совместимость.
 
-Необходимые дальнейшие направления: реальные проблемные пользовательские PSD, color-managed ICC/16-bit core, больше native adjustment/vector/FX semantics, полноценные text metrics/variable axes, аппаратные perf-бенчмарки. Ограничения текущего выпуска — в `COMPATIBILITY.md`.
+Необходимые дальнейшие направления: реальные проблемные пользовательские PSD, color-managed ICC/16-bit core, больше native adjustment/vector/FX semantics, rich/vertical type и variable axes, аппаратные perf-бенчмарки. Ограничения текущего выпуска — в `COMPATIBILITY.md`.
+
+## Макет: изоляция задач и воспроизведение
+
+J передаёт worker копии пикселей/масок: исходные preview-буферы не detach. Смена параметров/источника, закрытие и отмена завершают предыдущий worker; поздние ответы игнорируются. Есть вычислительный бюджет алгоритма и внешний 60-секундный тайм-аут. Результат — отдельный растровый слой, не модификация источника. Вариант под верхним текстом использует один и тот же индекс для исключения текста из исходного композита и вставки результата; группы и обтравочные цепочки не разрезаются. Текст, обтравленный к нетекстовой основе ниже стека, остаётся в исходном композите; вставка не создаёт для него новую clipping base.
+
+Предпросмотр держит original/after/overlay canvas. Ползунок меняет compositing clip, не пересобирает RGBA. Кисть интерполирует отрезки, recolor охватывает dirty rectangle, а не всю ROI. E2E считает `putImageData`: перемещение разделителя не пишет RGBA, штрих изменяет лишь ограниченную область. Это проверка объёма работы, не бенчмарк GPU/FPS.
+
+Текстовая подготовка ждёт конкретные FontFace descriptors и ограниченный sample перед layout/export; cold-font E2E задерживает выдачу встроенного Oswald и проверяет первую отрисовку/PSD. Layout ограничен 20 000 символами, 512 строками, 24 000 измерениями, 128 cached entries. Эллипс экспортируется как hard-wrapped native box text с отступами строк, не Adobe path text; точная модель рамки остаётся в XMP.
+
+Рекордер слушает `EditorEvent` после final commit, не каждое движение/клавишу. JSON — только проверяемые данные. Неизвестный включённый шаг блокирует запуск; частичное выполнение не коммитится. Последний 200-й допустимый шаг сохраняется; переполнение в середине составного события создаёт blocker. Draft удаляется лишь после успешного сохранения библиотеки, содержащей ту же запись. При 100 операциях он остаётся отдельно, восстанавливается после удаления ненужной операции. Ошибка квоты не удаляет единственную копию. Перезапуск никогда не запускает запись автоматически.
+
+Док не меняет документ/историю: обработанные локальные клавиши не проходят в глобальные nudges, Escape отменяет resize, tabs не размонтируют редактор сценария. Плавающий док остаётся внутри одного окна приложения.
+
+
+## Нативная геометрия и проекция 0.5
+
+- `textGeometry.ts` измеряет реальные Canvas ink metrics; `layerGeometry.ts` объединяет selection/world/raster bounds. Point и paragraph frame различаются. `font-synthesis` задан одинаково для видимого и detached canvas. Загрузка шрифтов инвалидирует кеши, не меняет документ и историю.
+- `shapeGeometry.ts` задаёт общие кривые Безье/радиусы/экстремумы/проекцию; `shapeRenderer.ts` рисует те же контуры. `psdVector.ts` пишет реальные fill/path/stroke/origination, `psdText.ts` — point/box type и guarded import. Неоднородные стили/вертикальный текст и неизвестные vector paints не объявляются поддержанными.
+- `projectiveTexture.ts`: perspective-correct WebGL texture sampling, premultiplied RGBA, без смешивания повторных треугольников. Один GL-контекст, обычный Canvas2D-кеш результата. Недоступность/потеря контекста → CPU inverse homography с билинейной premultiplied-интерполяцией. Это отдельные браузерные тесты, а не обещание FPS на любой машине.
+- `warpRenderer.ts` привязывает результат к документным пикселям, включая вращение. Целочисленный сдвиг может переиспользовать кеш; дробный сдвиг/поворот изменяет фазу сэмплирования и пересчитывается. `rasterizedGeometry` переносит реальные границы/warp/маску/стили при растеризации и создании smart-содержимого.
+- `psdSmart.ts` проверяет размещение, reflection, регулярный identity-envelope и одиночный Gaussian Blur 0–30 px. Неизвестные эффекты/внешние маски/comp/animation/warp не пропускаются молча. Автораскрытие embedded PSD ограничено 3 уровнями, 8 файлами, 32 МиБ embedded bytes / 32 Мп холстов; исходные bytes сохраняются и для остальных случаев.
+- Размытый/проективный текст и деформированные stroke/FX экспортируются через вложенные **редактируемые** PSD. Локальные FX с исходной маской остаются на правильном уровне. Native smart previews после визуальных правок обновляются отдельно от сохранённых placement/linked-структур. No-edit original остаётся побайтным.
+- `psdReport.ts` / `PsdReportDialog.tsx` показывают реальные верхние/групповые native-структуры, число editable conversions, шрифты и замечания; это не recursive Adobe compatibility certification. Независимый reader проверяет 19 случаев; TypeLayer/smart-кеши компонуются, шрифты и smart filters не регенерируются Adobe-движком.
