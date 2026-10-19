@@ -307,7 +307,7 @@ export function CorrectionProperties({
           })}
         </>
       )}
-      {c.type === 'posterize' && scalar('levels', 'Число уровней', 2, 256)}
+      {c.type === 'posterize' && scalar('levels', 'Число уровней', 2, 255)}
       {c.type === 'threshold' && scalar('level', 'Уровень порога', 0, 255)}
       {c.type === 'invert' && (
         <p className="panel-note">

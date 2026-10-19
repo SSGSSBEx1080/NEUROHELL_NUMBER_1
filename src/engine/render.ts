@@ -24,7 +24,13 @@ function rememberImage(src: string, image: HTMLImageElement | HTMLCanvasElement)
     images.delete(key)
   }
 }
-export const cacheImage = (src: string, image: HTMLCanvasElement) => rememberImage(src, image)
+export const cacheImage = (src: string, image: HTMLCanvasElement) => {
+  // Content-addressed PNG/data sources are immutable. Replacing an existing decoded
+  // image by a canvas with the same bytes can change Chromium's filter sampling and
+  // even alter a different layer sharing that source. Only volatile brush previews mutate.
+  const existing = !src.startsWith('mask-preview:') && images.get(src)
+  rememberImage(src, existing || image)
+}
 export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasElement> {
   const existing = images.get(src)
   if (existing) {
@@ -413,7 +419,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
     clearTextGeometryCache()
   }
   const bounds = pixelBounds(
-    layer.kind === 'text' || layer.kind === 'shape'
+    layer.kind === 'text' || layer.kind === 'shape' || layer.adjustments.blur > 0
       ? rasterBounds(layer, false, true)
       : { x: 0, y: 0, width: layer.width, height: layer.height },
   )

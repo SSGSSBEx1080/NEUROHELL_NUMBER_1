@@ -2,36 +2,43 @@ import type { BlendMode } from '../types'
 import type { Correction, CurvePoint, LevelRange, MixerRow } from './adjustmentTypes'
 export const unit = (x: number) => Math.min(1, Math.max(0, x))
 const lum = (r: number, g: number, b: number) => r * 0.3 + g * 0.59 + b * 0.11
-/** Shape-preserving cubic Hermite interpolation. No spline overshoot between monotone anchors. */
+const curveDerivatives = new WeakMap<CurvePoint[], Float64Array>()
+/** Natural cubic spline: zero second derivatives at the endpoints, as used by native RGB curve readers. */
 export function curveValue(points: CurvePoint[], value: number): number {
   if (value <= points[0].input) return points[0].output
   const last = points.length - 1
   if (value >= points[last].input) return points[last].output
-  const delta = points
-    .slice(1)
-    .map((p, i) => (p.output - points[i].output) / (p.input - points[i].input))
-  const tangent = (i: number) => {
-    if (!i) return delta[0]
-    if (i === last) return delta[last - 1]
-    const a = delta[i - 1],
-      b = delta[i]
-    if (a * b <= 0) return 0
-    const h0 = points[i].input - points[i - 1].input,
-      h1 = points[i + 1].input - points[i].input
-    return (3 * (h0 + h1)) / ((2 * h1 + h0) / a + (h1 + 2 * h0) / b)
+  let derivatives = curveDerivatives.get(points)
+  if (!derivatives) {
+    derivatives = new Float64Array(points.length)
+    const upper = new Float64Array(points.length),
+      rhs = new Float64Array(points.length)
+    for (let i = 1; i < last; i++) {
+      const before = points[i].input - points[i - 1].input,
+        after = points[i + 1].input - points[i].input
+      const slope =
+        6 *
+        ((points[i + 1].output - points[i].output) / after -
+          (points[i].output - points[i - 1].output) / before)
+      const denominator = 2 * (before + after) - before * upper[i - 1]
+      upper[i] = after / denominator
+      rhs[i] = (slope - before * rhs[i - 1]) / denominator
+    }
+    for (let i = last - 1; i > 0; i--) derivatives[i] = rhs[i] - upper[i] * derivatives[i + 1]
+    curveDerivatives.set(points, derivatives)
   }
-  const index = points.findIndex((p) => p.input > value) - 1
-  const a = points[index],
-    b = points[index + 1],
+  const i = points.findIndex((p) => p.input > value) - 1,
+    a = points[i],
+    b = points[i + 1],
     h = b.input - a.input,
-    t = (value - a.input) / h
+    u = (b.input - value) / h,
+    v = (value - a.input) / h
   return (
     255 *
     unit(
-      ((2 * t * t * t - 3 * t * t + 1) * a.output +
-        (t * t * t - 2 * t * t + t) * h * tangent(index) +
-        (-2 * t * t * t + 3 * t * t) * b.output +
-        (t * t * t - t * t) * h * tangent(index + 1)) /
+      (u * a.output +
+        v * b.output +
+        (((u * u * u - u) * derivatives[i] + (v * v * v - v) * derivatives[i + 1]) * h * h) / 6) /
         255,
     )
   )
@@ -91,8 +98,8 @@ export function compileCorrection(a: Correction): Transform {
       Float64Array.from({ length: 256 }, (_, i) => {
         const value =
           a.type === 'levels'
-            ? levelValue(a.channels.rgb, levelValue(a.channels[channel], i))
-            : curveValue(a.channels.rgb, curveValue(a.channels[channel], i))
+            ? levelValue(a.channels.rgb, Math.floor(levelValue(a.channels[channel], i) + 1e-7))
+            : curveValue(a.channels.rgb, Math.floor(curveValue(a.channels[channel], i) + 1e-7))
         return unit(value / 255)
       }),
     )
@@ -110,12 +117,15 @@ export function compileCorrection(a: Correction): Transform {
       out[2] = unit((b + offset - 0.5) * contrast + 0.5)
     }
   } else if (a.type === 'exposure') {
-    const factor = 2 ** a.exposure,
-      gamma = 1 / a.gamma
+    // EV acts on approximately linear light, not directly on gamma-encoded bytes.
+    // RGB/8 TRC approximation 2.2; no arbitrary ICC transform is claimed here.
+    const table = Float64Array.from({ length: 256 }, (_, i) =>
+      Math.pow(unit(Math.pow(i / 255, 2.2) * 2 ** a.exposure + a.offset), 1 / (a.gamma * 2.2)),
+    )
     fn = (r, g, b, out) => {
-      out[0] = unit(Math.pow(Math.max(0, r * factor + a.offset), gamma))
-      out[1] = unit(Math.pow(Math.max(0, g * factor + a.offset), gamma))
-      out[2] = unit(Math.pow(Math.max(0, b * factor + a.offset), gamma))
+      out[0] = table[Math.round(r * 255)]
+      out[1] = table[Math.round(g * 255)]
+      out[2] = table[Math.round(b * 255)]
     }
   } else if (a.type === 'hue/saturation' || a.type === 'vibrance') {
     const scratch = [0, 0, 0]
@@ -175,9 +185,9 @@ export function compileCorrection(a: Correction): Transform {
   else if (a.type === 'posterize') {
     const n = a.levels - 1
     fn = (r, g, b, out) => {
-      out[0] = Math.round(r * n) / n
-      out[1] = Math.round(g * n) / n
-      out[2] = Math.round(b * n) / n
+      out[0] = Math.floor((r * 255 * a.levels) / 256) / n
+      out[1] = Math.floor((g * 255 * a.levels) / 256) / n
+      out[2] = Math.floor((b * 255 * a.levels) / 256) / n
     }
   } else
     fn = (r, g, b, out) => {

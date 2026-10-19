@@ -1,3 +1,4 @@
+import { maskOperationNames, type MaskOperation } from '../engine/maskOperations'
 import { CorrectionProperties } from './CorrectionProperties'
 import { localBounds, worldBounds, resizePointText, rotateVisual } from '../engine/layerGeometry'
 import { ShapeProperties } from './ShapeProperties'
@@ -41,6 +42,7 @@ interface Props {
   onFitLayer: () => void
   onImport: () => void
   onAddText: () => void
+  onMaskCommand: (operation: MaskOperation) => void
   onMask: () => void
   onOpenSmart: () => void
   onParent: (id: string | null) => void
@@ -84,6 +86,7 @@ export function PropertiesPanel({
   onImport,
   onAddText,
   onMask,
+  onMaskCommand,
   onOpenSmart,
   onParent,
   settings,
@@ -357,6 +360,17 @@ export function PropertiesPanel({
                       >
                         {settings.editMask ? 'Рисуем по маске · кисть' : 'Редактировать маску'}
                       </button>
+                      <div className="mask-command-buttons">
+                        {Object.entries(maskOperationNames).map(([operation, label]) => (
+                          <button
+                            key={operation}
+                            className="compact-button"
+                            onClick={() => onMaskCommand(operation as MaskOperation)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                       <p className="panel-note">
                         Чёрный скрывает, белый проявляет. X меняет цвета местами. Исходные пиксели
                         не стираются.

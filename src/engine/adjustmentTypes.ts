@@ -234,7 +234,7 @@ export function parseCorrection(input: unknown): Correction {
             : key === 'hue'
               ? [-180, 180]
               : key === 'levels'
-                ? [2, 256]
+                ? [2, 255]
                 : key === 'level'
                   ? [0, 255]
                   : defaults.type === 'black & white'

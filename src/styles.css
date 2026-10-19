@@ -5281,3 +5281,159 @@ canvas {
 .ruler span {
   pointer-events: none;
 }
+.mask-command-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 12px 0;
+}
+.mask-command-buttons .compact-button {
+  font-size: 10px;
+}
+.command-search-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #8973ac;
+  border-radius: 8px;
+  background: #1c1724;
+  color: #c2addc;
+}
+.command-search-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: #f2eafa;
+  font-size: 15px;
+}
+.command-search-field kbd,
+.command-results kbd {
+  font-size: 10px;
+  border: 1px solid #5d506b;
+  border-radius: 4px;
+  padding: 3px 5px;
+  color: #bcb0cb;
+  white-space: nowrap;
+}
+.command-results {
+  max-height: 390px;
+  overflow-y: auto;
+  margin-top: 14px;
+}
+.command-results button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px;
+  gap: 18px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #ddd4e7;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.command-results button.active {
+  background: #3c304c;
+  border-color: #806697;
+}
+.command-results button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.command-result-name {
+  min-width: 0;
+}
+.command-result-name small {
+  display: block;
+  color: #a69ab7;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+.command-result-name strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.command-result-name em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  margin-top: 4px;
+}
+.command-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: #a498b2;
+  border-top: 1px solid #45384f;
+  padding-top: 12px;
+  margin-top: 10px;
+}
+.command-empty {
+  text-align: center;
+  padding: 38px;
+  color: #a598b4;
+  font-size: 13px;
+}
+.filter-preview-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.filter-comparison {
+  position: relative;
+  max-width: 100%;
+  border: 1px solid #60506e;
+  overflow: hidden;
+}
+.filter-comparison canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.filter-comparison canvas + canvas {
+  position: absolute;
+  inset: 0;
+}
+.filter-comparison-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ffffffc0;
+  pointer-events: none;
+}
+.filter-compare-slider {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 12px;
+  color: #bbb0c9;
+}
+.filter-compare-slider input {
+  flex: 1;
+  accent-color: #c1a9e3;
+}
+.filter-parameters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+  align-items: center;
+}
+.filter-parameters .number-field > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  font-size: 11px;
+}
+.filter-parameters .number-field input {
+  width: 75px;
+  flex: 0 0 75px;
+  text-align: right;
+}

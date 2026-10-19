@@ -43,6 +43,7 @@ export function selectionMask(
   height: number,
   layer?: Layer,
   targetMask?: LayerMask,
+  sourcePixelsUnflipped = false,
 ): HTMLCanvasElement {
   const c = document.createElement('canvas')
   c.width = width
@@ -69,6 +70,9 @@ export function selectionMask(
             if (layer.flipY) ly = layer.height - ly
             u = lx / layer.width
             v = ly / layer.height
+          } else if (sourcePixelsUnflipped) {
+            if (layer.flipX) u = 1 - u
+            if (layer.flipY) v = 1 - v
           }
           const denominator = matrix ? matrix[6] * u + matrix[7] * v + matrix[8] : 1
           const qx = matrix ? (matrix[0] * u + matrix[1] * v + matrix[2]) / denominator : u
@@ -102,6 +106,10 @@ export function selectionMask(
         ])
   const pts = source.map((p) => {
     const q = layer ? localPoint(layer, p) : p
+    if (layer && sourcePixelsUnflipped && !targetMask) {
+      if (layer.flipX) q.x = layer.width - q.x
+      if (layer.flipY) q.y = layer.height - q.y
+    }
     if (layer && targetMask)
       return {
         x:

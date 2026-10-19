@@ -178,7 +178,7 @@ export function Modal({
           'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea, a[href], [tabindex="0"]',
         ),
       )
-    focusable()[0]?.focus()
+    ;(node.querySelector<HTMLElement>('[autofocus],[data-autofocus]') || focusable()[0])?.focus()
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()

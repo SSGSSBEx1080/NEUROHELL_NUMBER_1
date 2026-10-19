@@ -50,7 +50,7 @@ describe('non-destructive adjustment mathematics', () => {
     const out = applyCorrection(new Uint8ClampedArray([32, 80, 224, 255]), c)
     expect([...out]).toEqual([10, 125, 240, 255])
   })
-  it('curves interpolate anchors exactly and stay inside interval bounds', () => {
+  it('natural curves interpolate anchors exactly and clamp only at the RGB limits', () => {
     const points = [
       { input: 0, output: 0 },
       { input: 64, output: 240 },
@@ -61,10 +61,8 @@ describe('non-destructive adjustment mathematics', () => {
     for (let i = 0; i < points.length - 1; i++)
       for (let x = points[i].input; x < points[i + 1].input; x += 0.5) {
         const value = curveValue(points, x)
-        expect(value).toBeGreaterThanOrEqual(
-          Math.min(points[i].output, points[i + 1].output) - 1e-7,
-        )
-        expect(value).toBeLessThanOrEqual(Math.max(points[i].output, points[i + 1].output) + 1e-7)
+        expect(value).toBeGreaterThanOrEqual(0)
+        expect(value).toBeLessThanOrEqual(255)
       }
   })
   it('exposure, channel mixer, threshold, posterize and hue have numerical reference values', () => {
@@ -75,7 +73,7 @@ describe('non-destructive adjustment mathematics', () => {
         offset: 0,
         gamma: 1,
       }),
-    ]).toEqual([60, 120, 240, 90])
+    ]).toEqual([41, 82, 164, 90])
     const c = defaultCorrection('channel mixer') as Extract<Correction, { type: 'channel mixer' }>
     c.red = { red: 0, green: 0, blue: 100, constant: 0 }
     c.blue = { red: 100, green: 0, blue: 0, constant: 0 }

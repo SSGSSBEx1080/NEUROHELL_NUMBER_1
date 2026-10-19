@@ -1,3 +1,8 @@
+import { RasterFilterDialog } from './components/RasterFilterDialog'
+import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
+import { insertFilteredCopy } from './engine/filterLayers'
+import { CommandPalette, type EditorCommand } from './components/CommandPalette'
+import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
 import { ArrangeDialog } from './components/ArrangeDialog'
 import { GuidesDialog } from './components/GuidesDialog'
 import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
@@ -55,6 +60,7 @@ import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  Search,
   Check,
   ChevronDown,
   CircleHelp,
@@ -194,8 +200,11 @@ export default function App() {
     | 'selection-modify'
     | 'guides'
     | 'arrange'
+    | 'commands'
+    | 'raster-filter'
     | null
   >(null)
+  const [lastFilter, setLastFilter] = useState<RasterFilter | null>(null)
   const [arrangeIds, setArrangeIds] = useState<string[]>([])
   const [selectionModify, setSelectionModify] = useState<SelectionModify>('expand')
   const recorder = useActionRecorder(editor)
@@ -401,6 +410,32 @@ export default function App() {
     if (selectedId && !doc.layers.some((l) => l.id === selectedId)) setSelectedId(null)
   }, [doc.layers, selectedId])
 
+  const openCommands = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    editor.finish('Перед поиском команды')
+    setModal('commands')
+  }
+  const maskCommand = async (operation: MaskOperation) => {
+    if (!selectedId) return
+    const snapshot = editor.documentRef.current
+    setBusy('Изменяем маску…')
+    try {
+      const next = await changeLayerMask(snapshot, selectedId, operation)
+      if (editor.documentRef.current === snapshot)
+        editor.change(() => next, maskOperationNames[operation])
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка маски')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const canFilter =
+    !!selected &&
+    selected.kind === 'image' &&
+    !selected.locked &&
+    !settings.editMask &&
+    !settings.quickMask &&
+    doc.layers.length < MAX_LAYERS
   const openArrange = (ids = selectedId ? [selectedId] : []) => {
     setArrangeIds(ids)
     setModal('arrange')
@@ -1216,6 +1251,19 @@ export default function App() {
         }
         return
       }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        e.code === 'KeyF' &&
+        !busy &&
+        !modal &&
+        !pendingDocument &&
+        !workspace.closing
+      ) {
+        e.preventDefault()
+        openCommands()
+        return
+      }
       if (typing(e.target) || busy || modal || pendingDocument || workspace.closing) return
       const mod = e.ctrlKey || e.metaKey
       if (workspace.home) {
@@ -1310,10 +1358,20 @@ export default function App() {
               copyLayer()
             }
             return
+          case 'KeyF':
+            if (e.altKey && canFilter && lastFilter) {
+              e.preventDefault()
+              setModal('raster-filter')
+            }
+            return
           case 'KeyI':
             e.preventDefault()
             if (e.shiftKey || settings.quickMask) {
               invertSelectedArea()
+              return
+            }
+            if (settings.editMask && selected?.mask) {
+              void maskCommand('invert')
               return
             }
             if (selected && !selected.locked && selected.kind !== 'adjustment')
@@ -1656,6 +1714,11 @@ export default function App() {
     disabled: !!busy || doc.layers.length >= MAX_LAYERS,
   }))
   const layerMenu: MenuItem[] = [
+    ...Object.entries(maskOperationNames).map(([operation, label]) => ({
+      label,
+      action: () => void maskCommand(operation as MaskOperation),
+      disabled: !selected?.mask || !!selected.locked,
+    })),
     {
       label: 'Выравнивание и интервалы…',
       action: () => openArrange(),
@@ -1803,6 +1866,17 @@ export default function App() {
   ]
   const filterMenu: MenuItem[] = [
     {
+      label: 'Растровые фильтры на копии…',
+      action: () => setModal('raster-filter'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Последний растровый фильтр…',
+      shortcut: 'Ctrl Alt F',
+      action: () => setModal('raster-filter'),
+      disabled: !canFilter || !lastFilter,
+    },
+    {
       label: 'Восстановление области…',
       shortcut: 'J',
       action: () => openRepair(),
@@ -1895,10 +1969,67 @@ export default function App() {
     })),
   ]
   const helpMenu: MenuItem[] = [
+    { label: 'Поиск команд…', icon: Search, shortcut: 'Ctrl F', action: openCommands },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') },
     { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') },
   ]
+
+  const homeCommands = new Set([
+    'Новый проект',
+    'Открыть файл…',
+    'Главная / недавние',
+    'Открыть демопроект',
+    'Настройки…',
+    'Библиотека шрифтов…',
+    'Горячие клавиши',
+    'О ФШ 777',
+  ])
+  const commands: EditorCommand[] = (
+    [
+      ['Файл', fileMenu],
+      ['Правка', editMenu],
+      ['Изображение', imageMenu],
+      ['Слой', layerMenu],
+      ['Коррекция', correctionMenu],
+      ['Выделение', selectionMenu],
+      ['Вид', viewMenu],
+      ['Фильтры', filterMenu],
+      ['Окно', windowMenu],
+      ['Помощь', helpMenu],
+    ] as [string, MenuItem[]][]
+  ).flatMap(([group, items]) =>
+    items
+      .filter((item) => item.label !== 'Поиск команд…')
+      .map((item) => ({
+        id: `${group}:${item.label}`,
+        label: item.label,
+        group,
+        shortcut: item.shortcut,
+        disabled: !!busy || item.disabled || (workspace.home && !homeCommands.has(item.label)),
+        run: item.action,
+      })),
+  )
+  commands.push(
+    ...tools.map((t) => ({
+      id: `tool:${t.id}`,
+      label: t.name,
+      group: 'Инструменты',
+      shortcut: t.key,
+      disabled: !!busy || workspace.home,
+      run: () => setTool(t.id),
+    })),
+  )
+  commands.push(
+    ...actions.map((a) => ({
+      id: `action:${a.id}`,
+      label: a.name,
+      group: 'Операции',
+      keywords: a.source,
+      disabled: !!busy || workspace.home || !selected || !!selected.locked,
+      run: () => executeAction(a),
+    })),
+  )
 
   return (
     <div
@@ -2012,6 +2143,12 @@ export default function App() {
             </span>
           </div>
           <div className="header-actions">
+            <IconButton
+              icon={Search}
+              label="Поиск команд (Ctrl+F)"
+              onClick={openCommands}
+              disabled={!!busy}
+            />
             <span className="private-badge">
               <span />
               Локально. Приватно.
@@ -2492,6 +2629,7 @@ export default function App() {
                   onImport={() => input.current?.click()}
                   onAddText={addText}
                   onMask={() => void addMask()}
+                  onMaskCommand={(operation) => void maskCommand(operation)}
                   onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
                   onParent={(parent) => {
                     if (selectedId)
@@ -2725,6 +2863,27 @@ export default function App() {
           onClose={closeReplace}
           onSave={() => void saveProject()}
           onConfirm={() => openDocument(pendingDocument)}
+        />
+      )}
+      {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
+      {modal === 'raster-filter' && selectedId && (
+        <RasterFilterDialog
+          doc={doc}
+          id={selectedId}
+          selection={selection}
+          initial={lastFilter || defaultRasterFilter('unsharp')}
+          onClose={closeModal}
+          onApply={(copy, filter, hide) => {
+            if (editor.documentRef.current !== doc)
+              throw new Error('Документ изменился. Открой фильтр заново.')
+            const next = insertFilteredCopy(doc, selectedId, copy, hide)
+            editor.change(() => next, 'Фильтр на растровой копии')
+            setSelectedId(copy.id)
+            setLastFilter(filter)
+            setSettings({ editMask: false, quickMask: false })
+            setTool('move')
+            closeModal()
+          }}
         />
       )}
       {modal === 'arrange' && (

@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 import { initializeCanvas, readPsd, writePsd } from 'ag-psd'
 import { makeLayer, newDocument } from '../../src/engine/document'
-import { correctionNames } from '../../src/engine/adjustmentTypes'
+import { correctionNames, defaultCorrection } from '../../src/engine/adjustmentTypes'
 initializeCanvas(
   () => {
     throw new Error('No DOM in PSD verifier')
@@ -223,3 +223,64 @@ test('curve point editing, per-channel presets and selection mask are real undoa
   })
   expect(native.mask).toBeTruthy()
 })
+
+for (const kind of ['levels', 'curves', 'exposure', 'posterize'] as const)
+  test(`independent native RGB ${kind} fixture uses nontrivial controls and translucent pixels`, async ({
+    page,
+  }) => {
+    await init(page)
+    const src = await page.evaluate(() => {
+      const c = document.createElement('canvas')
+      c.width = 256
+      c.height = 64
+      const x = c.getContext('2d')!,
+        im = x.createImageData(256, 64)
+      for (let y = 0; y < 64; y++)
+        for (let xx = 0; xx < 256; xx++) {
+          const i = (y * 256 + xx) * 4
+          im.data[i] = xx
+          im.data[i + 1] = 255 - xx
+          im.data[i + 2] = (xx * 3) % 256
+          im.data[i + 3] = y < 32 ? 255 : 128
+        }
+      x.putImageData(im, 0, 0)
+      return c.toDataURL()
+    })
+    const c = defaultCorrection(kind)
+    if (c.type === 'levels') {
+      c.channels.rgb = { black: 16, white: 240, gamma: 1.2, outBlack: 6, outWhite: 248 }
+      c.channels.red = { black: 8, white: 250, gamma: 1.1, outBlack: 0, outWhite: 255 }
+      c.channels.green.gamma = 0.9
+    }
+    if (c.type === 'curves') {
+      c.channels.rgb = [
+        { input: 0, output: 0 },
+        { input: 64, output: 48 },
+        { input: 192, output: 210 },
+        { input: 255, output: 255 },
+      ]
+      c.channels.red = [
+        { input: 0, output: 0 },
+        { input: 128, output: 144 },
+        { input: 255, output: 255 },
+      ]
+    }
+    if (c.type === 'exposure') {
+      c.exposure = 1
+      c.offset = 0.01
+      c.gamma = 0.9
+    }
+    if (c.type === 'posterize') c.levels = 5
+    const doc = newDocument(256, 64, `Native ${kind}`, 'transparent')
+    doc.layers = [
+      makeLayer({ kind: 'image', src, width: 256, height: 64 }),
+      makeLayer({ kind: 'adjustment', width: 256, height: 64, correction: c }),
+    ]
+    await open(page, `${kind}.777`, Buffer.from(JSON.stringify(doc)))
+    await writeFile(`test-results/native-tone-${kind}.psd`, await save(page))
+    const png = await page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return c.toDataURL().split(',')[1]
+    })
+    await writeFile(`test-results/native-tone-${kind}.png`, Buffer.from(png, 'base64'))
+  })

@@ -11,7 +11,7 @@ const hints: Record<CorrectionKind, string> = {
   'black & white': 'Шесть цветовых диапазонов',
   'channel mixer': 'Матрица RGB и монохромный режим',
   invert: 'Цветовой негатив',
-  posterize: 'От 2 до 256 уровней',
+  posterize: 'От 2 до 255 уровней',
   threshold: 'Чёрный/белый по порогу',
 }
 export function CorrectionDialog({

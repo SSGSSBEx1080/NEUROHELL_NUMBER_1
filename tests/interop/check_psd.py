@@ -182,4 +182,22 @@ assert guides.data == [(80 * 32, 0), (100 * 32, 1)]
 assert np.array_equal(premultiplied(document.topil()), premultiplied(Image.open(RESULTS / "native-guides.png")))
 print("PASS native grid/guides: correct independent 1/32-pixel resource, asymmetric grid, exact merged pixels without printed guides")
 
-print("Scope: RGB/8, these twenty-four fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion is independently recalculated; not all adjustment algorithms. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+for kind in ["levels", "curves", "exposure", "posterize"]:
+    document = PSDImage.open(RESULTS / f"native-tone-{kind}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"native-tone-{kind}.png"))
+    assert document[1].kind == kind
+    for source, image in [("merged", document.topil()), ("independently recomputed", document.composite(force=True, apply_icc=False))]:
+        delta = np.abs(premultiplied(image) - reference)
+        assert float(delta.max()) <= 2, (kind, source, float(delta.max()))
+        print(f"PASS native {kind}, {source}: non-default RGB parameters and alpha 128, max {delta.max():.4f}/255")
+
+document = PSDImage.open(RESULTS / "raster-filter-copy.psd")
+reference = premultiplied(Image.open(RESULTS / "raster-filter-copy.png"))
+assert len(document) == 2 and not document[0].visible and document[1].visible
+assert all(layer.kind == "pixel" for layer in document)
+for source, image in [("merged", document.topil()), ("native composition", document.composite(force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2, ("raster filter", source, float(delta.max()))
+    print(f"PASS raster filter copy, {source}: source retained, no alpha doubling, max {delta.max():.4f}/255")
+
+print("Scope: RGB/8, these twenty-nine fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion/levels/curves/exposure/posterize are independently recomputed on these fixtures; not all Adobe algorithms/ICC. No XnConvert/Photoshop execution or universal fidelity claim.")
