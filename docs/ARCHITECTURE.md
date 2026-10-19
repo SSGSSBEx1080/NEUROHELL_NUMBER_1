@@ -1,4 +1,4 @@
-# Архитектура ФШ777 · 0.7
+# Архитектура ФШ777 · 0.7.1
 
 Независимый TypeScript/React-редактор с Canvas 2D и отдельной Electron-оболочкой. Сервер обработки изображений не нужен. Adobe-код не используется; ag-psd — MIT-кодек формата, не готовый движок Photoshop.
 
@@ -17,8 +17,8 @@
 | Исходники / восстановление | `engine/psdSource.ts`, `storage.ts`                                                                                 | Ограниченный source LRU, оригинальные bytes/composite/baseline, IndexedDB projects/sources/fonts, порядок асинхронных сохранений |
 | Шрифты                     | `engine/fonts.ts`, `fontCatalog.json`, `fontNames.json`, `FontsDialog.tsx`                                          | SFNT name parser, FontFace, bounded upload/cache, native PostScript names, Google Fonts/OFL                                      |
 | Интерфейс                  | `components/`, `styles.css`, `App.tsx`                                                                              | Панели/меню/диалоги и оркестрация, не PSD-парсер. Текстовые настройки справа                                                     |
-| J-клининг                  | `engine/repair.ts`, `repair.worker.ts`, `repairJob.ts`, `repairPreview.ts`, `repairPlacement.ts`                    | Paper-plane/exemplar, ROI/target/work limits, abort/timeout, cached preview and donor overlay, explicit source/stack placement   |
-| Рамочный текст             | `engine/textLayout.ts`, `script.ts`, `scriptFormat.ts`, `TextFrameSettings.tsx`, `TranslationPanel.tsx`             | Bounded Unicode layout, font fitting, rectangles/ellipse, validated local script and atomic linking                              |
+| Восстановление J           | `engine/repair.ts`, `repair.worker.ts`, `repairJob.ts`, `repairPreview.ts`, `repairPlacement.ts`                    | Paper-plane/exemplar, ROI/target/work limits, abort/timeout, cached preview and donor overlay, explicit source/stack placement   |
+| Рамочный текст             | `engine/textLayout.ts`, `textEntries.ts`, `textEntriesFormat.ts`, `TextFrameSettings.tsx`, `TextEntriesPanel.tsx`   | Bounded Unicode layout, font fitting, rectangles/ellipse, validated local script and atomic linking                              |
 | Запись операций            | `editorEvents.ts`, `actionRecorder.ts`, `actionSchema.ts`, `actionStorage.ts`, `actions.ts`, `useActionRecorder.ts` | Final commits → validated commands; explicit blockers; immutable transactional replay, bounded recovery                          |
 | Док-панели                 | `engine/panelLayout.ts`, `PanelDock.tsx`, `ActionsPanel.tsx`                                                        | Validated persistent layout, RAF gesture preview, commit/cancel, viewport clamp, mounted tabs                                    |
 | Настольная граница         | `desktop/main.cjs`, `preload.cjs`, `protocol.cjs`, `fonts.cjs`, `files.cjs`                                         | Custom app protocol, доверенный main frame, whitelist IPC, native save dialog, atomic write, фиксированный Windows font query    |
@@ -124,7 +124,7 @@ J передаёт worker копии пикселей/масок: исходны
 - `maskOperations`: меняются mask pixels/defaultColor, не layer kind. `commandSearch` и `CommandPalette` используют те же обработчики, что меню/инструменты, имеют aliases/раскладку/recents, не исполняют строки как код.
 - Persistent source keys immutable: одинаковый PNG не заменяет уже используемый HTMLImage/Canvas другим представлением с чуть отличающейся фильтрацией Chromium. `mask-preview:` — явное исключение для живой кисти. Исправление проверяется на повороте/отражении/blur/маске без расширения допуска.
 
-Тестовая матрица 0.7: 257 unit в 27 файлах, 114 production browser, 35 independent PSD fixtures, 11 desktop security/IPC/font-probe. Native Windows smoke дополнен command search, levels/curves+mask, Quick Mask, native guide resource, Wand worker, filter worker/сохранением original smart/undo. Эти проверки не равны интерактивному NSIS-install тесту, Adobe execution или полной сертификации формата.
+Тестовая матрица 0.7.1: 265 unit в 29 файлах, 119 production browser, 35 independent PSD fixtures, 11 desktop security/IPC/font-probe. Native Windows smoke дополнен command search, levels/curves+mask, Quick Mask, native guide resource, Wand worker, filter worker/сохранением original smart/undo. Эти проверки не равны интерактивному NSIS-install тесту, Adobe execution или полной сертификации формата.
 
 Синтетический CPU-benchmark: `node --expose-gc scripts/benchmark-filters.mjs 4096 2048`. Отдельный процесс Node, без PNG encode/UI/Windows; результат не используется для сравнений скорости с Photoshop.
 
@@ -135,3 +135,11 @@ J передаёт worker копии пикселей/масок: исходны
 - `psdAdjustments.ts` переводит Photo/GradientMap/ColorLookup в настоящие descriptors. `prepareAdjustmentRecords` исправляет integer-percent truncation перед каждым worker write. Classic grdm/v1 избегает сломанной SDK-v3 сигнатуры. `withoutXmpResource` удаляет только resource 1060, не прогоняя native поля через повторный кодек в interop-тесте.
 - `numericExpression.ts` — recursive-descent арифметика с жёсткими пределами, не eval. `Field` хранит черновик отдельно, сохраняет ARIA spinbutton/стрелки, не округляет модель на простом фокусе. `sameProjectData` применяется только при завершении жеста; общие immutable поддеревья пропускаются по ссылке, настоящие metadata-only изменения не игнорируются.
 - `desktop/fontProbe.cjs` — read-only fallback имен из ограниченных SFNT/OTF/TTC tables при отказе фиксированного Windows query; native IPC origin/frame checks не ослаблены. `.cube` добавлен в явный whitelist атомарного file writer с текстовым/размерным guard.
+
+## Рабочее пространство и миграция 0.7.1
+
+- `textEntries.ts` / `textEntriesFormat.ts` / `TextEntriesPanel.tsx` — обычные текстовые блоки с необязательными дополнительными полями. Reader явно отделяет актуальные данные от старого формата; обмен очищает внешние ID/links. `document.ts`, `history.ts` и `psdSource.ts` учитывают новые метаданные, их бюджет и невизуальную природу.
+- `panelLayout.ts` мигрирует сохранённые имена сред/вкладок, не сбрасывая пользовательские размеры и положение. Основной интерфейс не содержит фабрики отдельной учебной страницы.
+- `bundledAssets.ts` — фиксированная таблица разрешённых локальных ресурсов. Legacy bytes в `public/compat/` запрашиваются только для соответствующих сохранённых документов; новые документы и главная их не используют.
+- `tests/fixtures/editor/text-blocks.cjs` строит синтетические PNG/текстовые данные без зависимости от приложения или иллюстраций. Browser/desktop/benchmark используют один контракт, не скрытый production-test endpoint.
+- `textPreview.ts` восстанавливает истинную однотонную заливку eligible TypeLayer cache после Canvas premultiplication quantization. Перед нормализацией проверяется весь кеш; неизвестные/цветные варианты остаются исходными. Native тип слоя и metadata не меняются.

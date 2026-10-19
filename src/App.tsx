@@ -1159,7 +1159,7 @@ export default function App() {
   const openRepair = (area: Selection | null = selection) => {
     if (!area || area.width < 1 || area.height < 1)
       return toastMessage('Обведи область инструментом J или создай выделение.')
-    if (!doc.layers.length) return toastMessage('Сначала открой страницу или добавь изображение.')
+    if (!doc.layers.length) return toastMessage('Сначала открой документ или добавь изображение.')
     setSelection(area)
     setModal('repair')
   }
@@ -2816,7 +2816,7 @@ export default function App() {
             setSelectedId(layer.id)
             closeModal()
             toastMessage(
-              'Клин на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет результат.',
+              'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
             )
           }}
         />

@@ -209,7 +209,8 @@ export function RepairDialog({
       const layer = bitmapLayer(
         makeLayer({
           kind: 'image',
-          name: result.mode === 'smooth' ? 'Клин · гладкий фон' : 'Клин · фактура',
+          name:
+            result.mode === 'smooth' ? 'Восстановление · плавный фон' : 'Восстановление · текстура',
           x: source.x,
           y: source.y,
           width: source.width,
@@ -361,8 +362,8 @@ export function RepairDialog({
           {belowText && (
             <p className="panel-note">
               {repairPlacement(doc, true).index === doc.layers.length
-                ? 'Нет отделимого верхнего текста: клин будет над документом. Группы и обтравочные цепочки не разрываются.'
-                : 'Отделимый верхний стек текста исключён из образцов и останется над клином. Группы и обтравочные цепочки не разрываются.'}
+                ? 'Нет отделимого верхнего текста: результат будет над документом. Группы и обтравочные цепочки не разрываются.'
+                : 'Отделимый верхний стек текста исключён из образцов и останется над результатом. Группы и обтравочные цепочки не разрываются.'}
             </p>
           )}
           <div className="repair-progress" role="status">

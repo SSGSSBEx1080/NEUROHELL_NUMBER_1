@@ -169,6 +169,7 @@ test('text collection is local, places linked type once, survives PSD and data e
   await blank(page)
   await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
   await page.getByRole('button', { name: 'Добавить первый текстовый блок', exact: true }).click()
+  await page.getByText('Дополнительные поля', { exact: true }).click()
   await page.getByLabel('Исходный текст блока').fill('Исходный образец')
   await page.getByLabel('Содержимое текстового блока').fill('Текстовый блок')
   await page.getByLabel('Статус текстового блока').selectOption('checked')

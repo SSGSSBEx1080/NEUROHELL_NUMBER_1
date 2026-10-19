@@ -255,17 +255,6 @@ export function TextEntriesPanel({
               />
             </label>
             <label className="text-entry-label">
-              Исходный текст
-              <textarea
-                aria-label="Исходный текст блока"
-                value={entry.source}
-                rows={3}
-                maxLength={MAX_TEXT_ENTRY_LENGTH}
-                onChange={(e) => patch({ source: e.target.value })}
-                onBlur={finish}
-              />
-            </label>
-            <label className="text-entry-label">
               Текст
               <textarea
                 aria-label="Содержимое текстового блока"
@@ -285,17 +274,31 @@ export function TextEntriesPanel({
               <option value="ready">Готово</option>
               <option value="checked">Проверено</option>
             </Select>
-            <label className="text-entry-label">
-              Примечание
-              <textarea
-                aria-label="Заметка к текстовому блоку"
-                value={entry.note}
-                rows={2}
-                maxLength={2000}
-                onChange={(e) => patch({ note: e.target.value })}
-                onBlur={finish}
-              />
-            </label>
+            <details className="text-entry-details">
+              <summary>Дополнительные поля</summary>
+              <label className="text-entry-label">
+                Исходный текст
+                <textarea
+                  aria-label="Исходный текст блока"
+                  value={entry.source}
+                  rows={3}
+                  maxLength={MAX_TEXT_ENTRY_LENGTH}
+                  onChange={(e) => patch({ source: e.target.value })}
+                  onBlur={finish}
+                />
+              </label>
+              <label className="text-entry-label">
+                Примечание
+                <textarea
+                  aria-label="Заметка к текстовому блоку"
+                  value={entry.note}
+                  rows={2}
+                  maxLength={2000}
+                  onChange={(e) => patch({ note: e.target.value })}
+                  onBlur={finish}
+                />
+              </label>
+            </details>
             {linked && (
               <button className="text-entry-linked" onClick={() => editor.setSelectedId(linked.id)}>
                 <Link2 size={12} />

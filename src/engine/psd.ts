@@ -1,3 +1,4 @@
+import { canonicalTextPreview } from './textPreview'
 import { nativeLayout, normalizeLayout, sameNativeLayout } from './layout'
 import { exportAdjustment, importAdjustment } from './psdAdjustments'
 import { sealProject } from './psdIntegrity'
@@ -608,7 +609,16 @@ export async function exportPsd(
       styles: embeddedAppearance ? layer.styles : undefined,
       mask: embeddedAppearance ? layer.mask : undefined,
     })
-    return { left, top, right, bottom, imageData: ctx.getImageData(0, 0, c.width, c.height) }
+    const preview = ctx.getImageData(0, 0, c.width, c.height)
+    if (
+      layer.kind === 'text' &&
+      !layer.warp &&
+      !layer.mask &&
+      !hasStyles(layer.styles) &&
+      Object.values(layer.adjustments).every((v) => v === 0)
+    )
+      canonicalTextPreview(preview, layer.color)
+    return { left, top, right, bottom, imageData: preview }
   }
   const notes: string[] = []
   let editableContents = 0

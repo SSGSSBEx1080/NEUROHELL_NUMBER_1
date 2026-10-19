@@ -5521,3 +5521,15 @@ canvas {
 .number-field.invalid-number {
   border-color: #d58e71;
 }
+.text-entry-details {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+.text-entry-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+.text-entry-details[open] summary {
+  margin-bottom: 12px;
+}

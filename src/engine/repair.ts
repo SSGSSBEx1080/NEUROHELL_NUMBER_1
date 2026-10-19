@@ -115,7 +115,7 @@ export function repairPixels(
     if (missing[p]) {
       total++
       if (pixels[p * 4 + 3] < 250)
-        throw new Error('Обведи непрозрачную часть страницы, не прозрачное поле')
+        throw new Error('Выдели непрозрачную область изображения, не прозрачное поле')
     }
   if (!total || total > 120000)
     throw new Error('Выдели от 1 до 120 000 пикселей. Большую область разбей на несколько частей.')
