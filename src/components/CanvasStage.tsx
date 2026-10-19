@@ -1283,8 +1283,8 @@ export function CanvasStage({
       const layer = makeLayer({
         ...rect,
         kind: 'text',
-        name: 'Реплика',
-        text: 'Текст реплики',
+        name: 'Текстовая рамка',
+        text: 'Новый текст',
         fontFamily: 'Manrope',
         fontSize: Math.min(48, Math.max(12, rect.height / 4)),
         fontWeight: 600,

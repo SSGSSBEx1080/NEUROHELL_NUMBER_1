@@ -9,7 +9,7 @@ const layer = (patch = {}) =>
     kind: 'text',
     width: 120,
     height: 100,
-    text: 'Одна реплика внутри пузыря',
+    text: 'Один образец внутри рамки.',
     fontSize: 20,
     lineHeight: 1.2,
     textAlign: 'center',
@@ -18,9 +18,9 @@ const layer = (patch = {}) =>
   })
 describe('Bounded layout text layout', () => {
   it('wraps words, honors hard line breaks, blank lines, padding and vertical alignment', () => {
-    const l = layer({ text: 'Одна реплика\n\nДа!', width: 140 })
+    const l = layer({ text: 'Один образец\n\nДа!', width: 140 })
     const result = layoutText(l, measure)
-    expect(result.lines.map((r) => r.text)).toEqual(['Одна реплика', '', 'Да!'])
+    expect(result.lines.map((r) => r.text)).toEqual(['Один образец', '', 'Да!'])
     expect(result.overflow).toBe(false)
     expect(result.lines[0]).toMatchObject({ x: 70, y: 16 })
     const top = layoutText({ ...l, textFrame: { ...l.textFrame!, verticalAlign: 'top' } }, measure)
@@ -50,7 +50,7 @@ describe('Bounded layout text layout', () => {
     const l = layer({
       width: 200,
       height: 140,
-      text: 'Это важная реплика. Она должна поместиться в пузыре.',
+      text: 'Это текстовый образец. Он должен поместиться в рамке.',
       textFrame: { ...defaultTextFrame(), shape: 'ellipse' },
     })
     const result = layoutText(l, measure)

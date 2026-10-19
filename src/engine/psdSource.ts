@@ -18,6 +18,7 @@ const ignoredVisual = new Set([
   'id',
   'dpi',
   'script',
+  'textEntries',
   'layout',
 ])
 const ignoredSave = new Set(['sourceId', 'expanded'])

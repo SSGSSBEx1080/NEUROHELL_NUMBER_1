@@ -145,7 +145,7 @@ export function recordEditorEvent(recording: Recording, event: EditorEvent): Rec
       const before = event.before,
         after = event.after
       if (!equal({ ...before, layers: undefined }, { ...after, layers: undefined }))
-        throw new Error('Свойства документа и сценарий перевода не записываются')
+        throw new Error('Свойства документа и текстовые блоки не записываются')
       const added = after.layers.filter((l) => !before.layers.some((p) => p.id === l.id)),
         removed = before.layers.filter((l) => !after.layers.some((p) => p.id === l.id))
       const changed = before.layers.filter((l) => {
@@ -225,7 +225,7 @@ function append(
         ...all.slice(0, 199),
         unsupported(
           'Лимит записи',
-          'Достигнут предел 200 шагов. Продолжение не записано; сценарий заблокирован.',
+          'Достигнут предел 200 шагов. Продолжение не записано; операция заблокирована.',
         ),
       ],
       warning: 'Достигнут предел записи — останови и проверь шаги',

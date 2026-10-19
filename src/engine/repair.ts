@@ -115,7 +115,7 @@ export function repairPixels(
     if (missing[p]) {
       total++
       if (pixels[p * 4 + 3] < 250)
-        throw new Error('Обведи непрозрачную часть страницы, не прозрачное поле')
+        throw new Error('Выдели непрозрачную область изображения, не прозрачное поле')
     }
   if (!total || total > 120000)
     throw new Error('Выдели от 1 до 120 000 пикселей. Большую область разбей на несколько частей.')
@@ -278,7 +278,7 @@ export function repairPixels(
             Math.floor(mapping[q] / w) + ty - Math.floor(q / w),
           )
       })
-      // Dense axial candidates preserve phase on screen tones; deterministic global
+      // Dense axial candidates preserve phase on periodic textures; deterministic global
       // candidates allow the centre of a large hole to reach original clean material.
       for (let distance = r + 1; distance <= search; distance++) {
         consider(tx - distance, ty)

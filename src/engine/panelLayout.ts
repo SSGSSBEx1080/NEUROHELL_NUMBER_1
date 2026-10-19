@@ -1,6 +1,6 @@
-export type DockTab = 'properties' | 'translation' | 'actions'
+export type DockTab = 'properties' | 'texts' | 'actions'
 export interface PanelLayout {
-  preset: 'retouch' | 'layout' | 'type' | 'custom'
+  preset: 'standard' | 'texts' | 'properties' | 'custom'
   side: 'left' | 'right'
   tab: DockTab
   width: number
@@ -11,7 +11,7 @@ export interface PanelLayout {
   height: number
 }
 export const defaultPanelLayout: PanelLayout = {
-  preset: 'retouch',
+  preset: 'standard',
   side: 'right',
   tab: 'properties',
   width: 300,
@@ -25,26 +25,39 @@ export function panelPreset(preset: PanelLayout['preset']): PanelLayout {
   return {
     ...defaultPanelLayout,
     preset,
-    ...(preset === 'layout'
-      ? { width: 360, split: 0.66, tab: 'translation' as const }
-      : preset === 'type'
+    ...(preset === 'texts'
+      ? { width: 360, split: 0.66, tab: 'texts' as const }
+      : preset === 'properties'
         ? { width: 340, split: 0.74 }
         : {}),
   }
 }
 export function normalizePanelLayout(input: unknown): PanelLayout {
   const p = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
-  const migrated = p.preset === 'manga' ? 'layout' : p.preset
+  // Persisted preferences from earlier versions remain readable; these labels are not UI options.
+  const aliases: Record<string, PanelLayout['preset']> = {
+    retouch: 'standard',
+    layout: 'texts',
+    manga: 'texts',
+    type: 'properties',
+  }
+  const migrated =
+    typeof p.preset === 'string' && Object.hasOwn(aliases, p.preset) ? aliases[p.preset] : p.preset
   const number = (key: keyof PanelLayout, min: number, max: number) =>
     typeof p[key] === 'number' && Number.isFinite(p[key])
       ? Math.min(max, Math.max(min, p[key] as number))
       : (defaultPanelLayout[key] as number)
   return {
-    preset: ['retouch', 'layout', 'type', 'custom'].includes(String(migrated))
+    preset: ['standard', 'texts', 'properties', 'custom'].includes(String(migrated))
       ? (migrated as PanelLayout['preset'])
-      : 'retouch',
+      : 'standard',
     side: p.side === 'left' ? 'left' : 'right',
-    tab: p.tab === 'translation' || p.tab === 'actions' ? p.tab : 'properties',
+    tab:
+      p.tab === 'texts' || p.tab === 'translation'
+        ? 'texts'
+        : p.tab === 'actions'
+          ? 'actions'
+          : 'properties',
     width: number('width', 240, 520),
     split: number('split', 0.25, 0.8),
     floating: p.floating === true,

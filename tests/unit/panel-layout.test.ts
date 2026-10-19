@@ -18,9 +18,9 @@ describe('Workspace geometry and explicit layout layer placement', () => {
         tab: 'eval',
       }),
     ).toMatchObject({ width: 300, split: 0.25, height: 1600, side: 'right', tab: 'properties' })
-    expect(normalizePanelLayout({ preset: 'manga' }).preset).toBe('layout')
-    expect(panelPreset('layout')).toMatchObject({ tab: 'translation', width: 360, split: 0.66 })
-    expect(panelPreset('type').split).toBeGreaterThan(panelPreset('retouch').split)
+    expect(normalizePanelLayout({ preset: 'manga' }).preset).toBe('texts')
+    expect(panelPreset('texts')).toMatchObject({ tab: 'texts', width: 360, split: 0.66 })
+    expect(panelPreset('properties').split).toBeGreaterThan(panelPreset('standard').split)
     const small = visiblePanelLayout(
       { ...defaultPanelLayout, floating: true, x: 10000, y: 10000 },
       { width: 1024, height: 600 },
@@ -28,7 +28,7 @@ describe('Workspace geometry and explicit layout layer placement', () => {
     expect(small.x + small.width).toBeLessThanOrEqual(1024)
     expect(small.y + small.height).toBeLessThanOrEqual(600)
   })
-  it('places cleaning below only the trailing root type stack, with matching sampling', () => {
+  it('places restoration below only the trailing root type stack, with matching sampling', () => {
     const scan = makeLayer(),
       first = makeLayer({ kind: 'text' }),
       second = makeLayer({ kind: 'text' }),
@@ -64,5 +64,39 @@ describe('Workspace geometry and explicit layout layer placement', () => {
       base,
       top,
     ])
+  })
+})
+
+it('migrates saved panel names and active tabs without changing the user geometry', () => {
+  for (const [old, next] of [
+    ['retouch', 'standard'],
+    ['layout', 'texts'],
+    ['type', 'properties'],
+  ]) {
+    expect(
+      normalizePanelLayout({
+        preset: old,
+        tab: 'translation',
+        width: 415,
+        split: 0.72,
+        floating: true,
+        x: 90,
+        y: 140,
+        height: 720,
+      }),
+    ).toMatchObject({
+      preset: next,
+      tab: 'texts',
+      width: 415,
+      split: 0.72,
+      floating: true,
+      x: 90,
+      y: 140,
+      height: 720,
+    })
+  }
+  expect(normalizePanelLayout({ preset: '__proto__', tab: '__proto__' })).toMatchObject({
+    preset: 'standard',
+    tab: 'properties',
   })
 })

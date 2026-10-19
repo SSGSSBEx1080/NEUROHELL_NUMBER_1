@@ -266,7 +266,7 @@ export const textPresets: { name: string; values: Partial<Layer> }[] = [
       letterSpacing: 0,
       textScaleX: 1,
       color: '#151515',
-      textFrame: { ...defaultTextFrame(), shape: 'ellipse' },
+      textFrame: defaultTextFrame(),
     },
   },
   {
@@ -294,7 +294,7 @@ export const textPresets: { name: string; values: Partial<Layer> }[] = [
       letterSpacing: 0,
       textScaleX: 1,
       color: '#151515',
-      textFrame: { ...defaultTextFrame(), shape: 'ellipse' },
+      textFrame: defaultTextFrame(),
     },
   },
   {

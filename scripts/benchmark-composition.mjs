@@ -1,3 +1,4 @@
+import fixture from '../tests/fixtures/editor/text-blocks.cjs'
 import { launch } from '../tests/browser.mjs'
 import { expect } from '@playwright/test'
 import { writeFile, mkdir } from 'node:fs/promises'
@@ -35,11 +36,17 @@ try {
   })
   await page.goto('http://127.0.0.1:4173')
   await expect(page.locator('.busy-overlay')).toBeHidden()
-  await page.getByTestId('open-layout-demo').click()
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({
+    name: 'text-blocks.777',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(fixture.textBlocksFixture())),
+  })
+  await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await expect(page.locator('.layer-row')).toHaveCount(4)
+  await page.getByLabel('Рабочая среда').selectOption('texts')
   for (let i = 0; i < 5; i++) {
-    await page.locator('.document-bar').click()
+    await page.getByTestId('canvas-viewport').focus()
     await page.keyboard.press('j')
     const b = await page.locator('.artboard').boundingBox(),
       s = b.width / 896
@@ -56,6 +63,7 @@ try {
     await expect(
       page.getByRole('button', { name: 'Применить на новый слой', exact: true }),
     ).toBeEnabled()
+    await page.getByLabel('Под верхними текстовыми слоями').check()
     await page
       .getByRole('button', { name: i === 4 ? 'Применить на новый слой' : 'Отмена', exact: true })
       .click()
@@ -87,10 +95,10 @@ try {
     repairWorkerMessageRoundTrip: await page.evaluate(() => window.__repairDurations),
     renderHUD: { n: frames.length, p50Ms: frames[15], p95Ms: frames[28], maxMs: frames.at(-1) },
     scope:
-      'Worker timing is postMessage → result, including transfer/remaining worker startup but excluding source capture/copy and the 140ms UI debounce. HUD is render-submission CPU time, NOT input latency, full GPU completion, FPS or a Windows/Adobe comparison. Synthetic practice illustration, not a real scan.',
+      'Worker timing is postMessage → result, including transfer/remaining worker startup but excluding source capture/copy and the 140ms UI debounce. HUD is render-submission CPU time, NOT input latency, full GPU completion, FPS or a Windows/Adobe comparison. Synthetic geometric fixture, not a representative image-quality benchmark.',
   }
   await mkdir('test-results', { recursive: true })
-  await writeFile('test-results/performance-0.4.json', JSON.stringify(result, null, 2))
+  await writeFile('test-results/performance-composition.json', JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result, null, 2))
 } finally {
   await browser.close()

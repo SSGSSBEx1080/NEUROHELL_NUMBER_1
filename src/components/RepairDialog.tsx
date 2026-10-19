@@ -29,7 +29,7 @@ export function RepairDialog({
     [result, setResult] = useState<RepairResult | null>(null),
     [error, setError] = useState(''),
     [working, setWorking] = useState(true)
-  const [belowText, setBelowText] = useState(!!doc.script?.length)
+  const [belowText, setBelowText] = useState(false)
   const [mode, setMode] = useState<RepairMode>('auto'),
     [radius, setRadius] = useState(4),
     [expand, setExpand] = useState(2),
@@ -209,7 +209,8 @@ export function RepairDialog({
       const layer = bitmapLayer(
         makeLayer({
           kind: 'image',
-          name: result.mode === 'smooth' ? 'Клин · гладкий фон' : 'Клин · фактура',
+          name:
+            result.mode === 'smooth' ? 'Восстановление · плавный фон' : 'Восстановление · текстура',
           x: source.x,
           y: source.y,
           width: source.width,
@@ -296,8 +297,8 @@ export function RepairDialog({
               onChange={(e) => setMode(e.target.value as RepairMode)}
             >
               <option value="auto">Авто · по окружению</option>
-              <option value="smooth">Бумага / плавный градиент</option>
-              <option value="texture">Фактура / скринтон</option>
+              <option value="smooth">Плавный фон</option>
+              <option value="texture">Повторяющаяся текстура</option>
             </Select>
           </label>
           <Field
@@ -361,8 +362,8 @@ export function RepairDialog({
           {belowText && (
             <p className="panel-note">
               {repairPlacement(doc, true).index === doc.layers.length
-                ? 'Нет отделимого верхнего текста: клин будет над документом. Группы и обтравочные цепочки не разрываются.'
-                : 'Отделимый верхний стек текста исключён из образцов и останется над клином. Группы и обтравочные цепочки не разрываются.'}
+                ? 'Нет отделимого верхнего текста: результат будет над документом. Группы и обтравочные цепочки не разрываются.'
+                : 'Отделимый верхний стек текста исключён из образцов и останется над результатом. Группы и обтравочные цепочки не разрываются.'}
             </p>
           )}
           <div className="repair-progress" role="status">
@@ -384,7 +385,7 @@ export function RepairDialog({
           </div>
           <p className="panel-note">
             Поиск задаёт локальный радиус; резервные образцы берутся из всего фрагмента, кроме
-            запрещённых зон. Не генеративный ИИ. Чистая бумага и повторяющиеся фактуры
+            запрещённых зон. Не генеративный ИИ. Однородный фон и повторяющиеся фактуры
             восстанавливаются лучше уникальных деталей рисунка. Всегда оцени результат.
           </p>
         </aside>

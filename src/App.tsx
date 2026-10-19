@@ -18,7 +18,7 @@ import { insertAdjustment } from './engine/adjustmentLayers'
 import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
 import { PsdReportDialog } from './components/PsdReportDialog'
 import type { PsdExportReport } from './engine/psdReport'
-import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
+import { parseTextEntriesFile, MAX_TEXT_ENTRIES } from './engine/textEntriesFormat'
 import { insertRepairLayer } from './engine/repairPlacement'
 import { ActionsPanel } from './components/ActionsPanel'
 import { PanelDock } from './components/PanelDock'
@@ -31,7 +31,7 @@ import {
   hasPendingActionDraft,
 } from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
-import { TranslationPanel } from './components/TranslationPanel'
+import { TextEntriesPanel } from './components/TextEntriesPanel'
 import { RepairDialog } from './components/RepairDialog'
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
@@ -941,23 +941,27 @@ export default function App() {
         toastMessage(`Импортировано операций: ${imported.length}. Проверь поддержку шагов.`)
         return
       }
-      const scriptFile = files.find((f) => /\.777script\.json$/i.test(f.name))
-      if (scriptFile) {
-        if (workspace.home) throw new Error('Открой страницу перед импортом сценария')
-        if (scriptFile.size > 8 * 1024 * 1024) throw new Error('Сценарий должен быть до 8 МиБ')
+      const textEntriesFile = files.find((f) => /\.777(?:texts|script)\.json$/i.test(f.name))
+      if (textEntriesFile) {
+        if (workspace.home) throw new Error('Открой документ перед импортом текстовых блоков')
+        if (textEntriesFile.size > 8 * 1024 * 1024)
+          throw new Error('Файл текстов должен быть до 8 МиБ')
         const id = editor.documentRef.current.id
-        const imported = parseScriptFile(JSON.parse(await scriptFile.text()))
+        const imported = parseTextEntriesFile(JSON.parse(await textEntriesFile.text()))
         if (editor.documentRef.current.id !== id)
-          throw new Error('Страница изменилась — импортируй сценарий ещё раз')
-        if ((editor.documentRef.current.script?.length || 0) + imported.length > MAX_SCRIPT_ENTRIES)
-          throw new Error('До 200 реплик в сценарии')
+          throw new Error('Документ изменился — повтори импорт текстовых блоков')
+        if (
+          (editor.documentRef.current.textEntries?.length || 0) + imported.length >
+          MAX_TEXT_ENTRIES
+        )
+          throw new Error('До 200 текстовых блоков')
         editor.change(
-          (d) => ({ ...d, script: [...(d.script || []), ...imported] }),
-          'Импорт сценария',
+          (d) => ({ ...d, textEntries: [...(d.textEntries || []), ...imported] }),
+          'Импорт текстовых блоков',
         )
         setInspector(true)
-        setDockTab('translation')
-        toastMessage(`Добавлено ${imported.length} реплик без чужих привязок`)
+        setDockTab('texts')
+        toastMessage(`Добавлено ${imported.length} текстовых блоков без чужих привязок`)
         return
       }
       const layered = files.find((f) => /\.(psd|psb)$/i.test(f.name))
@@ -1155,7 +1159,7 @@ export default function App() {
   const openRepair = (area: Selection | null = selection) => {
     if (!area || area.width < 1 || area.height < 1)
       return toastMessage('Обведи область инструментом J или создай выделение.')
-    if (!doc.layers.length) return toastMessage('Сначала открой страницу или добавь изображение.')
+    if (!doc.layers.length) return toastMessage('Сначала открой документ или добавь изображение.')
     setSelection(area)
     setModal('repair')
   }
@@ -1972,11 +1976,11 @@ export default function App() {
       action: () => setInspector(!inspector),
     },
     {
-      label: 'Сценарий перевода',
-      checked: inspector && dockTab === 'translation',
+      label: 'Текстовые блоки',
+      checked: inspector && dockTab === 'texts',
       action: () => {
         setInspector(true)
-        setDockTab('translation')
+        setDockTab('texts')
       },
     },
     {
@@ -1989,9 +1993,9 @@ export default function App() {
     },
     ...(
       [
-        ['layout', 'Макет'],
-        ['type', 'Тайпсет'],
-        ['retouch', 'Ретушь'],
+        ['texts', 'Текстовые блоки'],
+        ['properties', 'Свойства'],
+        ['standard', 'Стандартная'],
       ] as const
     ).map(([id, name]) => ({
       label: `Рабочая среда: ${name}`,
@@ -2011,7 +2015,7 @@ export default function App() {
     {
       label: 'Сбросить рабочую среду',
       action: () => {
-        setPanelLayout(panelPreset('retouch'))
+        setPanelLayout(panelPreset('standard'))
         setInspector(true)
       },
     },
@@ -2123,27 +2127,6 @@ export default function App() {
           onNew={() => setModal('new')}
           onOpen={() => input.current?.click()}
           onDemo={() => openDocument(demoDocument())}
-          onPractice={() => {
-            if (workspace.tabs.length >= 6) {
-              toastMessage('Закрой ненужную вкладку: доступно до 6 документов')
-              return
-            }
-            setBusy('Готовим учебную страницу…')
-            void import('./engine/layoutDemo')
-              .then((module) => module.layoutDemoDocument())
-              .then((doc) => {
-                openDocument(doc)
-                setPanelLayout(panelPreset('layout'))
-                setInspector(true)
-                toastMessage(
-                  'Практика: обведи английский текст инструментом J, затем обнови связанный перевод. Скрытый слой хранит чистый эталон.',
-                )
-              })
-              .catch((e) =>
-                toastMessage(e instanceof Error ? e.message : 'Не удалось открыть практику'),
-              )
-              .finally(() => setBusy(null))
-          }}
           onResume={workspace.resume}
           onRecent={(r) => void workspace.openRecent(r)}
           onRestore={() => workspace.recovery && void workspace.openRecent(workspace.recovery)}
@@ -2394,9 +2377,9 @@ export default function App() {
             ) : (
               <span className="tool-instruction">
                 {tool === 'repair' || tool === 'repair-box'
-                  ? 'Обведи надпись → предпросмотр → новый слой · Shift+J меняет подтип'
+                  ? 'Выдели область → предпросмотр → отдельный слой · Shift+J меняет подтип'
                   : tool === 'text-frame'
-                    ? 'Протяни рамку пузыря · текст и переносы в панели справа'
+                    ? 'Протяни текстовую рамку · параметры в панели справа'
                     : tool === 'text'
                       ? 'Нажми на холст и напиши свою историю'
                       : tool === 'crop'
@@ -2720,8 +2703,8 @@ export default function App() {
                   busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
                 />
               }
-              translation={
-                <TranslationPanel
+              texts={
+                <TextEntriesPanel
                   key={doc.id}
                   editor={editor}
                   selection={selection}
@@ -2729,7 +2712,7 @@ export default function App() {
                   onToast={toastMessage}
                   onDraw={() => {
                     setTool('text-frame')
-                    toastMessage('Протяни рамку на холсте. Затем вставь перевод в выбранный текст.')
+                    toastMessage('Протяни рамку на холсте. Затем размести в ней текстовый блок.')
                   }}
                 />
               }
@@ -2786,7 +2769,7 @@ export default function App() {
         ref={input}
         className="visually-hidden"
         type="file"
-        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json,.777script.json"
+        accept="image/png,image/jpeg,image/webp,.777,.fsh777,.psd,.psb,.atn,.777actions.json,.777texts.json,.777script.json"
         multiple
         aria-label="Открыть изображение или проект"
         onChange={(e) => {
@@ -2833,7 +2816,7 @@ export default function App() {
             setSelectedId(layer.id)
             closeModal()
             toastMessage(
-              'Клин на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет результат.',
+              'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
             )
           }}
         />

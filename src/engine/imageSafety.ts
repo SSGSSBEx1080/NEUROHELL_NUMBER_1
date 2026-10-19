@@ -1,3 +1,5 @@
+import { bundledAsset } from './bundledAssets'
+export { bundledImageSource } from './bundledAssets'
 /** Inspect image headers before decoding; protects against tiny compressed files with giant rasters. */
 export function rasterDimensions(bytes: Uint8Array): { width: number; height: number } {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -43,8 +45,8 @@ export function rasterDimensions(bytes: Uint8Array): { width: number; height: nu
   )
 }
 export function sourceDimensions(src: string) {
-  if (src === '/demo-landscape.webp') return { width: 1312, height: 816 }
-  if (src === '/demo-layout.webp' || src === '/demo-manga.webp') return { width: 896, height: 1200 }
+  const bundled = bundledAsset(src)
+  if (bundled) return { width: bundled.width, height: bundled.height }
   const comma = src.indexOf(',')
   if (comma < 0 || !/^data:image\/(png|jpeg|webp);base64,/i.test(src))
     throw new Error('Разрешены только локальные растровые изображения')
@@ -64,7 +66,3 @@ export function sourceDimensions(src: string) {
     )
   return size
 }
-
-/** Compatibility alias for documents saved by 0.4; never resolves arbitrary external URLs. */
-export const bundledImageSource = (src: string) =>
-  src === '/demo-manga.webp' ? '/demo-layout.webp' : src
