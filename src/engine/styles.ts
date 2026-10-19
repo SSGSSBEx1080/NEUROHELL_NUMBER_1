@@ -423,18 +423,21 @@ export function renderStyled(
           r.drawImage(colored, Math.cos(a) * radius, Math.sin(a) * radius)
         }
       } else r.drawImage(colored, 0, 0)
-      const inner = surface(w, h),
-        ic = inner.getContext('2d')!
-      ic.drawImage(base, 0, 0)
-      if (stroke.position !== 'outside') {
+      r.globalCompositeOperation = 'destination-out'
+      if (stroke.position === 'outside') {
+        // The mask to punch out is the base itself; avoid a full-size copy per stroke.
+        r.drawImage(base, 0, 0)
+      } else {
+        const inner = surface(w, h),
+          ic = inner.getContext('2d')!
+        ic.drawImage(base, 0, 0)
         ic.globalCompositeOperation = 'destination-in'
         for (let i = 0; i < steps; i++) {
           const a = (i / steps) * Math.PI * 2
           ic.drawImage(base, Math.cos(a) * radius, Math.sin(a) * radius)
         }
+        r.drawImage(inner, 0, 0)
       }
-      r.globalCompositeOperation = 'destination-out'
-      r.drawImage(inner, 0, 0)
       o.globalAlpha = stroke.opacity
       o.drawImage(ring, 0, 0)
       o.globalAlpha = 1

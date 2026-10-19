@@ -187,17 +187,22 @@ const compiled = new WeakMap<
   GradientStop[],
   { positions: number[]; colors: number[][]; midpoints: number[] }
 >()
-function segment(positions: number[], t: number): [number, number, number] {
+const compiledOpacity = new WeakMap<
+  GradientOpacityStop[],
+  { positions: number[]; opacities: number[]; midpoints: number[] }
+>()
+/** Index of the stop at or before t; positions are sorted and non-empty. Allocation-free. */
+function segmentIndex(positions: number[], t: number): number {
   let lo = 0,
     hi = positions.length - 1
-  if (t <= positions[0]) return [0, Math.min(1, positions.length - 1), 0]
-  if (t >= positions[hi]) return [Math.max(0, hi - 1), hi, 1]
+  if (t <= positions[0]) return 0
+  if (t >= positions[hi]) return Math.max(0, hi - 1)
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1
     if (positions[mid] > t) hi = mid
     else lo = mid
   }
-  return [lo, hi, (t - positions[lo]) / (positions[hi] - positions[lo])]
+  return lo
 }
 export function gradientColor(stops: GradientStop[], value: number, out: number[]) {
   let data = compiled.get(stops)
@@ -209,20 +214,42 @@ export function gradientColor(stops: GradientStop[], value: number, out: number[
     }
     compiled.set(stops, data)
   }
-  const t = clamp01(value)
-  const [lo, hi, raw] = segment(data.positions, t)
+  const t = clamp01(value),
+    lo = segmentIndex(data.positions, t),
+    hi = Math.min(data.positions.length - 1, lo + 1)
+  const raw =
+    data.positions[hi] === data.positions[lo]
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, (t - data.positions[lo]) / (data.positions[hi] - data.positions[lo])),
+        )
   const f = warpMidpoint(raw, data.midpoints[lo])
   for (let c = 0; c < 3; c++)
     out[c] = data.colors[lo][c] + (data.colors[hi][c] - data.colors[lo][c]) * f
 }
 export function gradientOpacityAt(stops: GradientOpacityStop[], value: number): number {
-  const t = clamp01(value)
-  const [lo, hi, raw] = segment(
-    stops.map((s) => s.position),
-    t,
-  )
-  const f = warpMidpoint(raw, stops[lo].midpoint)
-  return stops[lo].opacity + (stops[hi].opacity - stops[lo].opacity) * f
+  let data = compiledOpacity.get(stops)
+  if (!data) {
+    data = {
+      positions: stops.map((s) => s.position),
+      opacities: stops.map((s) => s.opacity),
+      midpoints: stops.map((s) => s.midpoint ?? 0.5),
+    }
+    compiledOpacity.set(stops, data)
+  }
+  const t = clamp01(value),
+    lo = segmentIndex(data.positions, t),
+    hi = Math.min(data.positions.length - 1, lo + 1)
+  const raw =
+    data.positions[hi] === data.positions[lo]
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, (t - data.positions[lo]) / (data.positions[hi] - data.positions[lo])),
+        )
+  const f = warpMidpoint(raw, data.midpoints[lo])
+  return data.opacities[lo] + (data.opacities[hi] - data.opacities[lo]) * f
 }
 
 /** Deterministic PRNG so a noise gradient is reproducible from its seed alone. */
@@ -243,17 +270,37 @@ function hsvToRgb(h: number, s: number, v: number, out: number[]) {
     p = v * (1 - s),
     q = v * (1 - f * s),
     t = v * (1 - (1 - f) * s)
-  const rgb = [
-    [v, t, p],
-    [q, v, p],
-    [p, v, t],
-    [p, q, v],
-    [t, p, v],
-    [v, p, q],
-  ][i % 6]
-  out[0] = rgb[0]
-  out[1] = rgb[1]
-  out[2] = rgb[2]
+  switch (i % 6) {
+    case 0:
+      out[0] = v
+      out[1] = t
+      out[2] = p
+      break
+    case 1:
+      out[0] = q
+      out[1] = v
+      out[2] = p
+      break
+    case 2:
+      out[0] = p
+      out[1] = v
+      out[2] = t
+      break
+    case 3:
+      out[0] = p
+      out[1] = q
+      out[2] = v
+      break
+    case 4:
+      out[0] = t
+      out[1] = p
+      out[2] = v
+      break
+    default:
+      out[0] = v
+      out[1] = p
+      out[2] = q
+  }
 }
 /** CIE Lab (D65) fractions: L 0..1 -> 0..100, a/b 0..1 -> -128..127. */
 function labToRgb(l: number, a: number, b: number, out: number[]) {
@@ -267,23 +314,21 @@ function labToRgb(l: number, a: number, b: number, out: number[]) {
   const x = inv(fx) * 0.95047,
     y = inv(fy),
     z = inv(fz) * 1.08883
-  const linear = [
-    x * 3.2404542 + y * -1.5371385 + z * -0.4985314,
-    x * -0.969266 + y * 1.8760108 + z * 0.041556,
-    x * 0.0556434 + y * -0.2040259 + z * 1.0572252,
-  ]
-  for (let i = 0; i < 3; i++) {
-    const c = Math.max(0, linear[i])
-    out[i] = clamp01(c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)
+  const encode = (linear: number) => {
+    const c = Math.max(0, linear)
+    return clamp01(c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)
   }
+  out[0] = encode(x * 3.2404542 + y * -1.5371385 + z * -0.4985314)
+  out[1] = encode(x * -0.969266 + y * 1.8760108 + z * 0.041556)
+  out[2] = encode(x * 0.0556434 + y * -0.2040259 + z * 1.0572252)
 }
-function modelToRgb(model: GradientColorModel, c: number[], out: number[]) {
-  if (model === 'hsb') hsvToRgb(c[0], c[1], c[2], out)
-  else if (model === 'lab') labToRgb(c[0], c[1], c[2], out)
+function modelToRgb(model: GradientColorModel, c0: number, c1: number, c2: number, out: number[]) {
+  if (model === 'hsb') hsvToRgb(c0, c1, c2, out)
+  else if (model === 'lab') labToRgb(c0, c1, c2, out)
   else {
-    out[0] = c[0]
-    out[1] = c[1]
-    out[2] = c[2]
+    out[0] = c0
+    out[1] = c1
+    out[2] = c2
   }
 }
 const noiseCache = new Map<string, number[][]>()
@@ -319,10 +364,17 @@ export function noiseGradientColor(spec: NoiseGradientSpec, value: number, out: 
     raw = t - lo
   // Smooth at low roughness, approaching a hard switch at high roughness.
   const stretched = clamp01(0.5 + (raw - 0.5) * (1 + spec.roughness * 7))
-  const f = stretched * stretched * (3 - 2 * stretched)
-  const mixed = [0, 1, 2, 3].map((c) => colors[lo][c] + (colors[lo + 1][c] - colors[lo][c]) * f)
-  modelToRgb(spec.model, mixed, out)
-  out[3] = spec.transparency ? mixed[3] : 1
+  const f = stretched * stretched * (3 - 2 * stretched),
+    a = colors[lo],
+    b = colors[lo + 1]
+  modelToRgb(
+    spec.model,
+    a[0] + (b[0] - a[0]) * f,
+    a[1] + (b[1] - a[1]) * f,
+    a[2] + (b[2] - a[2]) * f,
+    out,
+  )
+  out[3] = spec.transparency ? a[3] + (b[3] - a[3]) * f : 1
 }
 /** Sample any gradient as straight RGBA fractions 0..1. */
 export function gradientSample(definition: GradientDefinition, value: number, out: number[]) {
@@ -335,10 +387,11 @@ export function gradientSample(definition: GradientDefinition, value: number, ou
   gradientColor(definition.stops, t, out)
   out[3] = gradientOpacityAt(definition.opacityStops, t)
 }
+/** Reused synchronously to build a CSS string; never retained across calls. */
+const sampleScratch = [0, 0, 0, 1]
 export function gradientRgbaCss(definition: GradientDefinition, value: number): string {
-  const out = [0, 0, 0, 1]
-  gradientSample(definition, value, out)
-  return `rgba(${Math.round(out[0] * 255)},${Math.round(out[1] * 255)},${Math.round(out[2] * 255)},${Math.round(out[3] * 1000) / 1000})`
+  gradientSample(definition, value, sampleScratch)
+  return `rgba(${Math.round(sampleScratch[0] * 255)},${Math.round(sampleScratch[1] * 255)},${Math.round(sampleScratch[2] * 255)},${Math.round(sampleScratch[3] * 1000) / 1000})`
 }
 /** CSS preview built from real samples, so noise/alpha/midpoints are not decorative. */
 export function gradientCss(definition: GradientDefinition, angle = 90, samples = 24): string {
