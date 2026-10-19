@@ -1,5 +1,5 @@
 import type { Layer, LayerMask } from '../types'
-import { applyCorrection } from './adjustmentMath'
+import { applyCorrectionInPlace } from './adjustmentMath'
 const masks = new Map<
   string,
   { mask: LayerMask; matrix: string; width: number; height: number; data: Uint8ClampedArray }
@@ -56,8 +56,6 @@ export function renderCorrection(
   if (!layer.correction || !layer.visible || layer.opacity <= 0) return
   const image = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height)
   const mask = layer.mask?.enabled && maskSource ? coverage(ctx, layer, maskSource) : undefined
-  image.data.set(
-    applyCorrection(image.data, layer.correction, layer.opacity, mask, layer.blendMode),
-  )
+  applyCorrectionInPlace(image.data, layer.correction, layer.opacity, mask, layer.blendMode)
   ctx.putImageData(image, 0, 0)
 }
