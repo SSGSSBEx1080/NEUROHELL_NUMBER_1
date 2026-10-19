@@ -16,6 +16,7 @@ import {
 import { useState } from 'react'
 import type { EditorDocument } from '../types'
 import type { RecentProject } from '../engine/storage'
+import { BrandMark } from './Brand'
 export function HomeScreen({
   recents,
   recovery,
@@ -48,9 +49,13 @@ export function HomeScreen({
     <div className="studio-home" data-testid="home-screen">
       <aside className="home-sidebar">
         <div className="home-logo">
-          <span>777</span>
+          <span className="home-logo-mark">
+            <BrandMark size={46} />
+          </span>
           <div>
-            <strong>ФШ 777</strong>
+            <strong>
+              ФШ777 <span className="ultra-word">ULTRA</span>
+            </strong>
             <small>НЕЗАВИСИМАЯ СТУДИЯ</small>
           </div>
         </div>

@@ -97,6 +97,7 @@ import {
 import { LayerStyleDialog } from './components/LayerStyleDialog'
 import { GradientToolDialog } from './components/GradientToolDialog'
 import { BatchDialog } from './components/BatchDialog'
+import { BrandMark } from './components/Brand'
 import { gradientCss, solidGradient } from './engine/gradientRamp'
 import { CompatibilityDialog } from './components/CompatibilityDialog'
 import type { CompatibilityReport } from './engine/psd'
@@ -2050,7 +2051,7 @@ export default function App() {
     { label: 'Поиск команд…', icon: Search, shortcut: 'Ctrl F', action: openCommands },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') },
-    { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') },
+    { label: 'О ФШ777 ULTRA', icon: Sparkles, action: () => setModal('about') },
   ]
 
   const homeCommands = new Set([
@@ -2062,7 +2063,7 @@ export default function App() {
     'Настройки…',
     'Библиотека шрифтов…',
     'Горячие клавиши',
-    'О ФШ 777',
+    'О ФШ777 ULTRA',
   ])
   const commands: EditorCommand[] = (
     [
@@ -2160,17 +2161,15 @@ export default function App() {
           <button
             className="brand"
             onClick={() => setModal('about')}
-            aria-label="О редакторе ФШ 777"
+            aria-label="О редакторе ФШ777 ULTRA"
           >
             <span className="brand-mark">
-              <svg viewBox="0 0 32 32" aria-hidden="true">
-                <path d="M7 7h20v5L16 26H7l12-13H7z" fill="currentColor" />
-              </svg>
+              <BrandMark size={32} />
             </span>
             <span className="brand-name">
               ФШ <b>777</b>
             </span>
-            <span className="beta-badge">BETA</span>
+            <span className="ultra-badge">ULTRA</span>
           </button>
           <nav className="main-menu" aria-label="Меню редактора">
             <Dropdown label="Файл" items={fileMenu} />
@@ -3088,7 +3087,7 @@ export default function App() {
       )}
       <div className="small-screen-note">
         <span className="brand-mark">
-          <Sparkles size={22} />
+          <BrandMark size={48} />
         </span>
         <h2>Идеям нужно чуть больше места</h2>
         <p>

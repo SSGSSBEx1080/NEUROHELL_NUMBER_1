@@ -71,7 +71,7 @@ async function saveFile(value, window, dialog, downloads) {
   if (!filename) {
     const ext = path.extname(name).slice(1).toLowerCase()
     const result = await dialog.showSaveDialog(window, {
-      title: 'ФШ 777 — сохранить файл',
+      title: 'ФШ777 ULTRA — сохранить файл',
       buttonLabel: 'Сохранить',
       defaultPath: path.join(downloads, name),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],

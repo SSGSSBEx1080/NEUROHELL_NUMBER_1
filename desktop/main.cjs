@@ -89,7 +89,7 @@ else {
       session.defaultSession.on('will-download', (_event, item, contents) => {
         const filename = path.basename(item.getFilename()).replace(/[<>:"|?*]/g, '_')
         item.setSaveDialogOptions({
-          title: 'ФШ 777 — сохранить файл',
+          title: 'ФШ777 ULTRA — сохранить файл',
           buttonLabel: 'Сохранить',
           defaultPath: path.join(app.getPath('downloads'), filename),
         })
@@ -116,7 +116,7 @@ else {
           minWidth: Math.min(900, area.width),
           minHeight: Math.min(640, area.height),
           show: false,
-          title: 'ФШ 777 — независимая студия',
+          title: 'ФШ777 ULTRA — независимая студия',
           backgroundColor: '#19191e',
           icon: path.join(__dirname, 'icon.png'),
           autoHideMenuBar: true,
@@ -132,7 +132,7 @@ else {
         window.webContents.on('will-prevent-unload', (event) => {
           const response = dialog.showMessageBoxSync(window, {
             type: 'question',
-            title: 'ФШ 777 — закрыть проект?',
+            title: 'ФШ777 ULTRA — закрыть проект?',
             message: 'Автосохранение ещё не завершено или недоступно.',
             detail:
               'Останься в редакторе и сохрани проект через Ctrl+S, чтобы не потерять изменения.',
@@ -177,7 +177,7 @@ else {
       })
     })
     .catch((error) => {
-      dialog.showErrorBox('Не удалось запустить ФШ 777', String(error.message || error))
+      dialog.showErrorBox('Не удалось запустить ФШ777 ULTRA', String(error.message || error))
       app.quit()
     })
   app.on('window-all-closed', () => {
