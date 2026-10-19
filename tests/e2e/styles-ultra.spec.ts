@@ -95,6 +95,61 @@ test('three ordered strokes survive Fill 0 and export as native PSD effects', as
   expect(stripped?.effects?.stroke).toHaveLength(3)
 })
 
+test('batch applies a real action to copies and never downloads under input names', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  const makePng = async (color: string) =>
+    Buffer.from(
+      await page.evaluate((fill) => {
+        const c = document.createElement('canvas')
+        c.width = 40
+        c.height = 30
+        const x = c.getContext('2d')!
+        x.fillStyle = fill
+        x.fillRect(0, 0, 40, 30)
+        return c.toDataURL().split(',')[1]
+      }, color),
+      'base64',
+    )
+  await page.getByRole('button', { name: 'Файл', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Пакетная обработка…', exact: true }).click()
+  await expect(page.getByTestId('batch-dialog')).toBeVisible()
+  await page.getByLabel('Файлы для пакетной обработки').setInputFiles([
+    { name: 'one.png', mimeType: 'image/png', buffer: await makePng('#000000') },
+    { name: 'two.png', mimeType: 'image/png', buffer: await makePng('#202020') },
+  ])
+  await page.getByLabel('Операция для пакета').selectOption('negative')
+  const downloads: string[] = []
+  const paths: string[] = []
+  page.on('download', (d) => {
+    downloads.push(d.suggestedFilename())
+    void d.path().then((p) => p && paths.push(p))
+  })
+  await page.getByRole('button', { name: 'Запустить пакет', exact: true }).click()
+  await expect(page.getByTestId('batch-log')).toContainText('one-ultra.png')
+  await expect(page.getByTestId('batch-log')).toContainText('two-ultra.png')
+  await expect.poll(() => downloads.length).toBe(2)
+  expect(downloads.sort()).toEqual(['one-ultra.png', 'two-ultra.png'])
+  await expect.poll(() => paths.length).toBe(2)
+  const first = await readFile(paths[0])
+  const center = await page.evaluate(async (data) => {
+    const image = new Image()
+    image.src = `data:image/png;base64,${data}`
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.width
+    canvas.height = image.height
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(image, 0, 0)
+    return [...ctx.getImageData(20, 15, 1, 1).data]
+  }, first.toString('base64'))
+  // Black or near-black inputs inverted by the action become bright.
+  expect(center[0]).toBeGreaterThan(200)
+  expect(center[3]).toBe(255)
+})
+
 test('gradient tool paints the selected library gradient with real alpha', async ({ page }) => {
   await ready(page)
   await blank(page)

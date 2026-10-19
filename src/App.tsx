@@ -96,6 +96,7 @@ import {
 } from 'lucide-react'
 import { LayerStyleDialog } from './components/LayerStyleDialog'
 import { GradientToolDialog } from './components/GradientToolDialog'
+import { BatchDialog } from './components/BatchDialog'
 import { gradientCss, solidGradient } from './engine/gradientRamp'
 import { CompatibilityDialog } from './components/CompatibilityDialog'
 import type { CompatibilityReport } from './engine/psd'
@@ -209,6 +210,7 @@ export default function App() {
     | 'commands'
     | 'raster-filter'
     | 'gradient-tool'
+    | 'batch'
     | null
   >(null)
   const [lastFilter, setLastFilter] = useState<RasterFilter | null>(null)
@@ -1605,6 +1607,11 @@ export default function App() {
       action: () => setModal('export'),
     },
     {
+      label: 'Пакетная обработка…',
+      icon: Layers3,
+      action: () => setModal('batch'),
+    },
+    {
       label: 'Открыть демопроект',
       icon: Sparkles,
       action: () => openDocument(demoDocument()),
@@ -2048,6 +2055,7 @@ export default function App() {
 
   const homeCommands = new Set([
     'Новый проект',
+    'Пакетная обработка…',
     'Открыть файл…',
     'Главная / недавние',
     'Открыть демопроект',
@@ -2923,6 +2931,9 @@ export default function App() {
           onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
           canRun={!!selected && !selected.locked && !workspace.home}
         />
+      )}
+      {modal === 'batch' && (
+        <BatchDialog actions={actions} onClose={closeModal} onToast={toastMessage} />
       )}
       {modal === 'gradient-tool' && (
         <GradientToolDialog

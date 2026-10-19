@@ -49,6 +49,7 @@ export const commandAliases: Record<string, string> = {
   'Выравнивание и интервалы…': 'align distribute spacing',
   'Инвертировать маску': 'invert mask',
   'Сохранить PSD…': 'save photoshop',
+  'Пакетная обработка…': 'batch process files action automate convert',
   'Открыть файл…': 'open import',
   'Размер холста…': 'canvas size',
   'Размер изображения…': 'image size',

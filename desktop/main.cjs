@@ -11,7 +11,7 @@ const {
   dialog,
   ipcMain,
 } = require('electron')
-const { saveFile } = require('./files.cjs')
+const { saveFile, chooseBatchFolder, saveBatchFile } = require('./files.cjs')
 const { listSystemFonts, trustedFontRequest } = require('./fonts.cjs')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -48,6 +48,14 @@ else {
       ipcMain.handle('fsh777:save-file', async (event, value) => {
         if (!trustedFontRequest(event, window)) throw new Error('Untrusted save request')
         return saveFile(value, window, dialog, app.getPath('downloads'))
+      })
+      ipcMain.handle('fsh777:choose-batch-folder', async (event) => {
+        if (!trustedFontRequest(event, window)) throw new Error('Untrusted batch request')
+        return chooseBatchFolder(window, dialog)
+      })
+      ipcMain.handle('fsh777:save-batch-file', async (event, value) => {
+        if (!trustedFontRequest(event, window)) throw new Error('Untrusted batch request')
+        return saveBatchFile(value)
       })
       ipcMain.handle('fsh777:list-fonts', async (event) => {
         if (!trustedFontRequest(event, window)) throw new Error('Untrusted font request')
