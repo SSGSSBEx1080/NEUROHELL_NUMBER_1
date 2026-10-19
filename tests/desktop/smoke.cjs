@@ -87,7 +87,9 @@ watchdog.unref()
         .filter({ has: page.locator('strong', { hasText: new RegExp(`^${format}$`) }) })
         .click()
       await page.getByRole('button', { name: `Скачать ${format}`, exact: true }).click()
-      await expect(page.getByRole('dialog')).toBeHidden()
+      // PSD encoding + atomic disk save is asynchronous; use the same bounded budget
+      // as the save acknowledgement, rather than Playwright's unrelated 5s default.
+      await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30000 })
       await expect(page.locator('.toast')).toContainText(
         new RegExp(`Файл сохранён: .+\\.${format.toLowerCase()}$`),
         { timeout: 30000 },
@@ -125,6 +127,13 @@ watchdog.unref()
     const families = await page.evaluate(() => window.fsh777.listFonts())
     assert.ok(families.length > 10)
     assert.ok(families.some((f) => /Arial|Segoe|Times/.test(f)))
+    progress('bounded fallback reads actual Windows font name tables, including collections')
+    const probedFamilies = await require('../../desktop/fontProbe.cjs').probeFontFolders([
+      path.join(process.env.SystemRoot || 'C:\\Windows', 'Fonts'),
+    ])
+    assert.ok(probedFamilies.length > 10)
+    assert.ok(probedFamilies.some((f) => /Arial|Segoe|Times/.test(f)))
+
     progress('save legacy .777 backup from File menu')
     await page.getByRole('button', { name: 'Файл', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Резервная копия (старый .777)', exact: true }).click()
@@ -355,14 +364,168 @@ watchdog.unref()
     const placed = updated.children.find((l) => l.name === 'Native smart').placedLayer
     const inner = decodePsd(updated.linkedFiles.find((l) => l.id === placed.id).data)
     assert.equal(inner.children[0].text.text, 'Готово')
+    progress('0.6 command search creates native Levels in the real Windows renderer')
+    const save06 = async () => {
+      await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+      await page.keyboard.press('Control+s')
+      await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+      await expect(page.locator('.toast')).toContainText('Файл сохранён: native-only.psd', {
+        timeout: 30000,
+      })
+      return decodePsd(await fs.readFile(path.join(temp, 'native-only.psd')))
+    }
     await page.locator('.layer-row').filter({ hasText: 'Native rounded' }).click()
+    await page.keyboard.press('Control+f')
+    await page.getByLabel('Найти команду').fill('levels')
+    await page.getByLabel('Найти команду').press('Enter')
+    await expect(page.getByLabel('Тип коррекции')).toHaveValue('levels')
+    await page.getByLabel('Вход: чёрный', { exact: true }).fill('20')
+    await page.getByLabel('Гамма уровней', { exact: true }).fill('1.25')
+    await page.getByLabel('Гамма уровней', { exact: true }).press('Tab')
+    let expanded = await save06()
+    const levels = expanded.children.find((l) => l.adjustment?.type === 'levels')
+    assert.equal(levels.adjustment.rgb.shadowInput, 20)
+    assert.equal(levels.adjustment.rgb.midtoneInput, 1.25)
+
+    progress('0.6 Quick Mask paints coverage, then creates a native masked Curves layer')
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('q')
+    await expect(page.getByTestId('quick-mask-overlay')).toBeVisible()
+    const region06 = await page.getByTestId('editor-canvas').boundingBox()
+    await page.mouse.click(region06.x + region06.width * 0.2, region06.y + region06.height * 0.2)
+    await page.keyboard.press('q')
+    await page.keyboard.press('Control+m')
+    await expect(page.getByLabel('Тип коррекции')).toHaveValue('curves')
+    expanded = await save06()
+    const curves = expanded.children.find((l) => l.adjustment?.type === 'curves')
+    assert.ok(curves.mask?.imageData)
+    const coverage06 = curves.mask.imageData.data
+    assert.ok(coverage06.some((value, i) => i % 4 === 0 && value === 0))
+    assert.ok(coverage06.some((value, i) => i % 4 === 0 && value === 255))
+
+    progress('0.6 grid/guide controls write the standard PSD resource')
+    await page.getByRole('button', { name: 'Вид', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Направляющие и сетка…', exact: true }).click()
+    await page.getByLabel('Положение новой направляющей').fill('50%')
+    await page.getByRole('button', { name: 'Добавить направляющую', exact: true }).click()
+    await page.getByRole('button', { name: 'Применить разметку', exact: true }).click()
+    expanded = await save06()
+    assert.deepEqual(expanded.imageResources.gridAndGuidesInformation.guides, [
+      { location: 400, direction: 'vertical' },
+    ])
+
+    progress('0.6 Magic Wand uses the production worker without erasing artwork')
+    const beforeWand06 = await page.getByTestId('editor-canvas').evaluate(async (c) => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return c.toDataURL()
+    })
+    await page.keyboard.press('w')
+    await page.mouse.click(region06.x + region06.width * 0.96, region06.y + region06.height * 0.9)
+    await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
+    const afterWand06 = await page.getByTestId('editor-canvas').evaluate((c) => c.toDataURL())
+    assert.equal(afterWand06, beforeWand06)
+    await page.keyboard.press('Control+d')
+
+    progress(
+      '0.6 raster filter worker creates a copy, retains the original smart PSD and undoes atomically',
+    )
+    await page
+      .getByRole('button', { name: 'Открыть содержимое: Native smart', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Фильтры', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Растровые фильтры на копии…', exact: true }).click()
+    await page.getByLabel('Растровый фильтр').selectOption('noise')
+    await page
+      .getByRole('button', { name: 'Применить на копии', exact: true })
+      .click({ timeout: 30000 })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    expanded = await save06()
+    const original06 = expanded.children.find((l) => l.name === 'Native smart')
+    const filtered06 = expanded.children.find((l) => l.name.includes('Добавить шум'))
+    assert.ok(original06.placedLayer && original06.hidden)
+    assert.ok(filtered06.imageData && !filtered06.placedLayer)
+    await page.keyboard.press('Control+z')
+    expanded = await save06()
+    assert.equal(
+      expanded.children.some((l) => l.name.includes('Добавить шум')),
+      false,
+    )
+    assert.equal(expanded.children.find((l) => l.name === 'Native smart').hidden, false)
+    progress('0.7 Pen creates real Bezier points; exact node expressions persist as native paths')
+    await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).focus()
+    await page.keyboard.press('p')
+    const region07 = await page.getByTestId('editor-canvas').boundingBox()
+    const point07 = (x, y) => [region07.x + region07.width * x, region07.y + region07.height * y]
+    await page.mouse.click(...point07(0.65, 0.35))
+    await page.mouse.move(...point07(0.83, 0.35))
+    await page.mouse.down()
+    await page.mouse.move(...point07(0.84, 0.47), { steps: 5 })
+    await page.mouse.up()
+    await page.mouse.click(...point07(0.74, 0.7))
+    await page.mouse.click(...point07(0.65, 0.35))
+    await expect(page.getByTestId('path-anchor')).toHaveCount(3)
+    await page.getByTestId('path-anchor').nth(1).click()
+    const nodeX07 = page.getByRole('spinbutton', { name: 'X узла', exact: true })
+    const originalX07 = Number(await nodeX07.inputValue())
+    await nodeX07.fill('+=24')
+    await nodeX07.press('Enter')
+    expanded = await save06()
+    const path07 = expanded.children.find((l) => l.name.startsWith('Контур ') && l.vectorMask)
+    assert.equal(path07.vectorMask.paths[0].knots.length, 3)
+    assert.equal(path07.vectorMask.paths[0].open, false)
+    assert.ok(Math.abs(path07.vectorMask.paths[0].knots[1].points[2] - originalX07 - 24) < 0.05)
+    assert.notEqual(
+      path07.vectorMask.paths[0].knots[1].points[0],
+      path07.vectorMask.paths[0].knots[1].points[2],
+    )
+
+    progress('0.7 native photo filter and editable gradient-map stops in packaged renderer')
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Фотофильтр', exact: true }).click()
+    await page.getByLabel('Плотность фотофильтра', { exact: true }).fill('2*29')
+    await page.getByLabel('Плотность фотофильтра', { exact: true }).press('Enter')
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Карта градиента', exact: true }).click()
+    await page.getByLabel('Пресет карты градиента').selectOption('2')
+    expanded = await save06()
+    assert.equal(
+      expanded.children.find((l) => l.adjustment?.type === 'photo filter').adjustment.density,
+      0.58,
+    )
+    assert.equal(
+      expanded.children.find((l) => l.adjustment?.type === 'gradient map').adjustment.colorStops
+        .length,
+      3,
+    )
+
+    progress(
+      '0.7 color-stack CUBE uses trusted atomic disk save, then reimports as embedded native LUT',
+    )
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Экспорт цветового стека CUBE…', exact: true }).click()
+    await page.getByRole('button', { name: 'Сохранить цветовой стек .cube', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 30000 })
+    const cube07 = await fs.readFile(path.join(temp, 'native-only-look.cube'))
+    assert.ok(cube07.toString().includes('LUT_3D_SIZE 17'))
+    await page.getByRole('button', { name: 'Коррекция', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Поиск цвета · 3D LUT', exact: true }).click()
+    await page
+      .getByLabel('Загрузить файл CUBE')
+      .setInputFiles({ name: 'native-only-look.cube', mimeType: 'text/plain', buffer: cube07 })
+    await expect(page.getByTestId('lut-properties')).toContainText('17 × 17 × 17')
+    expanded = await save06()
+    const lookup07 = expanded.children.find((l) => l.adjustment?.type === 'color lookup').adjustment
+    assert.equal(lookup07.lutFormat, 'cube')
+    assert.ok(Buffer.from(lookup07.lut3DFileData).toString().includes('LUT_3D_SIZE 17'))
+    await page.locator('.layer-row').filter({ hasText: 'Карта градиента' }).click()
     await fs.mkdir('test-results', { recursive: true })
     await page.screenshot({
       path: executablePath ? 'test-results/desktop-packaged.png' : 'test-results/desktop.png',
     })
     assert.deepEqual(errors, [])
     progress(
-      'passed: standalone sandbox, exports, J/layout/recording, measured point bounds, native text/vector and XMP-free embedded PSD editing',
+      'passed: standalone sandbox/exports, J/recording, native text/vector/smart, command search, native adjustments/masks/guides, Quick Mask, Magic Wand, raster-filter worker/source preservation, native Bezier editing, numeric expressions, Photo/GradientMap and native CUBE I/O',
     )
   } catch (error) {
     await fs.mkdir('test-results', { recursive: true })
@@ -378,7 +541,7 @@ watchdog.unref()
             label: document.activeElement?.getAttribute('aria-label'),
           },
           dialogs: Array.from(document.querySelectorAll('[role=dialog]')).map((node) =>
-            node.textContent?.slice(0, 400),
+            node.textContent?.slice(0, 4000),
           ),
           viewport: [innerWidth, innerHeight],
         }))

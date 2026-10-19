@@ -1,7 +1,7 @@
 {
   "name": "fsh-777",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -13,7 +13,7 @@
     "check": "tsc -b --pretty false",
     "desktop:dev": "npm run build && electron .",
     "desktop:windows": "npm run build && electron-builder --win --publish never",
-    "test:desktop-security": "node --test tests/desktop/security.test.cjs tests/desktop/files.test.cjs",
+    "test:desktop-security": "node --test tests/desktop/security.test.cjs tests/desktop/files.test.cjs tests/desktop/font-probe.test.cjs",
     "test:desktop": "node tests/desktop/smoke.cjs",
     "format": "prettier --write src desktop tests/unit tests/e2e tests/desktop scripts *.ts *.json",
     "format:check": "prettier --check src desktop tests/unit tests/e2e tests/desktop scripts *.ts *.json"

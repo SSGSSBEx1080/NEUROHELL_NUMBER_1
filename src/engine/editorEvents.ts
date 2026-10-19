@@ -8,6 +8,7 @@ export type EditorEvent =
       label: string
       selectedId: string | null
     }
+  | { type: 'pixel-selection'; document: EditorDocument; selectedId: string | null }
   | { type: 'selection'; document: EditorDocument; selectedId: string | null }
   | { type: 'history'; document: EditorDocument; selectedId: string | null }
   | { type: 'document'; document: EditorDocument; selectedId: string | null }

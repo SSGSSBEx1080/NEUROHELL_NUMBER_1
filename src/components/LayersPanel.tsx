@@ -12,6 +12,7 @@ import {
   Folder,
   FolderPlus,
   History,
+  SlidersHorizontal,
   Layers,
   LockKeyhole,
   Plus,
@@ -24,13 +25,16 @@ import {
 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
-import type { BlendMode, Layer } from '../types'
+import type { BlendMode, Layer, SelectionMode } from '../types'
 import { visibleLayerRows } from '../engine/layerOperations'
 import { Field, IconButton, Select } from './ui'
 interface Props {
   editor: Editor
   selectedId: string | null
   onSelect: (id: string | null) => void
+  onArrange: (ids: string[]) => void
+  onLoadSelection: (id: string, mode: SelectionMode) => void
+  onCorrection: () => void
   onAdd: () => void
   onDuplicate: (id?: string) => void
   onDelete: (id?: string) => void
@@ -65,7 +69,9 @@ const modes: [BlendMode, string][] = [
 export function LayerThumbnail({ layer }: { layer: Layer }) {
   return (
     <span className={`layer-thumbnail ${layer.kind === 'image' ? 'checkerboard' : ''}`}>
-      {layer.kind === 'group' ? (
+      {layer.kind === 'adjustment' ? (
+        <span className="correction-symbol">◐</span>
+      ) : layer.kind === 'group' ? (
         <Folder size={19} />
       ) : layer.kind === 'image' ? (
         layer.src && <img src={layer.src} alt="" draggable={false} />
@@ -85,6 +91,9 @@ export function LayersPanel({
   selectedId,
   onSelect,
   onAdd,
+  onCorrection,
+  onLoadSelection,
+  onArrange,
   onDuplicate,
   onDelete,
   onReorder,
@@ -102,6 +111,7 @@ export function LayersPanel({
   const [dragId, setDragId] = useState<string | null>(null),
     [dropId, setDropId] = useState<string | null>(null),
     [marked, setMarked] = useState<string[]>([])
+  const rangeAnchor = useRef<string | null>(null)
   const [context, setContext] = useState<{ id: string; x: number; y: number } | null>(null),
     contextRef = useRef<HTMLDivElement>(null)
   const layer = editor.document.layers.find((l) => l.id === selectedId),
@@ -124,6 +134,7 @@ export function LayersPanel({
   }
   useEffect(() => {
     setMarked([])
+    rangeAnchor.current = null
   }, [editor.document.id])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -214,11 +225,17 @@ export function LayersPanel({
           </div>
           {marked.length > 1 && (
             <div className="group-selection-note">
-              <span>{marked.length} слоёв для группы</span>
+              <span>{marked.length} слоёв выбрано</span>
+              <button onClick={() => onArrange(marked)}>Выровнять…</button>
               <button onClick={group}>Группировать · Ctrl G</button>
             </div>
           )}
-          <div className="layer-list" aria-label="Слои документа">
+          <div
+            className="layer-list"
+            aria-label="Слои документа"
+            role="listbox"
+            aria-multiselectable="true"
+          >
             {!rows.length && (
               <div className="empty-layers">
                 <Layers size={26} strokeWidth={1.3} />
@@ -239,7 +256,7 @@ export function LayersPanel({
                 className={`layer-row ${selectedId === l.id ? 'selected' : ''} ${marked.includes(l.id) && marked.length > 1 ? 'group-marked' : ''} ${!l.visible ? 'hidden-layer' : ''} ${dragId === l.id ? 'dragging' : ''} ${dropId === l.id ? 'drop-target' : ''}`}
                 style={{ paddingLeft: 8 + Math.min(depth, 5) * 12 }}
                 role="option"
-                aria-selected={selectedId === l.id}
+                aria-selected={selectedId === l.id || marked.includes(l.id)}
                 aria-label={l.name}
                 tabIndex={0}
                 draggable={!renaming}
@@ -267,14 +284,29 @@ export function LayersPanel({
                   setDropId(null)
                 }}
                 onClick={(e) => {
-                  if (e.ctrlKey || e.metaKey)
+                  if (e.shiftKey) {
+                    const start = rows.findIndex(
+                        (r) => r.layer.id === (rangeAnchor.current || selectedId),
+                      ),
+                      end = rows.findIndex((r) => r.layer.id === l.id)
+                    const range = rows
+                      .slice(Math.min(start < 0 ? end : start, end), Math.max(start, end) + 1)
+                      .map((r) => r.layer.id)
+                    setMarked((previous) =>
+                      e.ctrlKey || e.metaKey ? [...new Set([...previous, ...range])] : range,
+                    )
+                  } else if (e.ctrlKey || e.metaKey) {
+                    rangeAnchor.current = l.id
                     setMarked((ids) => {
                       const before = ids.length ? ids : selectedId ? [selectedId] : []
                       return before.includes(l.id)
                         ? before.filter((id) => id !== l.id)
                         : [...before, l.id]
                     })
-                  else setMarked([])
+                  } else {
+                    setMarked([])
+                    rangeAnchor.current = l.id
+                  }
                   onSelect(l.id)
                   onPixels()
                 }}
@@ -285,6 +317,7 @@ export function LayersPanel({
                 onContextMenu={(e) => {
                   e.preventDefault()
                   onSelect(l.id)
+                  if (!marked.includes(l.id)) setMarked([])
                   setContext({
                     id: l.id,
                     x: Math.min(e.clientX, window.innerWidth - 260),
@@ -330,8 +363,22 @@ export function LayersPanel({
                 <button
                   className="layer-pixels-button"
                   aria-label={l.smart ? `Открыть содержимое: ${l.name}` : `Пиксели слоя: ${l.name}`}
+                  title="Ctrl+клик — выделить непрозрачность; Shift добавляет, Alt вычитает"
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (e.ctrlKey || e.metaKey) {
+                      onLoadSelection(
+                        l.id,
+                        e.altKey
+                          ? e.shiftKey
+                            ? 'intersect'
+                            : 'subtract'
+                          : e.shiftKey
+                            ? 'add'
+                            : 'replace',
+                      )
+                      return
+                    }
                     onSelect(l.id)
                     onPixels()
                   }}
@@ -411,6 +458,11 @@ export function LayersPanel({
           <footer className="layers-footer">
             <span>{editor.document.layers.length} слоёв</span>
             <div>
+              <IconButton
+                icon={SlidersHorizontal}
+                label="Новый корректирующий слой"
+                onClick={onCorrection}
+              />
               <IconButton icon={FolderPlus} label="Группировать слои (Ctrl+G)" onClick={group} />
               <IconButton
                 icon={SquareDashed}
@@ -494,6 +546,14 @@ export function LayersPanel({
               <Copy size={14} />
               Дублировать<span>Ctrl J</span>
             </button>
+            <button
+              onClick={() => {
+                onArrange(marked.length > 1 ? marked : [context.id])
+                setContext(null)
+              }}
+            >
+              Выравнивание и интервалы…
+            </button>
             <button onClick={group}>
               <FolderPlus size={14} />
               Группировать<span>Ctrl G</span>
@@ -521,7 +581,7 @@ export function LayersPanel({
               {contextual.mask ? 'Редактировать маску' : 'Добавить маску'}
             </button>
             <button
-              disabled={contextual.locked || !!contextual.smart}
+              disabled={contextual.locked || !!contextual.smart || contextual.kind === 'adjustment'}
               onClick={() => {
                 onSmart()
                 setContext(null)

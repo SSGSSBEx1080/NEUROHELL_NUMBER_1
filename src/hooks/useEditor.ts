@@ -1,9 +1,9 @@
 import type { EditorEvent } from '../engine/editorEvents'
 import { loadPreferences } from '../engine/preferences'
 import { useCallback, useRef, useState } from 'react'
-import type { EditorDocument, HistoryEntry, Layer } from '../types'
+import type { EditorDocument, HistoryEntry, Layer, Selection } from '../types'
 import { descendants, isLayerLocked } from '../engine/document'
-import { ReplaceDocumentCommand, trimHistory } from '../engine/history'
+import { ReplaceDocumentCommand, trimHistory, sameProjectData } from '../engine/history'
 import { pruneImageCache } from '../engine/render'
 
 export interface EditorSession {
@@ -11,6 +11,7 @@ export interface EditorSession {
   entries: HistoryEntry[]
   index: number
   selectedId: string | null
+  pixelSelection?: Selection | null
 }
 export function useEditor(initial: EditorDocument) {
   const listeners = useRef(new Set<(event: EditorEvent) => void>())
@@ -23,6 +24,8 @@ export function useEditor(initial: EditorDocument) {
       listeners.current.delete(listener)
     }
   }, [])
+  const [pixelSelection, setPixelState] = useState<Selection | null>(null)
+  const pixelsRef = useRef<Selection | null>(null)
   const initialSelection =
     initial.layers.find((l) => l.kind === 'image')?.id || initial.layers.at(-1)?.id || null
   const [selectedId, setSelectionState] = useState<string | null>(initialSelection)
@@ -58,13 +61,18 @@ export function useEditor(initial: EditorDocument) {
   }, [])
   const record = useCallback(
     (next: EditorDocument, label: string) => {
-      if (entriesRef.current[indexRef.current].document === next) return
+      if (
+        entriesRef.current[indexRef.current].document === next &&
+        (entriesRef.current[indexRef.current].pixelSelection || null) === pixelsRef.current
+      )
+        return
       const before = entriesRef.current[indexRef.current].document
       const history = trimHistory(
         [
           ...entriesRef.current.slice(0, indexRef.current + 1),
           {
             document: next,
+            pixelSelection: pixelsRef.current,
             label,
             time: Date.now(),
             command: new ReplaceDocumentCommand(
@@ -84,9 +92,19 @@ export function useEditor(initial: EditorDocument) {
       setEntries(history)
       setIndex(history.length - 1)
       pruneImageCache(history.map((e) => e.document))
-      emit({ type: 'commit', before, after: next, label, selectedId: selectionRef.current })
+      if (before === next)
+        emit({ type: 'pixel-selection', document: next, selectedId: selectionRef.current })
+      else emit({ type: 'commit', before, after: next, label, selectedId: selectionRef.current })
     },
     [emit],
+  )
+  const setPixelSelection = useCallback(
+    (next: Selection | null, temporary = false, label = 'Выделение пикселей') => {
+      pixelsRef.current = next
+      setPixelState(next)
+      if (!temporary) record(documentRef.current, label)
+    },
+    [record],
   )
   const change = useCallback(
     (fn: (doc: EditorDocument) => EditorDocument, label: string, temporary = false) => {
@@ -145,7 +163,20 @@ export function useEditor(initial: EditorDocument) {
     },
     [change],
   )
-  const finish = useCallback((label: string) => record(documentRef.current, label), [record])
+  const finish = useCallback(
+    (label: string) => {
+      const baseline = entriesRef.current[indexRef.current]
+      if (
+        (baseline.pixelSelection || null) === pixelsRef.current &&
+        sameProjectData(baseline.document, documentRef.current)
+      ) {
+        setCurrent(baseline.document)
+        return
+      }
+      record(documentRef.current, label)
+    },
+    [record, setCurrent],
+  )
   const travel = useCallback(
     (to: number) => {
       if (to < 0 || to >= entriesRef.current.length) return
@@ -160,6 +191,8 @@ export function useEditor(initial: EditorDocument) {
       indexRef.current = to
       setIndex(to)
       setCurrent(next || entriesRef.current[to].document)
+      pixelsRef.current = entriesRef.current[to].pixelSelection || null
+      setPixelState(pixelsRef.current)
       selectionRef.current = entriesRef.current[to].selectedId
       setSelectionState(selectionRef.current)
       emit({ type: 'history', document: documentRef.current, selectedId: selectionRef.current })
@@ -170,6 +203,8 @@ export function useEditor(initial: EditorDocument) {
   const redo = useCallback(() => travel(indexRef.current + 1), [travel])
   const reset = useCallback(
     (doc: EditorDocument) => {
+      pixelsRef.current = null
+      setPixelState(null)
       const selected =
         doc.layers.find((l) => l.kind === 'image')?.id || doc.layers.at(-1)?.id || null
       selectionRef.current = selected
@@ -193,6 +228,7 @@ export function useEditor(initial: EditorDocument) {
       entries: entriesRef.current,
       index: indexRef.current,
       selectedId: selectionRef.current,
+      pixelSelection: pixelsRef.current,
     }),
     [],
   )
@@ -200,6 +236,8 @@ export function useEditor(initial: EditorDocument) {
     (session: EditorSession) => {
       entriesRef.current = session.entries
       indexRef.current = session.index
+      pixelsRef.current = session.pixelSelection || null
+      setPixelState(pixelsRef.current)
       selectionRef.current = session.selectedId
       setEntries(session.entries)
       setIndex(session.index)
@@ -213,6 +251,8 @@ export function useEditor(initial: EditorDocument) {
   return {
     document,
     documentRef,
+    pixelSelection,
+    setPixelSelection,
     subscribeEvents,
     snapshot,
     restore,

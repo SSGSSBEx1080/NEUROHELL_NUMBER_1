@@ -139,7 +139,7 @@ export function runAction(
       throw new Error(`Шаг «${step.name}»: слой или группа заблокированы`)
     if (c.type === 'duplicate') {
       const result = duplicateLayers(current, selected.id, 0),
-        offset = c.offset || { x: 24, y: 24 }
+        offset = selected.kind === 'adjustment' ? { x: 0, y: 0 } : c.offset || { x: 24, y: 24 }
       const oldIds = new Set(current.layers.map((l) => l.id))
       current = {
         ...result.document,
@@ -166,6 +166,16 @@ export function runAction(
     }
     if (selected.kind === 'group')
       throw new Error('Этот шаг рассчитан на обычный слой, не на группу')
+    if (
+      selected.kind === 'adjustment' &&
+      (c.type !== 'properties' ||
+        Object.keys(c.values).some(
+          (k) => !['name', 'visible', 'opacity', 'blendMode', 'correction'].includes(k),
+        ))
+    )
+      throw new Error(
+        'Корректирующий слой поддерживает параметры коррекции и наложения, но не растровые/геометрические шаги',
+      )
     let next: Layer = { ...selected }
     switch (c.type) {
       case 'adjust':
@@ -199,6 +209,8 @@ export function runAction(
         })
         break
       case 'properties': {
+        if (c.values.correction && selected.kind !== 'adjustment')
+          throw new Error('Шаг требует корректирующий слой')
         const textKeys = [
           'text',
           'fontFamily',
@@ -218,6 +230,7 @@ export function runAction(
           [
             'shape',
             'shapeFill',
+            'shapePaths',
             'cornerRadii',
             'sides',
             'starRatio',

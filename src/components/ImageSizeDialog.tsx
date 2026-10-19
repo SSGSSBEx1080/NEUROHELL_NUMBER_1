@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link2 } from 'lucide-react'
-import type { EditorDocument } from '../types'
+import type { EditorDocument, Point } from '../types'
 import { Modal } from './ui'
 export function ImageSizeDialog({
   doc,
@@ -10,14 +10,14 @@ export function ImageSizeDialog({
 }: {
   doc: EditorDocument
   resize: boolean
-  onApply: (width: number, height: number, dpi: number, centered: boolean) => void
+  onApply: (width: number, height: number, dpi: number, anchor: Point) => void
   onClose: () => void
 }) {
   const [width, setWidth] = useState(String(doc.width)),
     [height, setHeight] = useState(String(doc.height)),
     [dpi, setDpi] = useState(String(doc.dpi || 72)),
     [linked, setLinked] = useState(true),
-    [centered, setCentered] = useState(true)
+    [anchor, setAnchor] = useState<Point>({ x: 0.5, y: 0.5 })
   const valid =
     Number.isInteger(+width) &&
     Number.isInteger(+height) &&
@@ -48,7 +48,7 @@ export function ImageSizeDialog({
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (valid) onApply(+width, +height, +dpi, centered)
+          if (valid) onApply(+width, +height, +dpi, anchor)
         }}
       >
         <div className="dialog-grid">
@@ -85,14 +85,42 @@ export function ImageSizeDialog({
             Сохранять пропорции
           </label>
         ) : (
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={centered}
-              onChange={(e) => setCentered(e.target.checked)}
-            />
-            Сохранить содержимое по центру
-          </label>
+          <div className="canvas-anchor-controls">
+            <span>Опорная точка содержимого</span>
+            <div className="canvas-anchor-grid" role="group" aria-label="Опорная точка холста">
+              {[
+                'Верхний левый',
+                'Верхний центр',
+                'Верхний правый',
+                'Средний левый',
+                'Центр',
+                'Средний правый',
+                'Нижний левый',
+                'Нижний центр',
+                'Нижний правый',
+              ].map((name, i) => {
+                const x = (i % 3) / 2,
+                  y = Math.floor(i / 3) / 2,
+                  active = anchor.x === x && anchor.y === y
+                return (
+                  <button
+                    type="button"
+                    key={name}
+                    aria-label={name}
+                    aria-pressed={active}
+                    className={active ? 'active' : ''}
+                    onClick={() => setAnchor({ x, y })}
+                  >
+                    {active ? '●' : ['↖', '↑', '↗', '←', '·', '→', '↙', '↓', '↘'][i]}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="panel-note">
+              Слои, связанные маски и направляющие смещаются вместе. Содержимое за новым краем не
+              удаляется.
+            </p>
+          </div>
         )}
         <label className="dialog-label" style={{ marginTop: 20 }}>
           Разрешение печати, ppi

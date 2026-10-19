@@ -1,3 +1,4 @@
+import { renderCorrection, clearAdjustmentCaches } from './adjustmentRenderer'
 import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
 import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
@@ -23,7 +24,13 @@ function rememberImage(src: string, image: HTMLImageElement | HTMLCanvasElement)
     images.delete(key)
   }
 }
-export const cacheImage = (src: string, image: HTMLCanvasElement) => rememberImage(src, image)
+export const cacheImage = (src: string, image: HTMLCanvasElement) => {
+  // Content-addressed PNG/data sources are immutable. Replacing an existing decoded
+  // image by a canvas with the same bytes can change Chromium's filter sampling and
+  // even alter a different layer sharing that source. Only volatile brush previews mutate.
+  const existing = !src.startsWith('mask-preview:') && images.get(src)
+  rememberImage(src, existing || image)
+}
 export function loadImage(src: string): Promise<HTMLImageElement | HTMLCanvasElement> {
   const existing = images.get(src)
   if (existing) {
@@ -110,6 +117,7 @@ export function renderLayer(
   override?: HTMLCanvasElement,
   flat = false,
 ) {
+  if (layer.kind === 'adjustment') return
   if (!flat && (!layer.visible || layer.opacity === 0)) return
   ctx.save()
   ctx.imageSmoothingQuality = 'high'
@@ -253,7 +261,9 @@ export function renderDocument(
     if (depth > 12) throw new Error('Превышена поддерживаемая вложенность групп')
     const siblings = doc.layers.filter((l) => l.parentId === parentId)
     const paint = (layer: Layer, out: CanvasRenderingContext2D) => {
-      if (layer.kind === 'group') {
+      if (layer.kind === 'adjustment') {
+        renderCorrection(out, layer, layer.mask ? images.get(layer.mask.src) : undefined)
+      } else if (layer.kind === 'group') {
         if (
           !layer.isolated &&
           layer.opacity === 1 &&
@@ -293,6 +303,13 @@ export function renderDocument(
       let end = i + 1
       while (siblings[end]?.clipping) end++
       if (!layer.visible || layer.id === hideId) {
+        i = end - 1
+        continue
+      }
+      // A non-clipped adjustment is not a clipping base. Following clipped layers
+      // have no pixel alpha to clip to; Photoshop likewise treats it as an empty base.
+      if (layer.kind === 'adjustment') {
+        paint(layer, target)
         i = end - 1
         continue
       }
@@ -391,6 +408,10 @@ function renderMasked(ctx: CanvasRenderingContext2D, layer: Layer, override?: HT
 }
 const rasterGeometry = new WeakMap<HTMLCanvasElement, { source: Layer; patch: Partial<Layer> }>()
 export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
+  if (layer.kind === 'adjustment')
+    throw new Error(
+      'Корректирующий слой зависит от нижнего стека. Используй «Объединить видимые», чтобы получить растровую копию.',
+    )
   if (layer.src) await loadImage(layer.src)
   if (layer.mask) await loadImage(layer.mask.src)
   if (layer.kind === 'text') {
@@ -398,7 +419,7 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
     clearTextGeometryCache()
   }
   const bounds = pixelBounds(
-    layer.kind === 'text' || layer.kind === 'shape'
+    layer.kind === 'text' || layer.kind === 'shape' || layer.adjustments.blur > 0
       ? rasterBounds(layer, false, true)
       : { x: 0, y: 0, width: layer.width, height: layer.height },
   )
@@ -571,6 +592,7 @@ export async function encodeBitmap(layer: Layer, canvas: HTMLCanvasElement): Pro
 }
 
 export function clearRenderCaches() {
+  clearAdjustmentCaches()
   maskCache.clear()
   clearStyleCache()
   clearWarpCache()

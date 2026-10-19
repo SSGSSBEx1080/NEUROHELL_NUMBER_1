@@ -27,10 +27,16 @@ export function duplicateLayers(doc: EditorDocument, id: string, offset = 24) {
     id: ids.get(l.id)!,
     parentId: l.parentId ? ids.get(l.parentId) || l.parentId : undefined,
     name: l.id === id ? `${l.name} — копия` : l.name,
-    x: l.x + offset,
-    y: l.y + offset,
+    x: l.x + (l.kind === 'adjustment' ? 0 : offset),
+    y: l.y + (l.kind === 'adjustment' ? 0 : offset),
     locked: l.id === id ? false : l.locked,
-    mask: l.mask ? { ...l.mask, x: l.mask.x + offset, y: l.mask.y + offset } : undefined,
+    mask: l.mask
+      ? {
+          ...l.mask,
+          x: l.mask.x + (l.kind === 'adjustment' ? 0 : offset),
+          y: l.mask.y + (l.kind === 'adjustment' ? 0 : offset),
+        }
+      : undefined,
   }))
   const at = Math.max(...source.map((l) => doc.layers.indexOf(l))) + 1
   return {

@@ -1,3 +1,5 @@
+import { nativeLayout, normalizeLayout, sameNativeLayout } from './layout'
+import { exportAdjustment, importAdjustment } from './psdAdjustments'
 import { sealProject } from './psdIntegrity'
 import { gaussianSmartFilter, nativeSmartPlacement, translateNativePlacement } from './psdSmart'
 import { affineText, exportNativeText, importNativeText } from './psdText'
@@ -25,6 +27,7 @@ import {
   originalSource,
   registerSource,
   sameVisual,
+  sameEmbeddedContent,
 } from './psdSource'
 import { validatePsdHeader } from './psdHeader'
 export interface CompatibilityReport {
@@ -316,7 +319,29 @@ export async function importPsd(
           sourceText: src.text?.text?.replace(/\r\n?/g, '\n'),
           styles: importStyles(src),
         })
-        if (!group) {
+        const correction =
+          !group && !src.vectorMask && !src.realMask && !src.effects
+            ? importAdjustment(src.adjustment)
+            : undefined
+        if (correction)
+          Object.assign(layer, {
+            kind: 'adjustment',
+            correction,
+            x: 0,
+            y: 0,
+            width: doc.width,
+            height: doc.height,
+            styles: undefined,
+          })
+        if (src.adjustment && !correction)
+          warnings.add(
+            'Неподдерживаемый вариант корректирующего слоя сохранён с исходными данными. После правок его перерасчёт не гарантируется.',
+          )
+        if (correction)
+          warnings.add(
+            'Нативные корректирующие слои доступны для правки. Перерасчёт использует RGB/8 алгоритмы ФШ777 и может отличаться от Adobe; неизменённый оригинал сохраняется побайтно.',
+          )
+        if (!group && !correction) {
           if (src.imageData?.width && src.imageData.height) layer.src = imageSource(src.imageData)
           else {
             layer.src = canvas(1, 1).toDataURL()
@@ -440,6 +465,22 @@ export async function importPsd(
         'Декодер сообщил о неподдерживаемых метаданных. Неизменённый оригинал сохраняется целиком; после правок неизвестные блоки могут быть потеряны.',
       )
   }
+  if (!doc.layout && psd.imageResources?.gridAndGuidesInformation) {
+    const information = psd.imageResources.gridAndGuidesInformation
+    doc.layout = normalizeLayout({
+      guides: information.guides?.map((g) => ({
+        id: uid(),
+        axis: g.direction === 'vertical' ? 'x' : 'y',
+        position: g.location,
+      })),
+      gridSize: (information.grid?.horizontal || 2048) / 32,
+      gridSizeY: (information.grid?.vertical || 2048) / 32,
+    })
+    if ((information.guides?.length || 0) !== doc.layout.guides.length)
+      warnings.add(
+        'Часть направляющих вне поддерживаемого бюджета (200 / 16384 px) не показана. Пока макет направляющих не изменён, исходный ресурс PSD сохраняется.',
+      )
+  }
   doc = parseProject({
     ...doc,
     dpi: psd.imageResources?.resolutionInfo?.horizontalResolution || doc.dpi || 72,
@@ -478,7 +519,7 @@ function layerAt(psd: Psd | undefined, path?: number[]): PsdLayer | undefined {
   return layer
 }
 function unchangedContent(a: Layer, b?: Layer) {
-  if (!b) return false
+  if (!b || !sameEmbeddedContent(a.smart, b.smart)) return false
   // Translation and compositing can be updated without rasterizing native type/masks/effects.
   const clean = (l: Layer) => ({
     ...l,
@@ -613,6 +654,11 @@ export async function exportPsd(
         // the working renderer as well as the merged image. Keep the original
         // placement/linked PSD/metadata; refresh pixels only, never flatten contents.
         if (layer.smart && !appearanceUnchanged) Object.assign(out, rasterPreview(layer))
+      } else if (layer.kind === 'adjustment' && layer.correction) {
+        out.adjustment = exportAdjustment(layer.correction)
+        notes.push(
+          'Корректирующие слои записаны как native adjustment layers с масками/opacity/clipping, не растрированы. Merged использует RGB/8 движок ФШ777; перерасчёт Adobe может отличаться, особенно в curves/HSL/vibrance/балансе цвета.',
+        )
       } else if (layer.kind !== 'group') {
         out = rasterPreview(layer, embeddedAppearance)
         if (layer.kind === 'shape' || layer.kind === 'text') {
@@ -927,6 +973,16 @@ export async function exportPsd(
         heightUnit: 'Inches',
       },
     },
+  }
+  if (doc.layout && (!original || !sameNativeLayout(doc.layout, source?.baseline.layout))) {
+    psd.imageResources!.gridAndGuidesInformation = nativeLayout(doc.layout)
+    if (
+      (original?.imageResources?.gridAndGuidesInformation?.guides?.length || 0) >
+      (source?.baseline.layout?.guides.length || 0)
+    )
+      notes.push(
+        'Макет направляющих изменён. Неподдерживаемые исходные направляющие вне отображённого набора не перенесены; исходный файл не перезаписывай без резервной копии.',
+      )
   }
   const summary = inspectNativeLayers(psd, notes, editableContents)
   if (summary.text || summary.editableContents)

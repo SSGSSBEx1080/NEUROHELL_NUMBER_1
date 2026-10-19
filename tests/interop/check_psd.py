@@ -9,7 +9,7 @@ from io import BytesIO
 import numpy as np
 from PIL import Image, ImageFilter
 from psd_tools import PSDImage
-from psd_tools.constants import Resource
+from psd_tools.constants import Resource, Tag
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "test-results"
@@ -146,4 +146,126 @@ for source, image in [("merged", document.topil()), ("native layers", document.c
     assert float(delta.max()) <= 2.0, ("native smart edit", source, float(delta.max()))
     print(f"PASS XMP-free smart edit, {source}: max premultiplied RGBA error {delta.max():.4f}/255; edited nested native shape and type retained")
 
-print("Scope: RGB/8, these nineteen fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Independent vector paths use aggdraw. No XnConvert/Photoshop execution or universal ICC/Adobe FX validation.")
+# Fifteen genuine adjustment records. psd-tools classifies the obsolete but valid
+# legacy `brit` record as PixelLayer; verify its native parameters/no pixel plane
+# directly instead of claiming an unsupported modern CgEd renderer.
+document = PSDImage.open(RESULTS / "native-adjustments.psd")
+assert len(document) == 16
+legacy = document[1]
+assert legacy.tagged_blocks.get_data(Tag.BRIGHTNESS_AND_CONTRAST) is not None
+assert not legacy.has_pixels()
+assert [layer.kind for layer in list(document)[2:]] == ["levels", "curves", "exposure", "huesaturation", "vibrance", "colorbalance", "blackandwhite", "channelmixer", "photofilter", "gradientmap", "colorlookup", "invert", "posterize", "threshold"]
+assert all(not layer.has_pixels() for layer in list(document)[1:])
+print("PASS native adjustments: 14 recognized AdjustmentLayer classes + genuine legacy brit; no raster replacement. Not a test of every Adobe color algorithm.")
+
+document = PSDImage.open(RESULTS / "adjustment-clipped.psd")
+reference = premultiplied(Image.open(RESULTS / "adjustment-clipped.png"))
+assert document[1].kind == "invert" and document[1].clipping and document[1].has_mask()
+for source, image in [("merged", document.topil()), ("native recomputation", document.composite(force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2.0, ("clipped adjustment", source, float(delta.max()))
+    print(f"PASS masked clipped inversion, {source}: max premultiplied RGBA error {delta.max():.4f}/255; original alpha retained")
+
+for fixture in ["selection-combined", "selection-quick-mask"]:
+    document = PSDImage.open(RESULTS / f"{fixture}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"{fixture}.png"))
+    assert len(document) == 2 and document[1].kind == "invert" and document[1].has_mask()
+    for source, image in [("merged", document.topil()), ("native recomputation", document.composite(force=True, apply_icc=False))]:
+        delta = np.abs(premultiplied(image) - reference)
+        assert float(delta.max()) <= 2, (fixture, source, float(delta.max()))
+        print(f"PASS {fixture}, {source}: max error {delta.max():.4f}/255; real native pixel mask, holes/soft edges retained")
+
+document = PSDImage.open(RESULTS / "native-guides.psd")
+guides = document.image_resources.get_data(Resource.GRID_AND_GUIDES_INFO)
+assert guides.horizontal == 1280 and guides.vertical == 1920
+assert guides.data == [(80 * 32, 0), (100 * 32, 1)]
+assert np.array_equal(premultiplied(document.topil()), premultiplied(Image.open(RESULTS / "native-guides.png")))
+print("PASS native grid/guides: correct independent 1/32-pixel resource, asymmetric grid, exact merged pixels without printed guides")
+
+for kind in ["levels", "curves", "exposure", "posterize"]:
+    document = PSDImage.open(RESULTS / f"native-tone-{kind}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"native-tone-{kind}.png"))
+    assert document[1].kind == kind
+    for source, image in [("merged", document.topil()), ("independently recomputed", document.composite(force=True, apply_icc=False))]:
+        delta = np.abs(premultiplied(image) - reference)
+        assert float(delta.max()) <= 2, (kind, source, float(delta.max()))
+        print(f"PASS native {kind}, {source}: non-default RGB parameters and alpha 128, max {delta.max():.4f}/255")
+
+document = PSDImage.open(RESULTS / "raster-filter-copy.psd")
+reference = premultiplied(Image.open(RESULTS / "raster-filter-copy.png"))
+assert len(document) == 2 and not document[0].visible and document[1].visible
+assert all(layer.kind == "pixel" for layer in document)
+for source, image in [("merged", document.topil()), ("native composition", document.composite(force=True, apply_icc=False))]:
+    delta = np.abs(premultiplied(image) - reference)
+    assert float(delta.max()) <= 2, ("raster filter", source, float(delta.max()))
+    print(f"PASS raster filter copy, {source}: source retained, no alpha doubling, max {delta.max():.4f}/255")
+
+# Pen-created and edited paths are native vector curves, not bitmap-only layers.
+# Apply the existing vector-specific AA boundary rule, never widen raster tolerances.
+for fixture in ["native-pen", "native-pen-open", "native-pen-mask"]:
+    document = PSDImage.open(RESULTS / f"{fixture}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"{fixture}.png"))
+    layer = document[0]
+    assert layer.kind == "shape" and layer.vector_mask
+    assert len(layer.vector_mask.paths) == (2 if fixture.endswith("mask") else 1)
+    if fixture.endswith("mask"):
+        assert layer.has_mask()
+    assert float(np.abs(premultiplied(document.topil()) - reference).max()) <= 2
+    native = premultiplied(document.composite(ignore_preview=True, force=True, apply_icc=False))
+    delta = np.abs(native - reference)
+    plane = Image.new("L", document.size, 0)
+    plane.paste(layer.topil().getchannel("A"), layer.offset)
+    plane = plane.point(lambda value: 255 if value >= 128 else 0)
+    edge = np.asarray(plane.filter(ImageFilter.MaxFilter(5))) != np.asarray(plane.filter(ImageFilter.MinFilter(5)))
+    assert float(edge.mean()) < .1
+    assert float(delta[~edge].max()) <= 2, (fixture, "interior", delta[~edge].max())
+    assert float(delta.mean()) < .35, (fixture, "mean", delta.mean())
+    assert 0.9 < float(native[:, :, 3].sum() / reference[:, :, 3].sum()) < 1.1
+    print(f"PASS {fixture}: independent native curves, merged <=2, interior {delta[~edge].max():.4f}, edge-AA mean {delta.mean():.6f}")
+
+# These three native classes are not evaluated by psd-tools' compositor.
+# Read their real native data independently, then evaluate the documented FSH RGB
+# model using NumPy/SciPy. This proves descriptor/model consistency, NOT Adobe parity.
+from scipy.interpolate import RegularGridInterpolator
+
+for kind in ["photo", "gradient", "cube"]:
+    document = PSDImage.open(RESULTS / f"native-colour-{kind}.psd")
+    reference = premultiplied(Image.open(RESULTS / f"native-colour-{kind}.png"))
+    layer = document[1]
+    assert layer.kind == {"photo": "photofilter", "gradient": "gradientmap", "cube": "colorlookup"}[kind]
+    assert not layer.has_pixels()
+    source = Image.new("RGBA", document.size)
+    source.paste(document[0].topil(), document[0].offset)
+    pixels = np.asarray(source, dtype=np.float64)
+    rgb = pixels[:, :, :3] / 255.0
+    if kind == "photo":
+        assert layer.color_space == 0 and layer.density == 29 and not layer.luminosity
+        color = np.array(layer.color_components[:3], dtype=np.float64) / 65535.0
+        output = rgb * (1 - layer.density / 100 + color * layer.density / 100)
+    elif kind == "gradient":
+        assert layer.interpolation == 1 and layer.reversed and len(layer.color_stops) == 3
+        assert all(stop.mode == 0 and stop.midpoint == 50 for stop in layer.color_stops)
+        assert layer.color_stops[1].location == 1107
+        positions = [stop.location / 4096.0 for stop in layer.color_stops]
+        colors = np.array([stop.color[:3] for stop in layer.color_stops], dtype=np.float64) / 65535.0
+        lightness = 1 - rgb @ np.array([.3, .59, .11])
+        output = np.stack([np.interp(lightness, positions, colors[:, i]) for i in range(3)], axis=2)
+    else:
+        desc = layer._data
+        assert desc[b"LUTFormat"].enum == b"LUTFormatCUBE" and not desc[b"Dthr"].value
+        text = desc[b"LUT3DFileData"].value.decode("utf8")
+        size = int(next(line.split()[1] for line in text.splitlines() if line.startswith("LUT_3D_SIZE")))
+        assert size == 3
+        values = np.array([[float(word) for word in line.split()] for line in text.splitlines() if line and (line[0].isdigit() or line[0] in "+-.")])
+        axis = np.linspace(0, 1, size)
+        table = RegularGridInterpolator((axis, axis, axis), values.reshape(size, size, size, 3))
+        output = table(rgb[:, :, [2, 1, 0]])  # CUBE red-fastest storage.
+    calculated = np.concatenate((np.floor(np.clip(output, 0, 1) * 255 + .5), pixels[:, :, 3:]), axis=2)
+    calculated[:, :, :3] *= calculated[:, :, 3:] / 255.0
+    merged_error = float(np.abs(premultiplied(document.topil()) - reference).max())
+    model_error = float(np.abs(calculated - reference).max())
+    assert merged_error <= 2 and model_error <= 2, (kind, merged_error, model_error)
+    assert np.array_equal(calculated[:, :, 3], reference[:, :, 3])
+    print(f"PASS native {kind}: actual non-raster descriptor, merged {merged_error:.6f}, independent native-data model {model_error:.6f}/255; not Adobe recalculation")
+
+print("Scope: RGB/8, these thirty-five fixture cases only. Type/smart-object caches are composed, not font/filter regeneration. Native inversion/levels/curves/exposure/posterize are independently recomputed on these fixtures; not all Adobe algorithms/ICC. No XnConvert/Photoshop execution or universal fidelity claim.")

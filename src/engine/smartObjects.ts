@@ -14,6 +14,18 @@ export async function makeSmartObject(doc: EditorDocument, id: string) {
   const selected = doc.layers.find((l) => l.id === id)
   if (!selected || selected.locked || selected.smart)
     throw new Error('Выбери незаблокированный обычный слой или группу')
+  if (selected.kind === 'adjustment')
+    throw new Error(
+      'Добавь коррекцию и её основу в изолированную группу перед созданием смарт-объекта.',
+    )
+  if (
+    selected.kind === 'group' &&
+    !selected.isolated &&
+    doc.layers.some((l) => subtree(doc, id).has(l.id) && l.kind === 'adjustment')
+  )
+    throw new Error(
+      'Сначала изолируй группу с коррекциями, чтобы сохранить действие на нижний стек.',
+    )
   await prepareDocument(doc)
   let inner: EditorDocument
   let bitmap: Layer

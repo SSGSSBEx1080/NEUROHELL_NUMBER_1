@@ -1,3 +1,21 @@
+import { ExportLutDialog } from './components/ExportLutDialog'
+import { usePathTool } from './hooks/usePathTool'
+import { RasterFilterDialog } from './components/RasterFilterDialog'
+import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
+import { insertFilteredCopy } from './engine/filterLayers'
+import { CommandPalette, type EditorCommand } from './components/CommandPalette'
+import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
+import { ArrangeDialog } from './components/ArrangeDialog'
+import { GuidesDialog } from './components/GuidesDialog'
+import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
+import { ColorRangeDialog, selectionModeNames } from './components/ColorRangeDialog'
+import { SelectionModifyDialog, selectionModifyNames } from './components/SelectionModifyDialog'
+import { rasterSelection, type SelectionModify } from './engine/selectionPixels'
+import { runSelection } from './engine/selectionJob'
+import { selectionSource } from './engine/selectionSource'
+import { CorrectionDialog } from './components/CorrectionDialog'
+import { insertAdjustment } from './engine/adjustmentLayers'
+import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
 import { PsdReportDialog } from './components/PsdReportDialog'
 import type { PsdExportReport } from './engine/psdReport'
 import { parseScriptFile, MAX_SCRIPT_ENTRIES } from './engine/scriptFormat'
@@ -34,7 +52,7 @@ import { FontsDialog } from './components/FontsDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import { loadSystemFonts, restoreFonts } from './engine/fonts'
 import { ToolRail, TOOLS as tools, cycleTool, selectionTools } from './components/ToolRail'
-import { selectionMask } from './engine/selection'
+import { selectionMask, combineSelection, invertSelection } from './engine/selection'
 import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
 import { ColorDialog } from './components/ColorDialog'
@@ -44,6 +62,7 @@ import { parseAtn } from './engine/atn'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  Search,
   Check,
   ChevronDown,
   CircleHelp,
@@ -102,6 +121,7 @@ import {
   prepareDocument,
   validateRasterBudget,
   rasterizeLayer,
+  rasterizedGeometry,
 } from './engine/render'
 import { saveDocument, hasPendingWrites } from './engine/storage'
 import { runPixelOperation } from './engine/processing'
@@ -111,6 +131,7 @@ import {
   type Layer,
   type Point,
   type Selection,
+  type SelectionMode,
   type Tool,
   type ToolSettings,
   DEFAULT_ADJUSTMENTS,
@@ -124,6 +145,7 @@ export default function App() {
   const initial = useMemo(demoDocument, [])
   const editor = useEditor(initial)
   const doc = editor.document
+  const layout = layoutOf(doc)
   const { selectedId, setSelectedId } = editor
   const selectedLayer = doc.layers.find((l) => l.id === selectedId)
   const selected = selectedLayer
@@ -147,7 +169,7 @@ export default function App() {
   const [zoom, setZoom] = useState<number | null>(null)
   const [effectiveZoom, setEffectiveZoom] = useState(0.5)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [selection, setSelection] = useState<Selection | null>(null)
+  const { pixelSelection: selection, setPixelSelection: setSelection } = editor
   const [preferences, setPreferences] = useState(loadPreferences)
   useEffect(() => {
     savePreferences(preferences)
@@ -175,8 +197,19 @@ export default function App() {
     | 'canvas-size'
     | 'repair'
     | 'psd-report'
+    | 'export-lut'
+    | 'correction'
+    | 'color-range'
+    | 'selection-modify'
+    | 'guides'
+    | 'arrange'
+    | 'commands'
+    | 'raster-filter'
     | null
   >(null)
+  const [lastFilter, setLastFilter] = useState<RasterFilter | null>(null)
+  const [arrangeIds, setArrangeIds] = useState<string[]>([])
+  const [selectionModify, setSelectionModify] = useState<SelectionModify>('expand')
   const recorder = useActionRecorder(editor)
   const [actions, setActions] = useState<StudioAction[]>(loadActionLibrary)
   const [actionsError, setActionsError] = useState('')
@@ -298,12 +331,23 @@ export default function App() {
     setPan({ x: 0, y: 0 })
   }, [])
   const resetView = () => {
-    setSelection(null)
     setTool('move')
-    setSettings({ editMask: false })
+    setSettings({ editMask: false, quickMask: false })
     fitView()
   }
   const workspace = useWorkspace(editor, setBusy, toastMessage, resetView)
+  const pathController = usePathTool({
+    editor,
+    tool,
+    setTool,
+    settings,
+    disabled: !!busy || !!modal || !!pendingDocument || !!workspace.closing || workspace.home,
+    onToast: toastMessage,
+    onActivate: () => {
+      setInspector(true)
+      setDockTab('properties')
+    },
+  })
   useEasterEggs(workspace.home, () => {
     setPreferences((p) => ({ ...p, theme: p.theme === 'aurora' ? 'violet' : 'aurora' }))
     toastMessage(
@@ -381,6 +425,120 @@ export default function App() {
     if (selectedId && !doc.layers.some((l) => l.id === selectedId)) setSelectedId(null)
   }, [doc.layers, selectedId])
 
+  const openCommands = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    editor.finish('Перед поиском команды')
+    setModal('commands')
+  }
+  const maskCommand = async (operation: MaskOperation) => {
+    if (!selectedId) return
+    const snapshot = editor.documentRef.current
+    setBusy('Изменяем маску…')
+    try {
+      const next = await changeLayerMask(snapshot, selectedId, operation)
+      if (editor.documentRef.current === snapshot)
+        editor.change(() => next, maskOperationNames[operation])
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка маски')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const canFilter =
+    !!selected &&
+    selected.kind === 'image' &&
+    !selected.locked &&
+    !settings.editMask &&
+    !settings.quickMask &&
+    doc.layers.length < MAX_LAYERS
+  const openArrange = (ids = selectedId ? [selectedId] : []) => {
+    setArrangeIds(ids)
+    setModal('arrange')
+  }
+  const updateLayout = (patch: Partial<DocumentLayout>, label = 'Разметка документа') =>
+    editor.change((d) => ({ ...d, layout: normalizeLayout({ ...layoutOf(d), ...patch }) }), label)
+  const applySelection = (
+    next: Selection,
+    mode: SelectionMode = 'replace',
+    label = 'Выделение пикселей',
+  ) => {
+    const result = combineSelection(selection, next, mode, doc.width, doc.height)
+    setSelection(result, false, label)
+    if (!result.width || !result.height)
+      toastMessage('Выделение пустое. Ctrl+Z отменит изменение; Ctrl+D снимет ограничение.')
+  }
+  const toggleQuickMask = () => {
+    setSettings({
+      quickMask: !settings.quickMask,
+      editMask: false,
+      ...(!settings.quickMask ? { color: '#000000', secondaryColor: '#ffffff' } : {}),
+    })
+    if (!settings.quickMask) setTool('brush')
+  }
+  const invertSelectedArea = () =>
+    setSelection(invertSelection(selection, doc.width, doc.height), false, 'Инверсия выделения')
+  const previousSelection = [...editor.entries.slice(0, editor.index + 1)]
+    .reverse()
+    .find((e) => e.pixelSelection && e.pixelSelection !== selection)?.pixelSelection
+  const loadLayerSelection = async (id: string, mode: SelectionMode = 'replace') => {
+    const snapshot = editor.documentRef.current
+    setBusy('Выделяем непрозрачность слоя…')
+    try {
+      const c = await selectionSource(snapshot, id),
+        rgba = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      const alpha = new Uint8ClampedArray(c.width * c.height)
+      for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3]
+      if (editor.documentRef.current === snapshot)
+        applySelection(rasterSelection(alpha, c.width, c.height), mode, 'Выделение из слоя')
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка выделения')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const wandSelection = async (point: Point, mode: SelectionMode) => {
+    const snapshot = editor.documentRef.current
+    setBusy('Выбираем область по цвету…')
+    try {
+      if (settings.sampleAllLayers === false && !selectedId)
+        throw new Error('Выбери слой или включи «Все видимые слои».')
+      const c = await selectionSource(
+        snapshot,
+        settings.sampleAllLayers === false ? selectedId || undefined : undefined,
+      )
+      const coverage = await runSelection({
+        operation: 'wand',
+        width: c.width,
+        height: c.height,
+        pixels: c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data,
+        x: point.x,
+        y: point.y,
+        tolerance: settings.selectionTolerance ?? 32,
+        contiguous: settings.contiguous !== false,
+      })
+      if (editor.documentRef.current === snapshot)
+        applySelection(rasterSelection(coverage, c.width, c.height), mode, 'Волшебная палочка')
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Ошибка выделения')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const addCorrection = (type: CorrectionKind) => {
+    try {
+      editor.finish('Перед коррекцией')
+      const result = insertAdjustment(editor.documentRef.current, type, selectedId, selection)
+      setSelection(null, true)
+      editor.change(() => result.document, `Коррекция: ${correctionNames[type]}`)
+      setSelectedId(result.selectedId)
+      setSettings({ editMask: false, quickMask: false })
+      setDockTab('properties')
+      setTool('move')
+      setModal(null)
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Не удалось создать коррекцию')
+    }
+  }
   const addText = () => {
     if (doc.layers.length >= MAX_LAYERS) return toastMessage('В проекте уже 100 слоёв')
     const layer = makeLayer({
@@ -474,7 +632,7 @@ export default function App() {
     if (!layer || isLayerLocked(editor.documentRef.current, layer.id)) return
     if (layer.mask) {
       setSelectedId(id)
-      setSettings({ editMask: true, color: '#000000', secondaryColor: '#ffffff' })
+      setSettings({ editMask: true, quickMask: false, color: '#000000', secondaryColor: '#ffffff' })
       setTool('brush')
       return
     }
@@ -502,58 +660,65 @@ export default function App() {
       }
       ctx.putImageData(pixels, 0, 0)
       const bitmap = await encodeBitmap(layer, source)
-      editor.patchLayer(
-        id,
-        {
-          mask: {
-            src: bitmap.src!,
-            x: layer.x,
-            y: layer.y,
-            width: layer.width,
-            height: layer.height,
-            enabled: true,
-            linked: true,
-            density: 1,
-            feather: 0,
-            defaultColor: 0,
-          },
-        },
-        'Добавление маски',
-      )
+      const mask = {
+        src: bitmap.src!,
+        x: layer.x,
+        y: layer.y,
+        width: layer.width,
+        height: layer.height,
+        enabled: true,
+        linked: true,
+        density: 1,
+        feather: 0,
+        defaultColor: 0,
+      }
+      validateRasterBudget({
+        ...doc,
+        layers: doc.layers.map((l) => (l.id === id ? { ...l, mask } : l)),
+      })
+      setSelection(null, true)
+      editor.patchLayer(id, { mask }, 'Добавление маски')
       setSelectedId(id)
-      setSettings({ editMask: true, color: '#000000', secondaryColor: '#ffffff' })
+      setSettings({ editMask: true, quickMask: false, color: '#000000', secondaryColor: '#ffffff' })
       setTool('brush')
-      setSelection(null)
     } catch (e) {
       toastMessage(e instanceof Error ? e.message : 'Не удалось создать маску')
     } finally {
       setBusy(null)
     }
   }
-  const imageSize = (width: number, height: number, dpi: number, centered: boolean) => {
+  const imageSize = (width: number, height: number, dpi: number, anchor: Point) => {
     const scale = modal === 'image-size',
       sx = width / doc.width,
       sy = height / doc.height,
-      dx = centered ? (width - doc.width) / 2 : 0,
-      dy = centered ? (height - doc.height) / 2 : 0
+      dx = (width - doc.width) * anchor.x,
+      dy = (height - doc.height) * anchor.y
     if (scale && Math.abs(sx - sy) > 0.00001 && doc.layers.some((l) => l.rotation || l.warp)) {
       toastMessage(
         'Для повёрнутых / перспективных слоёв используй пропорциональный масштаб. Неравномерное изменение исказило бы геометрию.',
       )
       return
     }
+    setSelection(null, true)
     editor.change(
       (d) => ({
         ...d,
         width,
         height,
         dpi,
+        layout: transformLayout(
+          d.layout,
+          scale ? sx : 1,
+          scale ? sy : 1,
+          scale ? 0 : dx,
+          scale ? 0 : dy,
+        ),
         layers: d.layers.map((l) => ({
           ...l,
-          x: scale ? l.x * sx : l.x + dx,
-          y: scale ? l.y * sy : l.y + dy,
-          width: scale ? l.width * sx : l.width,
-          height: scale ? l.height * sy : l.height,
+          x: l.kind === 'adjustment' ? 0 : scale ? l.x * sx : l.x + dx,
+          y: l.kind === 'adjustment' ? 0 : scale ? l.y * sy : l.y + dy,
+          width: l.kind === 'adjustment' ? width : scale ? l.width * sx : l.width,
+          height: l.kind === 'adjustment' ? height : scale ? l.height * sy : l.height,
           fontSize: l.fontSize && scale ? l.fontSize * sy : l.fontSize,
           textScaleX: scale && l.kind === 'text' ? ((l.textScaleX || 1) * sx) / sy : l.textScaleX,
           letterSpacing: l.letterSpacing && scale ? l.letterSpacing * sy : l.letterSpacing,
@@ -572,7 +737,6 @@ export default function App() {
       scale ? 'Размер изображения' : 'Размер холста',
     )
     setModal(null)
-    setSelection(null)
     fitView()
   }
   const copyLayer = () => {
@@ -592,13 +756,18 @@ export default function App() {
       ...clipboardLayer,
       id: uid(),
       name: `${clipboardLayer.name} — вставка`,
-      x: clipboardLayer.x + 24,
-      y: clipboardLayer.y + 24,
+      x: clipboardLayer.kind === 'adjustment' ? 0 : clipboardLayer.x + 24,
+      y: clipboardLayer.kind === 'adjustment' ? 0 : clipboardLayer.y + 24,
+      ...(clipboardLayer.kind === 'adjustment' ? { width: doc.width, height: doc.height } : {}),
       locked: false,
       parentId: undefined,
       sourcePath: undefined,
       mask: clipboardLayer.mask
-        ? { ...clipboardLayer.mask, x: clipboardLayer.mask.x + 24, y: clipboardLayer.mask.y + 24 }
+        ? {
+            ...clipboardLayer.mask,
+            x: clipboardLayer.mask.x + (clipboardLayer.kind === 'adjustment' ? 0 : 24),
+            y: clipboardLayer.mask.y + (clipboardLayer.kind === 'adjustment' ? 0 : 24),
+          }
         : undefined,
     }
     try {
@@ -612,6 +781,16 @@ export default function App() {
   }
   const rasterizeSelected = async () => {
     if (!selected || selected.locked) return
+    if (selected.kind === 'adjustment')
+      return toastMessage('Коррекция зависит от нижнего стека. Используй «Объединить видимые».')
+    if (
+      selected.kind === 'group' &&
+      !selected.isolated &&
+      doc.layers.some((l) => subtree(doc, selected.id).has(l.id) && l.kind === 'adjustment')
+    )
+      return toastMessage(
+        'Сначала изолируй группу с коррекциями, чтобы её действие не зависело от нижнего стека.',
+      )
     setBusy('Растрируем содержимое слоя…')
     try {
       const ids = subtree(doc, selected.id)
@@ -874,19 +1053,13 @@ export default function App() {
     const target = selected || fresh
     if (fresh && doc.layers.length >= MAX_LAYERS) return toastMessage('Достигнут лимит 100 слоёв')
     if (!target) return toastMessage('Сначала выбери слой с изображением')
-    if (target.kind === 'group' || target.smart)
+    if (target.kind === 'group' || target.kind === 'adjustment' || target.smart)
       return toastMessage('Выбери растровый слой или открой содержимое смарт-объекта')
     if (target.locked) return toastMessage('Сначала разблокируй слой')
     if (operation === 'background' && target.kind !== 'image')
       return toastMessage('Удаление фона работает с изображениями')
     if ((operation === 'erase' || operation === 'fill') && !selection)
       return toastMessage('Сначала выдели область инструментом M')
-    const local = point ? localPoint(target, point) : undefined
-    if (
-      local &&
-      (local.x < 0 || local.y < 0 || local.x >= target.width || local.y >= target.height)
-    )
-      return toastMessage('Кликни внутри выбранного слоя')
     setBusy(
       operation === 'background'
         ? 'Убираем фон на твоём устройстве…'
@@ -897,8 +1070,23 @@ export default function App() {
     try {
       const buffer = await rasterizeLayer(target),
         ctx = buffer.getContext('2d', { willReadFrequently: true })!
-      const sx = buffer.width / target.width,
-        sy = buffer.height / target.height
+      const rasterTarget = {
+        ...target,
+        ...rasterizedGeometry(target, buffer),
+        flipX: false,
+        flipY: false,
+      }
+      const local = point ? localPoint(rasterTarget, point) : undefined
+      if (
+        local &&
+        (local.x < 0 ||
+          local.y < 0 ||
+          local.x >= rasterTarget.width ||
+          local.y >= rasterTarget.height)
+      )
+        throw new Error('Кликни внутри выбранного слоя')
+      const sx = buffer.width / rasterTarget.width,
+        sy = buffer.height / rasterTarget.height
       let rect: Selection | undefined
       if (selection && (operation === 'erase' || operation === 'fill'))
         rect = { x: 0, y: 0, width: buffer.width, height: buffer.height }
@@ -908,7 +1096,7 @@ export default function App() {
         height: buffer.height,
         pixels: ctx.getImageData(0, 0, buffer.width, buffer.height).data,
         mask: selection
-          ? selectionMask(selection, buffer.width, buffer.height, target)
+          ? selectionMask(selection, buffer.width, buffer.height, rasterTarget)
               .getContext('2d')!
               .getImageData(0, 0, buffer.width, buffer.height).data
           : undefined,
@@ -977,21 +1165,23 @@ export default function App() {
       y = Math.round(selection.y),
       width = Math.max(1, Math.round(selection.width)),
       height = Math.max(1, Math.round(selection.height))
+    setSelection(null, true)
     editor.change(
       (d) => ({
         ...d,
         width,
         height,
+        layout: transformLayout(d.layout, 1, 1, -x, -y),
         layers: d.layers.map((l) => ({
           ...l,
-          x: l.x - x,
-          y: l.y - y,
+          x: l.kind === 'adjustment' ? 0 : l.x - x,
+          y: l.kind === 'adjustment' ? 0 : l.y - y,
+          ...(l.kind === 'adjustment' ? { width, height } : {}),
           mask: l.mask ? { ...l.mask, x: l.mask.x - x, y: l.mask.y - y } : undefined,
         })),
       }),
       'Кадрирование холста',
     )
-    setSelection(null)
     setTool('move')
     fitView()
     toastMessage(`Холст: ${width} × ${height} px. Слои сохранены.`)
@@ -1076,6 +1266,19 @@ export default function App() {
         }
         return
       }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        e.code === 'KeyF' &&
+        !busy &&
+        !modal &&
+        !pendingDocument &&
+        !workspace.closing
+      ) {
+        e.preventDefault()
+        openCommands()
+        return
+      }
       if (typing(e.target) || busy || modal || pendingDocument || workspace.closing) return
       const mod = e.ctrlKey || e.metaKey
       if (workspace.home) {
@@ -1112,6 +1315,18 @@ export default function App() {
       }
       if (mod) {
         switch (e.code) {
+          case 'Semicolon':
+            e.preventDefault()
+            updateLayout(e.shiftKey ? { snap: !layout.snap } : { showGuides: !layout.showGuides })
+            return
+          case 'Quote':
+            e.preventDefault()
+            updateLayout({ showGrid: !layout.showGrid })
+            return
+          case 'KeyR':
+            e.preventDefault()
+            setRulers(!rulers)
+            return
           case 'KeyZ':
             e.preventDefault()
             if (e.shiftKey) editor.redo()
@@ -1158,9 +1373,23 @@ export default function App() {
               copyLayer()
             }
             return
+          case 'KeyF':
+            if (e.altKey && canFilter && lastFilter) {
+              e.preventDefault()
+              setModal('raster-filter')
+            }
+            return
           case 'KeyI':
             e.preventDefault()
-            if (selected && !selected.locked)
+            if (e.shiftKey || settings.quickMask) {
+              invertSelectedArea()
+              return
+            }
+            if (settings.editMask && selected?.mask) {
+              void maskCommand('invert')
+              return
+            }
+            if (selected && !selected.locked && selected.kind !== 'adjustment')
               editor.patchLayer(
                 selected.id,
                 {
@@ -1172,8 +1401,27 @@ export default function App() {
                 'Инверсия',
               )
             return
+          case 'KeyL':
+            e.preventDefault()
+            addCorrection('levels')
+            return
+          case 'KeyM':
+            e.preventDefault()
+            addCorrection('curves')
+            return
           case 'KeyU':
-            if (e.shiftKey && selected && !selected.locked) {
+            if (!e.shiftKey) {
+              e.preventDefault()
+              addCorrection('hue/saturation')
+              return
+            }
+            if (
+              e.shiftKey &&
+              selected &&
+              !selected.locked &&
+              selected.kind !== 'adjustment' &&
+              !settings.quickMask
+            ) {
               e.preventDefault()
               editor.patchLayer(
                 selected.id,
@@ -1211,7 +1459,8 @@ export default function App() {
             return
           case 'KeyD':
             e.preventDefault()
-            setSelection(null)
+            if (e.shiftKey && previousSelection) setSelection(previousSelection)
+            else setSelection(null)
             return
         }
         return
@@ -1227,7 +1476,13 @@ export default function App() {
         else deleteLayer()
         return
       }
-      if (e.key.startsWith('Arrow') && selected && !selected.locked) {
+      if (
+        e.key.startsWith('Arrow') &&
+        selected &&
+        !selected.locked &&
+        selected.kind !== 'adjustment' &&
+        !settings.quickMask
+      ) {
         e.preventDefault()
         const amount = e.shiftKey ? 10 : 1
         editor.patchLayer(
@@ -1247,6 +1502,11 @@ export default function App() {
             Math.min(500, settings.brushSize + (e.code === 'BracketLeft' ? -5 : 5)),
           ),
         })
+        return
+      }
+      if (e.code === 'KeyQ') {
+        e.preventDefault()
+        toggleQuickMask()
         return
       }
       if (e.code === 'KeyX') {
@@ -1420,15 +1680,75 @@ export default function App() {
       icon: ZoomOut,
       action: () => setZoom(Math.max(0.05, effectiveZoom / 1.25)),
     },
-    { label: 'Линейки', checked: rulers, action: () => setRulers(!rulers), divider: true },
     {
-      label: 'Умные направляющие',
+      label: 'Линейки',
+      checked: rulers,
+      action: () => setRulers(!rulers),
+      divider: true,
+      shortcut: 'Ctrl R',
+    },
+    { label: 'Направляющие и сетка…', action: () => setModal('guides') },
+    {
+      label: 'Показать направляющие',
+      checked: layout.showGuides,
+      action: () => updateLayout({ showGuides: !layout.showGuides }),
+      shortcut: 'Ctrl ;',
+    },
+    {
+      label: 'Заблокировать направляющие',
+      checked: layout.locked,
+      action: () => updateLayout({ locked: !layout.locked }),
+    },
+    {
+      label: 'Показать сетку',
+      checked: layout.showGrid,
+      action: () => updateLayout({ showGrid: !layout.showGrid }),
+      shortcut: "Ctrl '",
+    },
+    {
+      label: 'Привязка',
+      checked: layout.snap,
+      action: () => updateLayout({ snap: !layout.snap }),
+      shortcut: 'Ctrl ⇧ ;',
+    },
+    {
+      label: 'Удалить все направляющие',
+      action: () => updateLayout({ guides: [] }, 'Удаление направляющих'),
+      disabled: layout.locked || !layout.guides.length,
+    },
+    {
+      label: 'Подсказки привязки',
       checked: settings.showGuides,
       action: () => setSettings({ showGuides: !settings.showGuides }),
     },
     { label: 'Панель свойств и слоёв', checked: inspector, action: () => setInspector(!inspector) },
   ]
+  const correctionMenu: MenuItem[] = Object.entries(correctionNames).map(([type, label]) => ({
+    label,
+    action: () => addCorrection(type as CorrectionKind),
+    disabled: !!busy || doc.layers.length >= MAX_LAYERS,
+  }))
+  correctionMenu.push({
+    label: 'Экспорт цветового стека CUBE…',
+    action: () => setModal('export-lut'),
+    divider: true,
+  })
   const layerMenu: MenuItem[] = [
+    ...Object.entries(maskOperationNames).map(([operation, label]) => ({
+      label,
+      action: () => void maskCommand(operation as MaskOperation),
+      disabled: !selected?.mask || !!selected.locked,
+    })),
+    {
+      label: 'Выравнивание и интервалы…',
+      action: () => openArrange(),
+      disabled: !doc.layers.length,
+    },
+    {
+      label: 'Новый корректирующий слой…',
+      icon: SlidersHorizontal,
+      action: () => setModal('correction'),
+    },
     {
       label: 'Группировать выбранное',
       icon: FolderPlus,
@@ -1452,7 +1772,7 @@ export default function App() {
       label: 'Преобразовать в смарт-объект',
       icon: SquareStack,
       action: () => void convertSmart(),
-      disabled: !selected || selected.locked || !!selected.smart,
+      disabled: !selected || selected.locked || !!selected.smart || selected.kind === 'adjustment',
     },
     {
       label: 'Открыть содержимое смарт-объекта',
@@ -1467,14 +1787,14 @@ export default function App() {
       label: 'Стиль слоя…',
       icon: Sparkles,
       action: () => setModal('styles'),
-      disabled: !selected || selected.locked,
+      disabled: !selected || selected.locked || selected.kind === 'adjustment',
       divider: true,
     },
     {
       label: 'Растрировать содержимое',
       icon: ImagePlus,
       action: () => void rasterizeSelected(),
-      disabled: !selected || selected.locked,
+      disabled: !selected || selected.locked || selected.kind === 'adjustment',
     },
     {
       label: 'Объединить видимые',
@@ -1490,6 +1810,83 @@ export default function App() {
       icon: Trash2,
       action: () => deleteLayer(),
       disabled: !selected || selected.locked,
+    },
+  ]
+  const selectionMenu: MenuItem[] = [
+    {
+      label: 'Выделить всё',
+      shortcut: 'Ctrl A',
+      action: () => setSelection({ x: 0, y: 0, width: doc.width, height: doc.height }),
+    },
+    {
+      label: 'Снять выделение',
+      shortcut: 'Ctrl D',
+      action: () => setSelection(null),
+      disabled: !selection,
+    },
+    {
+      label: 'Выделить повторно',
+      shortcut: 'Ctrl ⇧ D',
+      action: () => previousSelection && setSelection(previousSelection),
+      disabled: !previousSelection,
+    },
+    { label: 'Инвертировать выделение', shortcut: 'Ctrl ⇧ I', action: invertSelectedArea },
+    { label: 'Цветовой диапазон…', action: () => setModal('color-range'), divider: true },
+    {
+      label: 'Из непрозрачности слоя',
+      action: () => selectedId && void loadLayerSelection(selectedId),
+      disabled: !selected || selected.kind === 'adjustment',
+    },
+    ...Object.entries(selectionModifyNames).map(([kind, label]) => ({
+      label: `${label} выделение…`,
+      action: () => {
+        setSelectionModify(kind as SelectionModify)
+        setModal('selection-modify')
+      },
+      disabled: !selection,
+      divider: kind === 'expand',
+    })),
+    {
+      label: 'Быстрая маска',
+      shortcut: 'Q',
+      checked: !!settings.quickMask,
+      action: toggleQuickMask,
+      divider: true,
+    },
+  ]
+  const pathMenu: MenuItem[] = [
+    { label: 'Рисовать пером', shortcut: 'P', action: () => setTool('pen') },
+    {
+      label: 'Редактировать узлы',
+      shortcut: 'A',
+      action: pathController.activate,
+      disabled: !pathController.editable || selected?.locked,
+    },
+    {
+      label: 'Преобразовать фигуру в контур',
+      action: pathController.convert,
+      disabled: !pathController.editable || selected?.shape === 'path' || selected?.locked,
+    },
+    {
+      label: 'Контур в выделение',
+      shortcut: 'Ctrl Enter',
+      action: () => pathController.toSelection(),
+      disabled: !pathController.editable || selected?.locked,
+    },
+    {
+      label: 'Гладкие узлы',
+      action: () => pathController.mode('smooth'),
+      disabled: !pathController.nodes.length || selected?.locked,
+    },
+    {
+      label: 'Угловые узлы',
+      action: () => pathController.mode('corner'),
+      disabled: !pathController.nodes.length || selected?.locked,
+    },
+    {
+      label: 'Соединить концы',
+      action: pathController.join,
+      disabled: pathController.nodes.length !== 2 || selected?.locked,
     },
   ]
   const imageMenu: MenuItem[] = [
@@ -1512,7 +1909,7 @@ export default function App() {
     },
     {
       label: 'Инвертировать выделение',
-      action: () => selection && setSelection({ ...selection, inverted: !selection.inverted }),
+      action: invertSelectedArea,
       disabled: !selection,
     },
     {
@@ -1523,6 +1920,17 @@ export default function App() {
     },
   ]
   const filterMenu: MenuItem[] = [
+    {
+      label: 'Растровые фильтры на копии…',
+      action: () => setModal('raster-filter'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Последний растровый фильтр…',
+      shortcut: 'Ctrl Alt F',
+      action: () => setModal('raster-filter'),
+      disabled: !canFilter || !lastFilter,
+    },
     {
       label: 'Восстановление области…',
       shortcut: 'J',
@@ -1546,7 +1954,8 @@ export default function App() {
           { adjustments: { ...selected.adjustments, ...adjustment } },
           label,
         ),
-      disabled: !selected || selected.locked || selected.kind === 'group',
+      disabled:
+        !selected || selected.locked || selected.kind === 'group' || selected.kind === 'adjustment',
     })),
     {
       label: 'Удалить связанный фон',
@@ -1615,10 +2024,68 @@ export default function App() {
     })),
   ]
   const helpMenu: MenuItem[] = [
+    { label: 'Поиск команд…', icon: Search, shortcut: 'Ctrl F', action: openCommands },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') },
     { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') },
   ]
+
+  const homeCommands = new Set([
+    'Новый проект',
+    'Открыть файл…',
+    'Главная / недавние',
+    'Открыть демопроект',
+    'Настройки…',
+    'Библиотека шрифтов…',
+    'Горячие клавиши',
+    'О ФШ 777',
+  ])
+  const commands: EditorCommand[] = (
+    [
+      ['Файл', fileMenu],
+      ['Правка', editMenu],
+      ['Изображение', imageMenu],
+      ['Слой', layerMenu],
+      ['Контур', pathMenu],
+      ['Коррекция', correctionMenu],
+      ['Выделение', selectionMenu],
+      ['Вид', viewMenu],
+      ['Фильтры', filterMenu],
+      ['Окно', windowMenu],
+      ['Помощь', helpMenu],
+    ] as [string, MenuItem[]][]
+  ).flatMap(([group, items]) =>
+    items
+      .filter((item) => item.label !== 'Поиск команд…')
+      .map((item) => ({
+        id: `${group}:${item.label}`,
+        label: item.label,
+        group,
+        shortcut: item.shortcut,
+        disabled: !!busy || item.disabled || (workspace.home && !homeCommands.has(item.label)),
+        run: item.action,
+      })),
+  )
+  commands.push(
+    ...tools.map((t) => ({
+      id: `tool:${t.id}`,
+      label: t.name,
+      group: 'Инструменты',
+      shortcut: t.key,
+      disabled: !!busy || workspace.home,
+      run: () => setTool(t.id),
+    })),
+  )
+  commands.push(
+    ...actions.map((a) => ({
+      id: `action:${a.id}`,
+      label: a.name,
+      group: 'Операции',
+      keywords: a.source,
+      disabled: !!busy || workspace.home || !selected || !!selected.locked,
+      run: () => executeAction(a),
+    })),
+  )
 
   return (
     <div
@@ -1707,6 +2174,9 @@ export default function App() {
             <Dropdown label="Правка" items={editMenu} />
             <Dropdown label="Изображение" items={imageMenu} />
             <Dropdown label="Слой" items={layerMenu} />
+            <Dropdown label="Контур" items={pathMenu} />
+            <Dropdown label="Коррекция" items={correctionMenu} />
+            <Dropdown label="Выделение" items={selectionMenu} />
             <Dropdown label="Вид" items={viewMenu} />
             <Dropdown label="Фильтры" items={filterMenu} />
             <Dropdown label="Окно" items={windowMenu} />
@@ -1730,6 +2200,12 @@ export default function App() {
             </span>
           </div>
           <div className="header-actions">
+            <IconButton
+              icon={Search}
+              label="Поиск команд (Ctrl+F)"
+              onClick={openCommands}
+              disabled={!!busy}
+            />
             <span className="private-badge">
               <span />
               Локально. Приватно.
@@ -1763,6 +2239,19 @@ export default function App() {
           </div>
           <div className="vertical-divider" />
           <div className="tool-options">
+            {selectionTools.includes(tool) && (
+              <Select
+                aria-label="Режим выделения"
+                value={settings.selectionMode || 'replace'}
+                onChange={(e) => setSettings({ selectionMode: e.target.value as SelectionMode })}
+              >
+                {Object.entries(selectionModeNames).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+            )}
             {tool === 'move' ? (
               <>
                 <label className="checkbox-row">
@@ -1776,10 +2265,10 @@ export default function App() {
                 <label className="checkbox-row guides-option">
                   <input
                     type="checkbox"
-                    checked={settings.showGuides}
-                    onChange={(e) => setSettings({ showGuides: e.target.checked })}
+                    checked={layout.snap}
+                    onChange={(e) => updateLayout({ snap: e.target.checked })}
                   />
-                  Направляющие
+                  Привязка
                 </label>
               </>
             ) : tool === 'brush' || tool === 'eraser' || tool === 'clone' ? (
@@ -1820,6 +2309,32 @@ export default function App() {
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
                 )}
               </>
+            ) : tool === 'magic-wand' ? (
+              <>
+                <Field
+                  label="Допуск палочки"
+                  value={settings.selectionTolerance ?? 32}
+                  min={0}
+                  max={255}
+                  onChange={(selectionTolerance) => setSettings({ selectionTolerance })}
+                />
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.contiguous !== false}
+                    onChange={(e) => setSettings({ contiguous: e.target.checked })}
+                  />
+                  Смежные пиксели
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.sampleAllLayers !== false}
+                    onChange={(e) => setSettings({ sampleAllLayers: e.target.checked })}
+                  />
+                  Все видимые слои
+                </label>
+              </>
             ) : tool === 'wand' || tool === 'bucket' ? (
               <>
                 <Field
@@ -1849,9 +2364,22 @@ export default function App() {
                 <span className="tool-instruction">
                   {tool === 'polygon-lasso' || tool === 'magnetic-lasso'
                     ? 'Клики задают контур · Enter / двойной клик замыкает'
-                    : 'Обведи область · Ctrl+D — снять выделение'}
+                    : 'Shift: + · Alt: − · Shift+Alt: пересечение · Ctrl+D: снять'}
                 </span>
               </>
+            ) : tool === 'pen' ? (
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.shapeFill}
+                  onChange={(e) => setSettings({ shapeFill: e.target.checked })}
+                />
+                Заливка замкнутого контура
+              </label>
+            ) : ['node', 'add-anchor', 'delete-anchor', 'convert-anchor'].includes(tool) ? (
+              <span className="tool-instruction">
+                Перо P · узлы A · Shift: несколько · параметры справа
+              </span>
             ) : tool === 'gradient' ? (
               <Select
                 aria-label="Тип градиента"
@@ -1884,6 +2412,7 @@ export default function App() {
             )}
             {[
               'brush',
+              'pen',
               'rectangle',
               'ellipse',
               'polygon',
@@ -2070,6 +2599,7 @@ export default function App() {
             )}
             {!workspace.home && (
               <CanvasStage
+                pathController={pathController}
                 editor={editor}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
@@ -2084,6 +2614,8 @@ export default function App() {
                 setPan={setPan}
                 selection={selection}
                 setSelection={setSelection}
+                onWand={(point, mode) => void wandSelection(point, mode)}
+                onGuideSettings={() => setModal('guides')}
                 onCrop={crop}
                 onRepair={openRepair}
                 onEditText={() => {
@@ -2159,6 +2691,7 @@ export default function App() {
               onChange={setPanelLayout}
               properties={
                 <PropertiesPanel
+                  pathController={pathController}
                   editor={editor}
                   layer={selected}
                   onStyle={() => setModal('styles')}
@@ -2169,6 +2702,7 @@ export default function App() {
                   onImport={() => input.current?.click()}
                   onAddText={addText}
                   onMask={() => void addMask()}
+                  onMaskCommand={(operation) => void maskCommand(operation)}
                   onOpenSmart={() => selectedId && void workspace.openSmart(selectedId)}
                   onParent={(parent) => {
                     if (selectedId)
@@ -2218,6 +2752,9 @@ export default function App() {
               }
               layers={
                 <LayersPanel
+                  onCorrection={() => setModal('correction')}
+                  onArrange={openArrange}
+                  onLoadSelection={(id, mode) => void loadLayerSelection(id, mode)}
                   editor={editor}
                   selectedId={selectedId}
                   onSelect={setSelectedId}
@@ -2338,7 +2875,13 @@ export default function App() {
           onClose={closeModal}
           onApply={(color) => {
             setSettings({ color })
-            if (selected && !selected.locked && selected.kind !== 'image')
+            if (
+              selected &&
+              !selected.locked &&
+              ['shape', 'text'].includes(selected.kind) &&
+              !settings.quickMask &&
+              !settings.editMask
+            )
               editor.patchLayer(selected.id, { color }, 'Цвет слоя')
             closeModal()
           }}
@@ -2369,6 +2912,13 @@ export default function App() {
           }}
         />
       )}
+      {modal === 'export-lut' && (
+        <ExportLutDialog
+          doc={doc}
+          onClose={closeModal}
+          onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
+        />
+      )}
       {modal === 'psd-report' && lastExport && (
         <PsdReportDialog
           report={lastExport.report}
@@ -2395,6 +2945,75 @@ export default function App() {
           onConfirm={() => openDocument(pendingDocument)}
         />
       )}
+      {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
+      {modal === 'raster-filter' && selectedId && (
+        <RasterFilterDialog
+          doc={doc}
+          id={selectedId}
+          selection={selection}
+          initial={lastFilter || defaultRasterFilter('unsharp')}
+          onClose={closeModal}
+          onApply={(copy, filter, hide) => {
+            if (editor.documentRef.current !== doc)
+              throw new Error('Документ изменился. Открой фильтр заново.')
+            const next = insertFilteredCopy(doc, selectedId, copy, hide)
+            editor.change(() => next, 'Фильтр на растровой копии')
+            setSelectedId(copy.id)
+            setLastFilter(filter)
+            setSettings({ editMask: false, quickMask: false })
+            setTool('move')
+            closeModal()
+          }}
+        />
+      )}
+      {modal === 'arrange' && (
+        <ArrangeDialog
+          doc={doc}
+          ids={arrangeIds}
+          onClose={closeModal}
+          onApply={(next, label) => {
+            if (editor.documentRef.current !== doc)
+              throw new Error('Документ изменился во время компоновки. Открой окно заново.')
+            editor.change(() => next, label)
+            closeModal()
+          }}
+        />
+      )}
+      {modal === 'guides' && (
+        <GuidesDialog
+          doc={doc}
+          onClose={closeModal}
+          onApply={(value) => {
+            updateLayout(value, 'Настройка направляющих и сетки')
+            closeModal()
+          }}
+        />
+      )}
+      {modal === 'color-range' && (
+        <ColorRangeDialog
+          doc={doc}
+          initialMode={settings.selectionMode || 'replace'}
+          onApply={(area, mode) => {
+            applySelection(area, mode, 'Цветовой диапазон')
+            closeModal()
+          }}
+          onClose={closeModal}
+        />
+      )}
+      {modal === 'selection-modify' && selection && (
+        <SelectionModifyDialog
+          selection={selection}
+          width={doc.width}
+          height={doc.height}
+          initial={selectionModify}
+          onApply={(area, kind) => {
+            setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
+            closeModal()
+          }}
+          onClose={closeModal}
+        />
+      )}
+      {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
       {busy && (
         <div className="busy-overlay" role="status">
           <div>

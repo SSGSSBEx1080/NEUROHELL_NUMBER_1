@@ -128,6 +128,10 @@ export function recordEditorEvent(recording: Recording, event: EditorEvent): Rec
       true,
     )
   try {
+    if (event.type === 'pixel-selection')
+      throw new Error(
+        'Изменение выделения пока не записывается в операции; шаг не будет пропущен молча.',
+      )
     if (event.type === 'history')
       throw new Error(
         'Undo/redo и переход по истории не записываются. Удали этот шаг или запиши последовательность заново.',

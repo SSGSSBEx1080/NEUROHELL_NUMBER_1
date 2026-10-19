@@ -30,6 +30,7 @@ export function ShapeProperties({
       true,
     )
   const update = (values: Partial<Layer>) => patch(values, 'Свойства фигуры')
+  const open = layer.shape === 'line' || layer.shapePaths?.some((p) => p.open)
   const dash = layer.strokeDash || [],
     dashKind = !dash.length ? 'solid' : dash[0] === 0 ? 'dotted' : 'dashed'
   return (
@@ -50,8 +51,8 @@ export function ShapeProperties({
       </Select>
       {layer.shape === 'path' && (
         <p className="panel-note">
-          {layer.shapePaths?.reduce((n, p) => n + p.knots.length, 0)} узлов Безье · масштаб, цвет и
-          обводка остаются редактируемыми.
+          {layer.shapePaths?.reduce((n, p) => n + p.knots.length, 0)} узлов Безье · точки и
+          направляющие редактируются инструментом A.
         </p>
       )}
       {(layer.shape === 'polygon' || layer.shape === 'star') && (
@@ -158,8 +159,8 @@ export function ShapeProperties({
       <div className="field-grid shape-controls">
         <Select
           aria-label="Положение обводки"
-          value={layer.shape === 'line' ? 'center' : layer.strokeAlign || 'center'}
-          disabled={layer.shape === 'line'}
+          value={open ? 'center' : layer.strokeAlign || 'center'}
+          disabled={open}
           onChange={(e) => update({ strokeAlign: e.target.value as Layer['strokeAlign'] })}
         >
           <option value="inside">Внутри</option>

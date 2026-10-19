@@ -3,7 +3,17 @@ const path = require('node:path')
 const fs = require('node:fs/promises')
 const { randomUUID } = require('node:crypto')
 const approved = new Map()
-const allowed = new Set(['.psd', '.psb', '.png', '.jpg', '.jpeg', '.webp', '.777', '.json'])
+const allowed = new Set([
+  '.psd',
+  '.psb',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.777',
+  '.json',
+  '.cube',
+])
 function validateSaveRequest(value) {
   if (
     !value ||
@@ -20,6 +30,15 @@ function validateSaveRequest(value) {
     .trim()
   if (!allowed.has(path.extname(name).toLowerCase()))
     throw new Error('Неподдерживаемый формат сохранения')
+  if (path.extname(name).toLowerCase() === '.cube') {
+    if (value.bytes.byteLength > 2 * 1024 * 1024) throw new Error('CUBE: до 2 МиБ')
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(value.bytes)
+    if (
+      /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text) ||
+      !/(^|\n)\s*LUT_3D_SIZE\s+\d+\s*(\r?\n|$)/.test(text)
+    )
+      throw new Error('Ожидается текстовая таблица CUBE, не исполняемый или бинарный файл')
+  }
   const documentId =
     typeof value.documentId === 'string' && value.documentId.length <= 128
       ? value.documentId

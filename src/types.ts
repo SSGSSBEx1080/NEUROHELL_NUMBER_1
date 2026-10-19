@@ -1,10 +1,18 @@
+import type { DocumentLayout } from './engine/layout'
+import type { Correction } from './engine/adjustmentTypes'
 export type Tool =
   | 'move'
+  | 'pen'
+  | 'node'
+  | 'add-anchor'
+  | 'delete-anchor'
+  | 'convert-anchor'
   | 'select'
   | 'crop'
   | 'brush'
   | 'eraser'
   | 'wand'
+  | 'magic-wand'
   | 'text'
   | 'text-frame'
   | 'rectangle'
@@ -23,7 +31,7 @@ export type Tool =
   | 'gradient'
   | 'repair'
   | 'repair-box'
-export type LayerKind = 'image' | 'text' | 'shape' | 'group'
+export type LayerKind = 'image' | 'text' | 'shape' | 'group' | 'adjustment'
 export type BlendMode =
   | 'source-over'
   | 'multiply'
@@ -80,6 +88,7 @@ export interface Layer {
   opacity: number
   blendMode: BlendMode
   adjustments: Adjustments
+  correction?: Correction
   src?: string
   text?: string
   fontFamily?: string
@@ -140,6 +149,7 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   dpi?: number
+  layout?: DocumentLayout
   script?: TranslationEntry[]
 }
 export interface Point {
@@ -155,6 +165,7 @@ export interface HistoryEntry {
   label: string
   time: number
   selectedId: string | null
+  pixelSelection?: Selection | null
   command?: { execute(): EditorDocument; undo(): EditorDocument }
 }
 export interface ToolSettings {
@@ -169,6 +180,11 @@ export interface ToolSettings {
   brushHardness?: number
   brushSpacing?: number
   feather?: number
+  selectionMode?: SelectionMode
+  selectionTolerance?: number
+  contiguous?: boolean
+  sampleAllLayers?: boolean
+  quickMask?: boolean
   editMask?: boolean
   gradientType?: 'linear' | 'radial'
 }
@@ -209,7 +225,12 @@ export interface LayerMask extends Rect {
   feather: number
   defaultColor: number
 }
+export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
+export interface SelectionRaster extends Rect {
+  data: Uint8ClampedArray
+}
 export interface Selection extends Rect {
+  raster?: SelectionRaster
   points?: Point[]
   ellipse?: boolean
   feather?: number

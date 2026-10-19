@@ -84,3 +84,22 @@ export function xmpResource(buffer: ArrayBuffer) {
   const block = resources(buffer).blocks.find((b) => b.id === 1060)
   return block ? { start: block.dataStart, length: block.length } : undefined
 }
+
+/** Remove XMP at the image-resource boundary without decoding/re-encoding any
+ * native layer, image channel or unknown block. Useful for genuine interop probes. */
+export function withoutXmpResource(buffer: ArrayBuffer): ArrayBuffer {
+  const info = resources(buffer)
+  const keep = info.blocks.filter((block) => block.id !== 1060)
+  const size = keep.reduce((n, block) => n + block.end - block.start, 0)
+  if (keep.length === info.blocks.length) return buffer
+  const bytes = new Uint8Array(buffer.byteLength - (info.end - info.start) + size)
+  bytes.set(new Uint8Array(buffer, 0, info.start))
+  let offset = info.start
+  for (const block of keep) {
+    bytes.set(new Uint8Array(buffer, block.start, block.end - block.start), offset)
+    offset += block.end - block.start
+  }
+  bytes.set(new Uint8Array(buffer, info.end), offset)
+  new DataView(bytes.buffer).setUint32(info.lengthAt, size)
+  return bytes.buffer
+}

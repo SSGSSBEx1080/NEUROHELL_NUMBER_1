@@ -81,6 +81,9 @@ export function RepairDialog({
           ...selection,
           x: selection.x - x,
           y: selection.y - y,
+          raster: selection.raster
+            ? { ...selection.raster, x: selection.raster.x - x, y: selection.raster.y - y }
+            : undefined,
           points: selection.points?.map((p) => ({ x: p.x - x, y: p.y - y })),
           feather: 0,
         }

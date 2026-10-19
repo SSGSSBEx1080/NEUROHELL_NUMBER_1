@@ -1,9 +1,12 @@
+import { parseShapePaths } from './shapeGeometry'
+import { parseCorrection } from './adjustmentTypes'
 import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
 import { parseTextFrame } from './textLayout'
 export type ActionProperties = Partial<
   Pick<
     Layer,
+    | 'correction'
     | 'name'
     | 'visible'
     | 'opacity'
@@ -20,6 +23,7 @@ export type ActionProperties = Partial<
     | 'textScaleX'
     | 'shape'
     | 'shapeFill'
+    | 'shapePaths'
     | 'cornerRadii'
     | 'sides'
     | 'starRatio'
@@ -69,7 +73,7 @@ const numeric: Record<string, [number, number]> = {
   strokeWidth: [0, 200],
 }
 const enums: Record<string, readonly string[]> = {
-  shape: ['rectangle', 'ellipse', 'polygon', 'star', 'line'],
+  shape: ['rectangle', 'ellipse', 'polygon', 'star', 'line', 'path'],
   strokeAlign: ['inside', 'center', 'outside'],
   strokeCap: ['butt', 'round', 'square'],
   strokeJoin: ['miter', 'round', 'bevel'],
@@ -106,7 +110,8 @@ export function parseActionProperties(input: unknown): ActionProperties {
     throw new Error('Некорректные свойства операции')
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
-    if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
+    if (key === 'correction') out[key] = parseCorrection(value)
+    else if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
     else if (
@@ -120,7 +125,12 @@ export function parseActionProperties(input: unknown): ActionProperties {
       /^#[\da-f]{6}$/i.test(value)
     )
       out[key] = value
-    else if (key === 'cornerRadii' && Array.isArray(value) && value.length === 4)
+    else if (key === 'shapePaths') {
+      const paths = parseShapePaths(value)
+      if (!paths || paths.reduce((n, p) => n + p.knots.length, 0) > 2048)
+        throw new Error('Операция контура: до 2048 узлов')
+      out[key] = paths
+    } else if (key === 'cornerRadii' && Array.isArray(value) && value.length === 4)
       out[key] = value.map((v) => finite(v, 0, 2000))
     else if (key === 'strokeDash' && Array.isArray(value) && value.length <= 16)
       out[key] = value.map((v) => finite(v, 0, 2000))
