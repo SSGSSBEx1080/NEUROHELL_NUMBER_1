@@ -5506,3 +5506,75 @@ canvas {
 .path-properties .number-field > span:first-child {
   flex-shrink: 0;
 }
+
+.gradient-editor {
+  margin-top: 14px;
+}
+.gradient-ramp {
+  position: relative;
+  height: 34px;
+  margin: 16px 8px 28px;
+  border: 1px solid #ffffff40;
+  border-radius: 4px;
+  touch-action: none;
+}
+.gradient-stop {
+  position: absolute;
+  bottom: -16px;
+  width: 14px;
+  height: 20px;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 1px solid #777180;
+  border-radius: 3px;
+  background: var(--stop-color);
+  touch-action: none;
+}
+.gradient-stop:before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: -6px;
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  background: var(--stop-color);
+  border: 1px solid #aaa0b7;
+  z-index: -1;
+}
+.gradient-stop.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.gradient-stop-fields {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.gradient-stop-fields .number-field > span:first-child {
+  flex-shrink: 0;
+}
+.lut-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 0;
+  overflow-wrap: anywhere;
+}
+.lut-summary span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.lut-stack-list {
+  margin: 12px 0 20px;
+  padding-left: 24px;
+  max-height: 210px;
+  overflow: auto;
+}
+.lut-stack-list li {
+  padding: 6px 0;
+}
+.lut-stack-list li span {
+  float: right;
+  color: var(--muted);
+}

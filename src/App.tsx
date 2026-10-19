@@ -1,3 +1,4 @@
+import { ExportLutDialog } from './components/ExportLutDialog'
 import { usePathTool } from './hooks/usePathTool'
 import { RasterFilterDialog } from './components/RasterFilterDialog'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
@@ -196,6 +197,7 @@ export default function App() {
     | 'canvas-size'
     | 'repair'
     | 'psd-report'
+    | 'export-lut'
     | 'correction'
     | 'color-range'
     | 'selection-modify'
@@ -1726,6 +1728,11 @@ export default function App() {
     action: () => addCorrection(type as CorrectionKind),
     disabled: !!busy || doc.layers.length >= MAX_LAYERS,
   }))
+  correctionMenu.push({
+    label: 'Экспорт цветового стека CUBE…',
+    action: () => setModal('export-lut'),
+    divider: true,
+  })
   const layerMenu: MenuItem[] = [
     ...Object.entries(maskOperationNames).map(([operation, label]) => ({
       label,
@@ -2903,6 +2910,13 @@ export default function App() {
             editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
             closeModal()
           }}
+        />
+      )}
+      {modal === 'export-lut' && (
+        <ExportLutDialog
+          doc={doc}
+          onClose={closeModal}
+          onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
         />
       )}
       {modal === 'psd-report' && lastExport && (

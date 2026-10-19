@@ -1,3 +1,4 @@
+import { prepareAdjustmentRecords } from './psdAdjustments'
 import { verifyProject } from './psdIntegrity'
 import { decodeProject, encodeProject } from './psdMetadata'
 import { initializeCanvas, readPsd, writePsd, type Psd } from 'ag-psd'
@@ -52,6 +53,7 @@ self.onmessage = async (
           ...e.data.psd.imageResources,
           xmpMetadata: encodeProject(e.data.project, e.data.psd.imageResources?.xmpMetadata),
         }
+      prepareAdjustmentRecords(e.data.psd.children || [])
       const buffer = writePsd(e.data.psd, {
         psb: e.data.psb,
         noBackground: true,

@@ -1,3 +1,5 @@
+import { sampleCube } from './colorLut'
+import { gradientColor, rgbFromHex } from './gradientRamp'
 import type { BlendMode } from '../types'
 import type { Correction, CurvePoint, LevelRange, MixerRow } from './adjustmentTypes'
 export const unit = (x: number) => Math.min(1, Math.max(0, x))
@@ -176,6 +178,19 @@ export function compileCorrection(a: Correction): Transform {
         out[2] = mix(a.blue, r, g, b)
       }
     }
+  } else if (a.type === 'photo filter') {
+    const color = rgbFromHex(a.color),
+      density = a.density / 100
+    fn = (r, g, b, out) => {
+      out[0] = r * (1 - density + color[0] * density)
+      out[1] = g * (1 - density + color[1] * density)
+      out[2] = b * (1 - density + color[2] * density)
+      if (a.preserveLuminosity) setLum(out, lum(r, g, b))
+    }
+  } else if (a.type === 'gradient map') {
+    fn = (r, g, b, out) => gradientColor(a.stops, a.reverse ? 1 - lum(r, g, b) : lum(r, g, b), out)
+  } else if (a.type === 'color lookup') {
+    fn = (r, g, b, out) => sampleCube(a.lut, r, g, b, out)
   } else if (a.type === 'invert')
     fn = (r, g, b, out) => {
       out[0] = 1 - r

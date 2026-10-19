@@ -61,3 +61,18 @@ test('cancelled native Save As does not write; Ctrl+S reuses only a user-approve
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('CUBE export stays an explicitly allowed bounded text format, never an executable path', () => {
+  const text = new TextEncoder().encode('TITLE "Safe"\nLUT_3D_SIZE 2\n0 0 0\n')
+  assert.equal(validateSaveRequest({ name: 'look.cube', bytes: text }).name, 'look.cube')
+  assert.throws(() => validateSaveRequest({ name: 'look.exe', bytes: text }))
+  assert.throws(() =>
+    validateSaveRequest({ name: 'look.cube', bytes: new Uint8Array([77, 90, 0, 1]) }),
+  )
+  assert.throws(() =>
+    validateSaveRequest({ name: 'look.cube', bytes: new Uint8Array(2 * 1024 * 1024 + 1) }),
+  )
+  assert.throws(() =>
+    validateSaveRequest({ name: 'look.cube', bytes: new TextEncoder().encode('console.log(1)') }),
+  )
+})

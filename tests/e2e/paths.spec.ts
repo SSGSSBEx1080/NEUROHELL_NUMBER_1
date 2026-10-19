@@ -158,6 +158,15 @@ test('open thin path expands safely during node drag, keeps native stroke and su
     first = readPsd(before, { useImageData: true }).children![0]
   expect(first.vectorMask!.paths[0].open).toBe(true)
   expect(first.vectorStroke!.fillEnabled).toBe(false)
+  // A visibly thick stroke gives the independent rasterizer a real interior to
+  // test. At 2px every pixel is an AA edge and aggdraw's coverage differs ~10%.
+  expect(first.vectorStroke!.lineWidth!.value).toBe(2)
+  expect(first.vectorStroke!.lineCapType).toBe('round')
+  // psd-tools explicitly does not implement line caps/joins. Match its supported
+  // flat-cap subset for independent pixels; retain the actual round-cap metadata check.
+  await page.getByLabel('Концы обводки').selectOption('butt')
+  await page.getByLabel('Толщ.', { exact: true }).fill('8')
+  await page.getByLabel('Толщ.', { exact: true }).press('Enter')
   await drag(page, [340, 120], [380, 285])
   const next = await save(page),
     record = readPsd(next, { useImageData: true }).children![0]

@@ -22,16 +22,17 @@ initializeCanvas(
 const all = Object.keys(correctionNames) as CorrectionKind[]
 const rgba = new Uint8ClampedArray([32, 96, 224, 255, 30, 140, 220, 128, 45, 80, 120, 0])
 describe('non-destructive adjustment mathematics', () => {
-  it.each(all.filter((k) => !['invert', 'posterize', 'threshold', 'black & white'].includes(k)))(
-    '%s default is identity, including hidden RGB and alpha',
-    (type) => {
-      const source = Uint8ClampedArray.from({ length: 256 * 4 }, (_, i) =>
-        i % 4 === 3 ? i % 256 : (i * 37) % 256,
-      )
-      expect(applyCorrection(source, defaultCorrection(type))).toEqual(source)
-      expect(source[0]).toBe(0)
-    },
-  )
+  it.each(
+    all.filter(
+      (k) => !['invert', 'posterize', 'threshold', 'black & white', 'gradient map'].includes(k),
+    ),
+  )('%s default is identity, including hidden RGB and alpha', (type) => {
+    const source = Uint8ClampedArray.from({ length: 256 * 4 }, (_, i) =>
+      i % 4 === 3 ? i % 256 : (i * 37) % 256,
+    )
+    expect(applyCorrection(source, defaultCorrection(type))).toEqual(source)
+    expect(source[0]).toBe(0)
+  })
   it.each(all)('%s never changes backdrop alpha', (type) => {
     const result = applyCorrection(rgba, defaultCorrection(type), 0.7)
     expect([result[3], result[7], result[11]]).toEqual([255, 128, 0])

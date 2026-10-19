@@ -1,3 +1,5 @@
+import { identityCube, parseCubeLut, type CubeLut } from './colorLut'
+import { gradientPresets, parseGradientStops, type GradientStop } from './gradientRamp'
 export type ToneChannel = 'rgb' | 'red' | 'green' | 'blue'
 export const toneChannels: ToneChannel[] = ['rgb', 'red', 'green', 'blue']
 export interface LevelRange {
@@ -53,6 +55,9 @@ export type Correction =
       blue: MixerRow
       gray: MixerRow
     }
+  | { type: 'photo filter'; color: string; density: number; preserveLuminosity: boolean }
+  | { type: 'gradient map'; stops: GradientStop[]; reverse: boolean }
+  | { type: 'color lookup'; lut: CubeLut }
   | { type: 'invert' }
   | { type: 'posterize'; levels: number }
   | { type: 'threshold'; level: number }
@@ -67,6 +72,9 @@ export const correctionNames: Record<CorrectionKind, string> = {
   'color balance': 'Цветовой баланс',
   'black & white': 'Чёрно-белое',
   'channel mixer': 'Микшер каналов',
+  'photo filter': 'Фотофильтр',
+  'gradient map': 'Карта градиента',
+  'color lookup': 'Поиск цвета · 3D LUT',
   invert: 'Инверсия',
   posterize: 'Постеризация',
   threshold: 'Порог',
@@ -117,6 +125,12 @@ export function defaultCorrection(type: CorrectionKind): Correction {
         blue: { red: 0, green: 0, blue: 100, constant: 0 },
         gray: { red: 30, green: 59, blue: 11, constant: 0 },
       }
+    case 'photo filter':
+      return { type, color: '#ec8a00', density: 0, preserveLuminosity: true }
+    case 'gradient map':
+      return { type, stops: parseGradientStops(gradientPresets[0].stops), reverse: false }
+    case 'color lookup':
+      return { type, lut: identityCube() }
     case 'invert':
       return { type }
     case 'posterize':
@@ -141,6 +155,19 @@ export function parseCorrection(input: unknown): Correction {
   if (typeof v.type !== 'string' || !Object.hasOwn(correctionNames, v.type))
     throw new Error('Неизвестный корректирующий слой')
   const defaults = defaultCorrection(v.type as CorrectionKind)
+  if (defaults.type === 'photo filter') {
+    if (typeof v.color !== 'string' || !/^#[a-f0-9]{6}$/i.test(v.color))
+      throw new Error('Некорректный цвет фотофильтра')
+    return {
+      type: defaults.type,
+      color: v.color.toLowerCase(),
+      density: Math.round(number(v.density, 0, 100, 0)),
+      preserveLuminosity: v.preserveLuminosity !== false,
+    }
+  }
+  if (defaults.type === 'gradient map')
+    return { type: defaults.type, stops: parseGradientStops(v.stops), reverse: v.reverse === true }
+  if (defaults.type === 'color lookup') return { type: defaults.type, lut: parseCubeLut(v.lut) }
   if (defaults.type === 'levels') {
     const channels = record(v.channels || {})
     return {

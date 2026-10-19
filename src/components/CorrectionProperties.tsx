@@ -1,3 +1,5 @@
+import { GradientEditor } from './GradientEditor'
+import { ColorLookupProperties } from './ColorLookupProperties'
 import { useState } from 'react'
 import {
   correctionNames,
@@ -12,7 +14,7 @@ import {
 import type { EditorDocument, Layer } from '../types'
 import { CurveEditor } from './CurveEditor'
 import { Histogram } from './Histogram'
-import { Field, Select } from './ui'
+import { ColorField, Field, Select } from './ui'
 const channelNames: Record<ToneChannel, string> = {
   rgb: 'RGB · общий',
   red: 'Красный',
@@ -95,7 +97,7 @@ export function CorrectionProperties({
           </option>
         ))}
       </Select>
-      <Histogram doc={doc} channel={channel} />
+      <Histogram doc={doc} channel={c.type === 'curves' || c.type === 'levels' ? channel : 'rgb'} />
       {(c.type === 'levels' || c.type === 'curves') && (
         <Select
           aria-label="Канал коррекции"
@@ -306,6 +308,75 @@ export function CorrectionProperties({
             )
           })}
         </>
+      )}
+      {c.type === 'photo filter' && (
+        <>
+          <Select
+            aria-label="Пресет фотофильтра"
+            value=""
+            onChange={(e) => {
+              const color = e.target.value
+              if (color) patch({ ...c, color, density: 25 }, false)
+            }}
+          >
+            <option value="" disabled>
+              Выбрать фильтр…
+            </option>
+            <option value="#ec8a00">Тёплый янтарный</option>
+            <option value="#347cec">Холодный синий</option>
+            <option value="#bd508d">Пурпурный</option>
+            <option value="#73aa62">Зелёный</option>
+          </Select>
+          <ColorField
+            label="Цвет фотофильтра"
+            value={c.color}
+            onChange={(color) => patch({ ...c, color })}
+            onCommit={onFinish}
+          />
+          {scalar('density', 'Плотность фотофильтра', 0, 100)}
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={c.preserveLuminosity}
+              onChange={(e) => patch({ ...c, preserveLuminosity: e.target.checked }, false)}
+            />
+            Сохранять светимость фотофильтра
+          </label>
+          <p className="panel-note">
+            Независимая RGB-модель цветного фильтра. Нативный Photo Filter v2; Lab/XYZ-варианты не
+            подменяются.
+          </p>
+        </>
+      )}
+      {c.type === 'gradient map' && (
+        <>
+          <GradientEditor
+            key={layer.id}
+            stops={c.stops}
+            onChange={(stops, temporary) => patch({ ...c, stops }, temporary)}
+            onFinish={onFinish}
+          />
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={c.reverse}
+              onChange={(e) => patch({ ...c, reverse: e.target.checked }, false)}
+            />
+            Обратить карту градиента
+          </label>
+          <p className="panel-note">
+            Цвета задаются по светлоте нижнего стека. Это тональная карта, не геометрическая
+            градиентная заливка фигуры. Native grdm classic/v1, без dither/прозрачных точек.
+          </p>
+        </>
+      )}
+      {c.type === 'color lookup' && (
+        <ColorLookupProperties
+          key={layer.id}
+          owner={`${doc.id}:${layer.id}`}
+          lut={c.lut}
+          onChange={(lut) => patch({ ...c, lut }, false)}
+        />
       )}
       {c.type === 'posterize' && scalar('levels', 'Число уровней', 2, 255)}
       {c.type === 'threshold' && scalar('level', 'Уровень порога', 0, 255)}

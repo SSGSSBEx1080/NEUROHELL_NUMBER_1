@@ -85,7 +85,7 @@ test('native Levels, keyboard creation, numerical controls, undo and XMP-free ed
   ).toMatchObject({ type: 'levels', rgb: { midtoneInput: 1.25 } })
   await expect(page.getByTestId('histogram')).toBeVisible()
 })
-test('all twelve corrections export as native structures, not image layers', async ({ page }) => {
+test('all fifteen corrections export as native structures, not image layers', async ({ page }) => {
   await init(page)
   const doc = newDocument(200, 140, 'Native adjustments', '#806040')
   await open(page, 'all-adjustments.777', Buffer.from(JSON.stringify(doc)))
@@ -96,7 +96,7 @@ test('all twelve corrections export as native structures, not image layers', asy
   const bytes = await save(page),
     psd = readPsd(bytes, { useImageData: true }),
     layers = psd.children!.filter((l) => l.adjustment)
-  expect(layers).toHaveLength(12)
+  expect(layers).toHaveLength(15)
   expect(layers.map((l) => l.adjustment!.type)).toEqual(Object.keys(correctionNames))
   for (const layer of layers)
     expect(layer.text || layer.placedLayer || layer.vectorFill).toBeFalsy()
