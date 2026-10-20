@@ -36,7 +36,7 @@ export function makeLayer(overrides: Partial<Layer> = {}): Layer {
     rotation: 0,
     opacity: 1,
     blendMode: 'source-over',
-    color: '#b8a8ff',
+    color: '#000000',
     adjustments: { ...DEFAULT_ADJUSTMENTS },
     ...overrides,
   }

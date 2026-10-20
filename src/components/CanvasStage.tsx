@@ -103,6 +103,7 @@ interface Props {
 }
 type Drag =
   | { type: 'pan'; client: Point; pan: Point }
+  | { type: 'sample-color' }
   | { type: 'guide'; id: string; axis: 'x' | 'y'; before: EditorDocument; fresh: boolean }
   | {
       type: 'quick-mask'
@@ -201,9 +202,15 @@ export function CanvasStage({
   const [revision, setRevision] = useState(0)
   const [spaceDown, setSpaceDown] = useState(false)
   const [cursor, setCursor] = useState<Point | null>(null)
+  const [altSampling, setAltSampling] = useState(false)
   const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null })
   const paintScheduler = useRef(new FrameScheduler()),
     scheduler = useRef(new FrameScheduler()),
+    cursorScheduler = useRef(new FrameScheduler()),
+    cursorPoint = useRef<Point | null>(null),
+    // Stroke bitmaps encode in the background; the next canvas gesture waits for
+    // this chain instead of flashing a blocking overlay after every stroke.
+    paintCommit = useRef<Promise<void>>(Promise.resolve()),
     renderer = useRef(new SceneRenderer())
   const polygon = useRef<Point[]>([]),
     [outline, setOutline] = useState<Point[]>([])
@@ -263,6 +270,7 @@ export function CanvasStage({
   useEffect(() => {
     polygon.current = []
     setOutline([])
+    setAltSampling(false)
     if (selectionGesture.current) {
       setSelection(selectionGesture.current.base, true)
       selectionGesture.current = null
@@ -447,6 +455,27 @@ export function CanvasStage({
     )
   }
   const redraw = () => setRevision((v) => v + 1)
+  const queuePaintCommit = (job: () => Promise<void>) => {
+    const run = paintCommit.current.then(job, job)
+    paintCommit.current = run.catch(() => {})
+    return run
+  }
+  /** Sample the visible composite at a document point into the foreground colour. */
+  const sampleColorAt = (p: Point, announce = false) => {
+    const c = canvas.current
+    if (!c || p.x < 0 || p.y < 0 || p.x >= doc.width || p.y >= doc.height) return false
+    const x = Math.max(0, Math.min(c.width - 1, Math.floor((p.x / doc.width) * c.width))),
+      y = Math.max(0, Math.min(c.height - 1, Math.floor((p.y / doc.height) * c.height)))
+    const rgba = c.getContext('2d')!.getImageData(x, y, 1, 1).data
+    if (!rgba[3]) {
+      if (announce) onToast('Здесь прозрачно — цвета нет')
+      return false
+    }
+    const color = '#' + [...rgba.slice(0, 3)].map((v) => v.toString(16).padStart(2, '0')).join('')
+    setColor(color)
+    if (announce) onToast(`Цвет ${color.toUpperCase()} выбран`)
+    return true
+  }
   const beginText = (layer: Layer) => {
     if (isLayerLocked(doc, layer.id)) {
       onToast('Слой или его группа заблокированы')
@@ -556,6 +585,10 @@ export function CanvasStage({
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
     activePointer.current = e.pointerId
+    // A previous stroke may still be encoding in the background. Never start a
+    // new gesture from the pre-stroke document: wait silently for its commit.
+    await paintCommit.current
+    if (activePointer.current !== e.pointerId) return
     let p = pointFrom(e)
     if (spaceDown || tool === 'hand' || e.button === 1) {
       drag.current = { type: 'pan', client: { x: e.clientX, y: e.clientY }, pan }
@@ -618,6 +651,14 @@ export function CanvasStage({
       p = clip(snapPoint(p, targets(), 8 / scale, gridSnap))
     if (!inside(p)) {
       if (tool === 'move') onSelect(null)
+      return
+    }
+    if (tool === 'brush' && e.altKey && !settings.quickMask && !settings.editMask) {
+      // Temporary eyedropper: sample while Alt is held, then keep painting with
+      // the same brush — no tool switch. Dragging updates the colour live.
+      setAltSampling(true)
+      sampleColorAt(p)
+      drag.current = { type: 'sample-color' }
       return
     }
     if (pathController.active) {
@@ -805,17 +846,8 @@ export function CanvasStage({
       onSelect(layer.id)
       drag.current = { type: 'shape', start: p, id: layer.id, before: doc }
     } else if (tool === 'eyedropper') {
-      const c = canvas.current!,
-        ctx = c.getContext('2d')!
-      const rgba = ctx.getImageData(
-        Math.min(c.width - 1, Math.floor((p.x / doc.width) * c.width)),
-        Math.min(c.height - 1, Math.floor((p.y / doc.height) * c.height)),
-        1,
-        1,
-      ).data
-      const color = '#' + [...rgba.slice(0, 3)].map((v) => v.toString(16).padStart(2, '0')).join('')
-      setColor(color)
-      onToast(`Цвет ${color.toUpperCase()} выбран`)
+      sampleColorAt(p, true)
+      drag.current = { type: 'sample-color' }
     } else if (tool === 'wand' || tool === 'bucket') onPixelAction(tool, p)
     else if (tool === 'brush' || tool === 'eraser' || tool === 'clone') {
       const maskMode = settings.editMask && !!selected?.mask
@@ -939,7 +971,14 @@ export function CanvasStage({
   const pointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = pointFrom(e)
     if (!drag.current && pathController.move(p, e)) return
-    if (tool === 'brush' || tool === 'eraser' || tool === 'clone') setCursor(p)
+    if (tool === 'brush' || tool === 'eraser' || tool === 'clone') {
+      // Cursor state at frame rate, not per pointer event: fast strokes must
+      // not re-render the whole stage for every hardware sample.
+      cursorPoint.current = p
+      cursorScheduler.current.request(() => setCursor(cursorPoint.current))
+      const sampling = tool === 'brush' && e.altKey && !settings.quickMask && !settings.editMask
+      setAltSampling((prev) => (prev === sampling ? prev : sampling))
+    }
     if (polygon.current.length && !drag.current) {
       if (tool === 'magnetic-lasso' && inside(p)) {
         const next = snapMagnet(p),
@@ -958,16 +997,28 @@ export function CanvasStage({
       setPan({ x: d.pan.x + e.clientX - d.client.x, y: d.pan.y + e.clientY - d.client.y })
       return
     }
+    if (d.type === 'sample-color') {
+      if (tool === 'eyedropper' || e.altKey) sampleColorAt(p)
+      return
+    }
     if (d.type === 'quick-mask') {
-      strokeStamps(d.canvas.getContext('2d')!, d.last, p, d.stamp, settings, false)
-      d.last = p
+      const events = e.nativeEvent.getCoalescedEvents?.() || []
+      for (const event of events.length ? events : [e.nativeEvent]) {
+        const point = pointFrom(event)
+        strokeStamps(d.canvas.getContext('2d')!, d.last, point, d.stamp, settings, false)
+        d.last = point
+      }
       paintScheduler.current.request(() => {
         if (drag.current === d) setSelection(quickSelection(d.canvas), true)
       })
       return
     }
     if (d.type === 'paint') {
-      paintSegment(d, p)
+      // Hardware samples between animation frames keep fast strokes curved
+      // instead of straight chords between frame-rate points.
+      const events = e.nativeEvent.getCoalescedEvents?.() || []
+      for (const event of events.length ? events : [e.nativeEvent])
+        paintSegment(d, pointFrom(event))
       return
     }
     if (d.type === 'lasso') {
@@ -1260,6 +1311,10 @@ export function CanvasStage({
       e.currentTarget.releasePointerCapture(e.pointerId)
     if (pathController.up()) return
     if (!d) return
+    if (d.type === 'sample-color') {
+      setAltSampling(false)
+      return
+    }
     if (d.type === 'guide') {
       if (editor.documentRef.current === d.before) return
       const position = pointFrom(e)[d.axis],
@@ -1379,54 +1434,54 @@ export function CanvasStage({
       return
     }
     if (d.type === 'paint') {
-      if (d.mask) {
-        onBusy('Сохраняем маску…')
+      // No busy overlay for a routine stroke: the live canvas stays on screen
+      // via the override while PNG encoding finishes in the background. The
+      // next pointer gesture silently waits for this commit (see pointerDown).
+      void queuePaintCommit(async () => {
+        if (d.mask) {
+          try {
+            const bitmap = await encodeBitmap(d.layer, d.canvas)
+            validateRasterBudget({
+              ...editor.documentRef.current,
+              layers: editor.documentRef.current.layers.map((l) =>
+                l.id === d.layer.id ? { ...l, mask: { ...d.mask!, src: bitmap.src! } } : l,
+              ),
+            })
+            editor.patchLayer(d.layer.id, { mask: { ...d.mask, src: bitmap.src! } }, '', true)
+            editor.finish('Рисование по маске')
+          } catch {
+            editor.change(() => d.before, '', true)
+            onToast('Не удалось сохранить маску')
+          }
+          return
+        }
+        const next = await encodeBitmap(d.layer, d.canvas).catch(() => null)
+        if (!next) {
+          editor.change(() => d.before, '', true)
+          overrides.current.clear()
+          redraw()
+          onToast('Не удалось сохранить мазок')
+          return
+        }
         try {
-          const bitmap = await encodeBitmap(d.layer, d.canvas)
           validateRasterBudget({
             ...editor.documentRef.current,
-            layers: editor.documentRef.current.layers.map((l) =>
-              l.id === d.layer.id ? { ...l, mask: { ...d.mask!, src: bitmap.src! } } : l,
-            ),
+            layers: editor.documentRef.current.layers.map((l) => (l.id === d.layer.id ? next : l)),
           })
-          editor.patchLayer(d.layer.id, { mask: { ...d.mask, src: bitmap.src! } }, '', true)
-          editor.finish('Рисование по маске')
-        } catch {
+        } catch (error) {
           editor.change(() => d.before, '', true)
-          onToast('Не удалось сохранить маску')
-        } finally {
-          onBusy(null)
+          overrides.current.clear()
+          redraw()
+          onToast(error instanceof Error ? error.message : 'Превышен лимит растров')
+          return
         }
-        return
-      }
-      onBusy('Фиксируем мазок…')
-      const next = await encodeBitmap(d.layer, d.canvas).catch(() => null)
-      onBusy(null)
-      if (!next) {
-        editor.change(() => d.before, '', true)
-        overrides.current.clear()
+        editor.patchLayer(d.layer.id, next, '', true)
+        overrides.current.delete(d.layer.id)
+        editor.finish(
+          d.tool === 'eraser' ? 'Ластик' : d.tool === 'clone' ? 'Штамп' : 'Рисование кистью',
+        )
         redraw()
-        onToast('Не удалось сохранить мазок')
-        return
-      }
-      try {
-        validateRasterBudget({
-          ...editor.documentRef.current,
-          layers: editor.documentRef.current.layers.map((l) => (l.id === d.layer.id ? next : l)),
-        })
-      } catch (error) {
-        editor.change(() => d.before, '', true)
-        overrides.current.clear()
-        redraw()
-        onToast(error instanceof Error ? error.message : 'Превышен лимит растров')
-        return
-      }
-      editor.patchLayer(d.layer.id, next, '', true)
-      overrides.current.delete(d.layer.id)
-      editor.finish(
-        d.tool === 'eraser' ? 'Ластик' : d.tool === 'clone' ? 'Штамп' : 'Рисование кистью',
-      )
-      redraw()
+      })
     } else if (d.type === 'shape') {
       const layer = editor.documentRef.current.layers.find((l) => l.id === d.id)!
       if (layer.width < 4 && layer.height < 4)
@@ -1449,6 +1504,7 @@ export function CanvasStage({
   const cancelPointer = () => {
     pathController.cancelGesture()
     paintScheduler.current.cancel()
+    setAltSampling(false)
     const d = drag.current
     if (selectionGesture.current) {
       setSelection(selectionGesture.current.base, true)
@@ -1517,14 +1573,19 @@ export function CanvasStage({
   return (
     <div
       ref={viewport}
-      className={`canvas-viewport tool-${spaceDown ? 'hand' : tool} ${busy ? 'is-busy' : ''}`}
+      className={`canvas-viewport tool-${spaceDown ? 'hand' : tool} ${busy ? 'is-busy' : ''} ${altSampling ? 'alt-sampling' : ''}`}
       data-testid="canvas-viewport"
       tabIndex={-1}
       onPointerDown={pointerDown}
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
       onPointerCancel={cancelPointer}
-      onPointerLeave={() => setCursor(null)}
+      onPointerLeave={() => {
+        cursorScheduler.current.cancel()
+        cursorPoint.current = null
+        setCursor(null)
+        setAltSampling(false)
+      }}
       onDoubleClick={(e) => {
         if (tool === 'pen' && pathController.draft?.knots.length) {
           pathController.finishDraft(false)
@@ -1797,22 +1858,50 @@ export function CanvasStage({
           )}
           {cursor && (tool === 'brush' || tool === 'eraser' || tool === 'clone') && (
             <>
-              <circle
-                cx={cursor.x}
-                cy={cursor.y}
-                r={settings.brushSize / 2}
-                fill="none"
-                stroke="#0009"
-                strokeWidth={3 / scale}
-              />
-              <circle
-                cx={cursor.x}
-                cy={cursor.y}
-                r={settings.brushSize / 2}
-                fill="none"
-                stroke="#fffd"
-                strokeWidth={1 / scale}
-              />
+              {altSampling && tool === 'brush' ? (
+                <g stroke="#fffd" strokeWidth={1 / scale}>
+                  <circle
+                    cx={cursor.x}
+                    cy={cursor.y}
+                    r={7 / scale}
+                    fill="none"
+                    stroke="#0009"
+                    strokeWidth={3 / scale}
+                  />
+                  <circle cx={cursor.x} cy={cursor.y} r={7 / scale} fill="none" />
+                  <line
+                    x1={cursor.x - 11 / scale}
+                    y1={cursor.y}
+                    x2={cursor.x + 11 / scale}
+                    y2={cursor.y}
+                  />
+                  <line
+                    x1={cursor.x}
+                    y1={cursor.y - 11 / scale}
+                    x2={cursor.x}
+                    y2={cursor.y + 11 / scale}
+                  />
+                </g>
+              ) : (
+                <>
+                  <circle
+                    cx={cursor.x}
+                    cy={cursor.y}
+                    r={settings.brushSize / 2}
+                    fill="none"
+                    stroke="#0009"
+                    strokeWidth={3 / scale}
+                  />
+                  <circle
+                    cx={cursor.x}
+                    cy={cursor.y}
+                    r={settings.brushSize / 2}
+                    fill="none"
+                    stroke="#fffd"
+                    strokeWidth={1 / scale}
+                  />
+                </>
+              )}
             </>
           )}
         </svg>

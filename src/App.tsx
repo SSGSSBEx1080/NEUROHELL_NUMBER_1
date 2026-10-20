@@ -191,7 +191,7 @@ import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
 import { Dropdown, type MenuItem } from './components/Dropdown'
-import { Field, IconButton, Select } from './components/ui'
+import { IconButton, Select, SliderField } from './components/ui'
 import { useEditor } from './hooks/useEditor'
 import {
   demoDocument,
@@ -250,7 +250,7 @@ export default function App() {
     : undefined
   const [tool, setTool] = useState<Tool>('move')
   const [settings, updateSettings] = useState<ToolSettings>({
-    color: '#b8a8ff',
+    color: '#000000',
     secondaryColor: '#ffffff',
     brushSize: 30,
     brushOpacity: 100,
@@ -333,7 +333,7 @@ export default function App() {
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
   const [ready, setReady] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved')
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'pending' | 'saving' | 'error'>('saved')
   const [toast, setToast] = useState('')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [dropping, setDropping] = useState(false)
@@ -645,8 +645,14 @@ export default function App() {
   useEffect(() => {
     if (!ready || workspace.home || editor.entries[editor.index]?.document !== doc) return
     const version = ++saveVersion.current
-    setSaveStatus('saving')
+    // A brush stroke must not flash a spinner on every commit: the write is
+    // debounced, and the "saving" state appears only if the write itself is slow.
+    setSaveStatus('pending')
+    let slowTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
+      slowTimer = setTimeout(() => {
+        if (saveVersion.current === version) setSaveStatus('saving')
+      }, 400)
       saveDocument(doc)
         .then(() => {
           if (saveVersion.current === version) setSaveStatus('saved')
@@ -657,8 +663,12 @@ export default function App() {
             toastMessage('Автосохранение недоступно. Скачай проект через Ctrl+S.')
           }
         })
+        .finally(() => clearTimeout(slowTimer))
     }, preferences.autosave)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      clearTimeout(slowTimer)
+    }
   }, [doc, ready, editor.entries, editor.index, toastMessage, preferences.autosave, workspace.home])
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -2475,7 +2485,9 @@ export default function App() {
                 ? 'Автокопия сохранена'
                 : saveStatus === 'saving'
                   ? 'Сохраняем на устройстве…'
-                  : 'Скачай проект для сохранения'}
+                  : saveStatus === 'pending'
+                    ? 'Автокопия'
+                    : 'Скачай проект для сохранения'}
             </span>
           </div>
           <div className="header-actions">
@@ -2518,6 +2530,56 @@ export default function App() {
           </div>
           <div className="vertical-divider" />
           <div className="tool-options">
+            {[
+              'brush',
+              'pen',
+              'rectangle',
+              'ellipse',
+              'polygon',
+              'star',
+              'line',
+              'text',
+              'bucket',
+              'gradient',
+              'eyedropper',
+            ].includes(tool) && (
+              <div className="tool-color-pair" role="group" aria-label="Цвета инструмента">
+                <div className="tool-color-swatches">
+                  <label className="option-color background" title="Фоновый цвет">
+                    <input
+                      type="color"
+                      aria-label="Фоновый цвет инструмента"
+                      value={settings.secondaryColor}
+                      onChange={(e) => setSettings({ secondaryColor: e.target.value })}
+                    />
+                    <span style={{ background: settings.secondaryColor }} />
+                  </label>
+                  <label
+                    className="option-color foreground"
+                    title="Основной цвет — им рисует кисть. Alt+клик по холсту возьмёт цвет из изображения"
+                  >
+                    <input
+                      type="color"
+                      aria-label="Цвет инструмента"
+                      value={settings.color}
+                      onChange={(e) => setSettings({ color: e.target.value })}
+                    />
+                    <span style={{ background: settings.color }} />
+                  </label>
+                </div>
+                <span className="tool-color-hex">{settings.color.toUpperCase()}</span>
+                <button
+                  className="swap-colors-top"
+                  title="Поменять цвета (X)"
+                  aria-label="Поменять основной и фоновый цвета"
+                  onClick={() =>
+                    setSettings({ color: settings.secondaryColor, secondaryColor: settings.color })
+                  }
+                >
+                  <ArrowLeftRight size={12} />
+                </button>
+              </div>
+            )}
             {selectionTools.includes(tool) && (
               <Select
                 aria-label="Режим выделения"
@@ -2552,7 +2614,7 @@ export default function App() {
               </>
             ) : tool === 'brush' || tool === 'eraser' || tool === 'clone' ? (
               <>
-                <Field
+                <SliderField
                   label="Размер"
                   value={settings.brushSize}
                   min={1}
@@ -2560,7 +2622,7 @@ export default function App() {
                   suffix="px"
                   onChange={(brushSize) => setSettings({ brushSize })}
                 />
-                <Field
+                <SliderField
                   label="Непр."
                   value={settings.brushOpacity}
                   min={1}
@@ -2568,7 +2630,7 @@ export default function App() {
                   suffix="%"
                   onChange={(brushOpacity) => setSettings({ brushOpacity })}
                 />
-                <Field
+                <SliderField
                   label="Жёсткость"
                   value={settings.brushHardness ?? 100}
                   min={0}
@@ -2576,7 +2638,7 @@ export default function App() {
                   suffix="%"
                   onChange={(brushHardness) => setSettings({ brushHardness })}
                 />
-                <Field
+                <SliderField
                   label="Интервал"
                   value={settings.brushSpacing || 15}
                   min={5}
@@ -2584,13 +2646,15 @@ export default function App() {
                   suffix="%"
                   onChange={(brushSpacing) => setSettings({ brushSpacing })}
                 />
-                {tool === 'clone' && (
+                {tool === 'clone' ? (
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
-                )}
+                ) : tool === 'brush' ? (
+                  <span className="tool-instruction">Alt+клик — взять цвет с холста</span>
+                ) : null}
               </>
             ) : tool === 'magic-wand' ? (
               <>
-                <Field
+                <SliderField
                   label="Допуск палочки"
                   value={settings.selectionTolerance ?? 32}
                   min={0}
@@ -2616,7 +2680,7 @@ export default function App() {
               </>
             ) : tool === 'wand' || tool === 'bucket' ? (
               <>
-                <Field
+                <SliderField
                   label="Допуск"
                   value={settings.tolerance}
                   min={1}
@@ -2632,7 +2696,7 @@ export default function App() {
               </>
             ) : selectionTools.includes(tool) ? (
               <>
-                <Field
+                <SliderField
                   label="Растушёвка"
                   value={settings.feather || 0}
                   min={0}
@@ -2711,28 +2775,6 @@ export default function App() {
                               ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
                               : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
-            )}
-            {[
-              'brush',
-              'pen',
-              'rectangle',
-              'ellipse',
-              'polygon',
-              'star',
-              'line',
-              'text',
-              'bucket',
-              'gradient',
-            ].includes(tool) && (
-              <label className="option-color" title="Основной цвет">
-                <input
-                  type="color"
-                  aria-label="Цвет инструмента"
-                  value={settings.color}
-                  onChange={(e) => setSettings({ color: e.target.value })}
-                />
-                <span style={{ background: settings.color }} />
-              </label>
             )}
           </div>
           <div className="options-right">
@@ -2854,7 +2896,9 @@ export default function App() {
                           <span>.psd</span>
                         </button>
                       )}
-                      <span className="document-unsaved">{saveStatus === 'saving' ? '•' : ''}</span>
+                      <span className="document-unsaved">
+                        {saveStatus === 'saving' || saveStatus === 'pending' ? '•' : ''}
+                      </span>
                       <button
                         aria-label={`Закрыть вкладку: ${doc.name}`}
                         onClick={() => workspace.requestClose(doc.id)}

@@ -108,6 +108,37 @@ test('polygon selection closes with Enter and constrains the brush', async ({ pa
   await expect.poll(async () => (await pixel(page, 250, 90))[3]).toBe(0)
 })
 
+test('brush defaults to black, top slider and number stay in sync, Alt-click samples and paints', async ({
+  page,
+}) => {
+  await blank(page)
+  await image(page)
+  await page.keyboard.press('b')
+  const color = page.getByLabel('Цвет инструмента', { exact: true })
+  await expect(color).toHaveValue('#000000')
+  await expect(page.locator('.tool-color-hex')).toHaveText('#000000')
+  const slider = page.getByLabel('Размер — ползунок', { exact: true })
+  await slider.focus()
+  await page.keyboard.press('Home')
+  await expect(page.getByLabel('Размер', { exact: true })).toHaveValue('1')
+  await page.getByLabel('Размер', { exact: true }).fill('36')
+  await page.getByLabel('Размер', { exact: true }).press('Enter')
+  await expect(slider).toHaveValue('36')
+  const b = (await page.locator('.artboard').boundingBox())!
+  await page.mouse.click(b.x + 150, b.y + 150)
+  await expect.poll(async () => pixel(page, 150, 150)).toEqual([0, 0, 0, 255])
+  await page.keyboard.down('Alt')
+  await page.mouse.move(b.x + 60, b.y + 60)
+  await expect(page.getByTestId('canvas-viewport')).toHaveClass(/alt-sampling/)
+  await page.mouse.click(b.x + 60, b.y + 60)
+  await page.keyboard.up('Alt')
+  await expect(color).toHaveValue('#ff0000')
+  await expect(page.locator('.tool-color-hex')).toHaveText('#FF0000')
+  await page.mouse.click(b.x + 220, b.y + 150)
+  await expect.poll(async () => pixel(page, 220, 150)).toEqual([255, 0, 0, 255])
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+})
+
 test('bucket respects connected-color boundaries and clone uses an Alt source', async ({
   page,
 }) => {
