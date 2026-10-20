@@ -1,5 +1,5 @@
 import { renderCorrection, clearAdjustmentCaches } from './adjustmentRenderer'
-import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
+import { getTextGeometry, clearTextGeometryCache, textBaselineShiftPx } from './textGeometry'
 import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { homography, project, validQuad } from './projection'
@@ -161,16 +161,18 @@ function paintText(ctx: CanvasRenderingContext2D, layer: Layer) {
   ctx.textAlign = layer.textAlign || 'left'
   if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
   const decoration = textDecorationMetrics(size)
+  const baselineDy = -textBaselineShiftPx(layer)
   for (const line of geometry.lines) {
     const anchorX = line.x / textScale
-    ctx.fillText(line.text, anchorX, line.y)
+    ctx.fillText(line.text, anchorX, line.y + baselineDy)
     if ((!layer.textUnderline && !layer.textStrikethrough) || !line.text.trim()) continue
     const measured = ctx.measureText(line.text)
     const left = anchorX - (measured.actualBoundingBoxLeft || 0)
     const right = anchorX + (measured.actualBoundingBoxRight || 0)
     if (!(right > left)) continue
     const baselineY =
-      (layer.textBaseline || 'top') === 'alphabetic' ? line.y : line.y + geometry.baselineOffset
+      ((layer.textBaseline || 'top') === 'alphabetic' ? line.y : line.y + geometry.baselineOffset) +
+      baselineDy
     if (layer.textUnderline)
       ctx.fillRect(
         left,

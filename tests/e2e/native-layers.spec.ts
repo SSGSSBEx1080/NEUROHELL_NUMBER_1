@@ -670,6 +670,124 @@ test('text underline and strikethrough draw real rules, undo and export natively
   await expect(strikethrough).toHaveClass(/active/)
 })
 
+test('text baseline shift moves real glyphs up and down, undoes and exports natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 340, 'Text baseline shift', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'Shifted',
+      text: 'O',
+      x: 110,
+      y: 105,
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-baseline-shift.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'Shifted' }).click()
+
+  const bounds = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let top = c.height,
+        bottom = -1
+      for (let y = 0; y < c.height; y++)
+        for (let x = 0; x < c.width; x++)
+          if (data[(y * c.width + x) * 4 + 3] > 10) {
+            top = Math.min(top, y)
+            bottom = Math.max(bottom, y)
+          }
+      return { top, bottom, height: bottom - top + 1 }
+    })
+
+  await expect.poll(async () => (await bounds()).height).toBeGreaterThan(50)
+  const plain = await bounds()
+  const shift = page.getByLabel('Сдвиг базовой линии', { exact: true })
+  await expect(shift).toHaveValue('0')
+
+  await shift.fill('30')
+  await shift.press('Enter')
+  await expect(shift).toHaveValue('30')
+  await expect.poll(async () => (await bounds()).top).toBeLessThanOrEqual(plain.top - 25)
+  await expect.poll(async () => (await bounds()).bottom).toBeLessThanOrEqual(plain.bottom - 25)
+
+  await shift.fill('-20')
+  await shift.press('Enter')
+  await expect(shift).toHaveValue('-20')
+  await expect.poll(async () => (await bounds()).top).toBeGreaterThanOrEqual(plain.top + 15)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(shift).toHaveValue('30')
+  await expect.poll(async () => (await bounds()).top).toBeLessThanOrEqual(plain.top - 25)
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  expect(flatten(parsed.children || []).find((l) => l.text)?.text?.style?.baselineShift).toBe(30)
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  expect(flatten(stripped.children || []).find((l) => l.text)?.text?.style?.baselineShift).toBe(30)
+
+  await open(page, 'baseline-shift-native-reimport.psd', Buffer.from(writePsd(stripped)))
+  await page.locator('.layer-row').filter({ hasText: 'Shifted' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('O')
+  await expect(shift).toHaveValue('30')
+})
+
+test('external PSD baseline shift uses Type matrix scale but not character vertical scale', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const bytes = Buffer.from(
+    writePsd({
+      width: 520,
+      height: 280,
+      children: [
+        {
+          name: 'External shift',
+          text: {
+            text: 'Aa',
+            transform: [2, 0, 0, 2, 40, 170],
+            shapeType: 'point',
+            pointBase: [0, 0],
+            orientation: 'horizontal',
+            antiAlias: 'sharp',
+            style: {
+              font: { name: 'Manrope' },
+              fontSize: 32,
+              horizontalScale: 1.5,
+              verticalScale: 1.5,
+              fillColor: { r: 0, g: 0, b: 0 },
+              leading: 38.4,
+              autoLeading: false,
+              tracking: 0,
+              baselineShift: 16,
+            },
+            paragraphStyle: { justification: 'left', autoHyphenate: false },
+          },
+        },
+      ],
+    }),
+  )
+  await open(page, 'external-baseline-shift-scale.psd', bytes)
+  await page.locator('.layer-row').filter({ hasText: 'External shift' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Aa')
+  // 32 × matrix 2 × character scale 1.5 = 96, while the absolute PSD shift
+  // is scaled only by the Type matrix: 16 × 2 = 32 (not 48).
+  await expect(page.getByLabel('Размер', { exact: true })).toHaveValue('96')
+  await expect(page.getByLabel('Сдвиг базовой линии', { exact: true })).toHaveValue('32')
+})
+
 test('mask/style offscreens and explicit rasterization retain point text beyond its obsolete rectangle', async ({
   page,
 }) => {

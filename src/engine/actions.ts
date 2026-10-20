@@ -219,6 +219,7 @@ export function runAction(
           'italic',
           'textUnderline',
           'textStrikethrough',
+          'textBaselineShift',
           'textAlign',
           'lineHeight',
           'letterSpacing',

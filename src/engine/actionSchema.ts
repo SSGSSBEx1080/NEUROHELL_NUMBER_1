@@ -21,6 +21,7 @@ export type ActionProperties = Partial<
     | 'italic'
     | 'textUnderline'
     | 'textStrikethrough'
+    | 'textBaselineShift'
     | 'textAlign'
     | 'lineHeight'
     | 'letterSpacing'
@@ -73,6 +74,7 @@ const numeric: Record<string, [number, number]> = {
   fontWeight: [100, 900],
   lineHeight: [0.5, 4],
   letterSpacing: [-30, 100],
+  textBaselineShift: [-1000, 1000],
   textScaleX: [0.01, 100],
   sides: [3, 64],
   starRatio: [0.02, 0.98],

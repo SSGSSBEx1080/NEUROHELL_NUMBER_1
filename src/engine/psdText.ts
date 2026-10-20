@@ -1,7 +1,7 @@
 import type { LayerTextData, TextStyle } from 'ag-psd'
 import type { Layer } from '../types'
 import { nativeFontStyle, resolveNativeFont } from './fonts'
-import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
+import { getTextGeometry, clearTextGeometryCache, textBaselineShiftPx } from './textGeometry'
 import { getTextLayout, textFont } from './textLayout'
 import { layerPoint } from './shapeGeometry'
 import { homography, validQuad } from './projection'
@@ -19,7 +19,8 @@ export function affineText(layer: Layer) {
 /** Native point text is NOT a paragraph box. Its transform origin is an alphabetic baseline. */
 export function exportNativeText(layer: Layer): LayerTextData {
   const geometry = getTextGeometry(layer),
-    layout = layer.textFrame ? getTextLayout(layer) : undefined
+    layout = layer.textFrame ? getTextLayout(layer) : undefined,
+    baselineShift = textBaselineShiftPx(layer)
   const size = geometry.fontSize,
     pad = Math.min(
       layer.textFrame?.padding || 0,
@@ -75,6 +76,7 @@ export function exportNativeText(layer: Layer): LayerTextData {
       tracking: ((layer.letterSpacing || 0) / size) * 1000,
       ...(layer.textUnderline ? { underline: true } : {}),
       ...(layer.textStrikethrough ? { strikethrough: true } : {}),
+      ...(baselineShift !== 0 ? { baselineShift } : {}),
     },
     paragraphStyle: { justification: layer.textAlign || 'left', autoHyphenate: false },
     ...(layout && !layout.overflow
@@ -121,7 +123,6 @@ export async function importNativeText(
     text.orientation === 'vertical' ||
     (text.warp?.style && text.warp.style !== 'none') ||
     text.textPath?.data.type === 0 ||
-    style.baselineShift ||
     style.fillFlag === false ||
     style.strokeFlag ||
     t.length !== 6 ||
@@ -140,6 +141,12 @@ export async function importNativeText(
   const size = (style.fontSize || 48) * Math.abs(sy) * vertical,
     horizontal = ((style.horizontalScale || 1) * sx) / (Math.abs(sy) * vertical)
   if (size < 4 || size > 1000 || horizontal < 0.01 || horizontal > 100) return
+  const rawBaselineShift = style.baselineShift ?? 0
+  if (typeof rawBaselineShift !== 'number' || !Number.isFinite(rawBaselineShift)) return
+  // PSD stores this as an absolute Type-object distance: the layer matrix
+  // scales it, but character VerticalScale does not (16 stays 16 at 150%).
+  const baselineShift = rawBaselineShift * Math.abs(sy)
+  if (Math.abs(baselineShift) > 1000) return
   const color = style.fillColor
   if (color && !('r' in color)) return
   const align =
@@ -175,6 +182,7 @@ export async function importNativeText(
     italic: style.fauxItalic || font.italic,
     textUnderline: style.underline === true ? true : undefined,
     textStrikethrough: style.strikethrough === true ? true : undefined,
+    textBaselineShift: baselineShift !== 0 ? baselineShift : undefined,
     fontSize: size,
     textScaleX: horizontal,
     textAlign: align as Layer['textAlign'],

@@ -712,6 +712,24 @@ export function PropertiesPanel({
                         onChange={(lineHeight) => patch({ lineHeight }, '', true)}
                         onCommit={finish}
                       />
+                      <Field
+                        label="Сдвиг базовой линии"
+                        value={layer.textBaselineShift || 0}
+                        min={-1000}
+                        max={1000}
+                        step={1}
+                        suffix="px"
+                        onChange={(textBaselineShift) =>
+                          patch({ textBaselineShift: textBaselineShift || undefined }, '', true)
+                        }
+                        onCommit={finish}
+                      />
+                      {!!layer.textBaselineShift && (
+                        <p className="panel-note">
+                          Положительное значение поднимает весь текст слоя, отрицательное опускает.
+                          Сдвиг отдельных фрагментов внутри строки пока не поддерживается.
+                        </p>
+                      )}
                       <Select
                         aria-label="Сглаживание текста"
                         value={layer.textAntiAlias || 'smooth'}

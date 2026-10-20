@@ -284,6 +284,10 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       italic: l.italic === true,
       textUnderline: l.kind === 'text' && l.textUnderline === true ? true : undefined,
       textStrikethrough: l.kind === 'text' && l.textStrikethrough === true ? true : undefined,
+      textBaselineShift:
+        l.kind === 'text' && finite(l.textBaselineShift, -1000, 1000, 0) !== 0
+          ? finite(l.textBaselineShift, -1000, 1000, 0)
+          : undefined,
       textAlign: ['left', 'center', 'right'].includes(String(l.textAlign))
         ? (l.textAlign as Layer['textAlign'])
         : 'left',

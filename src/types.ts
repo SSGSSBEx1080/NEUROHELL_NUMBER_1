@@ -101,6 +101,8 @@ export interface Layer {
   textUnderline?: boolean
   /** Undefined keeps legacy undecorated text objects unchanged. */
   textStrikethrough?: boolean
+  /** Uniform baseline shift in layer pixels; positive raises glyphs. Undefined means zero. */
+  textBaselineShift?: number
   textAlign?: 'left' | 'center' | 'right'
   lineHeight?: number
   letterSpacing?: number

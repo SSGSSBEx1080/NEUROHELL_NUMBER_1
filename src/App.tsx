@@ -962,6 +962,8 @@ export default function App() {
           fontSize: l.fontSize && scale ? l.fontSize * sy : l.fontSize,
           textScaleX: scale && l.kind === 'text' ? ((l.textScaleX || 1) * sx) / sy : l.textScaleX,
           letterSpacing: l.letterSpacing && scale ? l.letterSpacing * sy : l.letterSpacing,
+          textBaselineShift:
+            l.textBaselineShift && scale ? l.textBaselineShift * sy : l.textBaselineShift,
           mask: l.mask
             ? {
                 ...l.mask,

@@ -1234,6 +1234,14 @@ export function CanvasStage({
                   ),
                 ),
                 letterSpacing: ((d.layer.letterSpacing || 0) * height) / d.layer.height,
+                ...(d.layer.textBaselineShift
+                  ? {
+                      textBaselineShift: Math.max(
+                        -1000,
+                        Math.min(1000, (d.layer.textBaselineShift * height) / d.layer.height),
+                      ),
+                    }
+                  : {}),
               }
             : {}),
         },

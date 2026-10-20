@@ -104,6 +104,9 @@ export function resizePointText(
     fontSize: size,
     textScaleX: Math.max(0.01, Math.min(100, ((layer.textScaleX || 1) * sx) / actualY)),
     letterSpacing: Math.max(-30, Math.min(100, (layer.letterSpacing || 0) * actualY)),
+    textBaselineShift: layer.textBaselineShift
+      ? Math.max(-1000, Math.min(1000, layer.textBaselineShift * actualY))
+      : undefined,
   }
   // Canvas rounds some glyph ink metrics. Correct X using the actual newly measured result.
   const measured = localBounds(next, true)
@@ -123,6 +126,7 @@ export function resizePointText(
     fontSize: next.fontSize,
     textScaleX: next.textScaleX,
     letterSpacing: next.letterSpacing,
+    textBaselineShift: next.textBaselineShift,
     width: next.width,
     height: next.height,
     x: next.x + destination.x - origin.x,
