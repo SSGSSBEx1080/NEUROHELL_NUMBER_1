@@ -12,6 +12,8 @@ export interface RepairRequest {
   search: number
   expand: number
   feather: number
+  /** Deterministic candidate seed; changing it asks for another texture variant. */
+  seed?: number
 }
 export interface RepairResult {
   pixels: Uint8ClampedArray
@@ -100,7 +102,7 @@ export function repairPixels(
     throw new Error('Восстановление: фрагмент до 1 Мп; некорректные размеры или маска')
   if (
     !['auto', 'smooth', 'texture'].includes(mode) ||
-    [request.radius, request.search, request.expand, request.feather].some(
+    [request.radius, request.search, request.expand, request.feather, request.seed ?? 777].some(
       (n) => !Number.isFinite(n),
     )
   )
@@ -204,7 +206,7 @@ export function repairPixels(
         'Нет чистого участка для фактуры. Уменьши размер заплатки или расширь область образцов.',
       )
     const mapping = new Int32Array(count).fill(-1)
-    let random = 777
+    let random = Math.round(request.seed ?? 777) >>> 0 || 777
     const rand = () => {
       random = (Math.imul(random, 1664525) + 1013904223) >>> 0
       return random / 4294967296
@@ -302,6 +304,18 @@ export function repairPixels(
       const sx = best % w,
         sy = Math.floor(best / w),
         changed: number[] = []
+      // Align the donor patch to the local mean of its known overlap. This keeps
+      // the donor's texture but removes the visible brightness step when the best
+      // matching material comes from a differently lit part of the fragment.
+      const correction = [0, 0, 0]
+      if (samples.length) {
+        for (const sample of samples) {
+          const from = ((sy + sample.dy) * w + sx + sample.dx) * 4,
+            at = sample.p * 4
+          for (let c = 0; c < 3; c++) correction[c] += output[at + c] - pixels[from + c]
+        }
+        for (let c = 0; c < 3; c++) correction[c] = clamp(correction[c] / samples.length, -32, 32)
+      }
       for (let dy = -r; dy <= r; dy++)
         for (let dx = -r; dx <= r; dx++) {
           const x = tx + dx,
@@ -309,7 +323,9 @@ export function repairPixels(
             p = y * w + x
           if (x < 0 || y < 0 || x >= w || y >= h || !missing[p]) continue
           const source = (sy + dy) * w + sx + dx
-          for (let c = 0; c < 4; c++) output[p * 4 + c] = pixels[source * 4 + c]
+          for (let c = 0; c < 3; c++)
+            output[p * 4 + c] = clamp(pixels[source * 4 + c] + correction[c], 0, 255)
+          output[p * 4 + 3] = pixels[source * 4 + 3]
           missing[p] = 0
           mapping[p] = source
           frontier.delete(p)

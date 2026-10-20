@@ -2710,6 +2710,28 @@ export default function App() {
                     : 'Shift: + · Alt: − · Shift+Alt: пересечение · Ctrl+D: снять'}
                 </span>
               </>
+            ) : tool === 'repair-brush' ? (
+              <>
+                <SliderField
+                  label="Размер"
+                  value={settings.brushSize}
+                  min={1}
+                  max={500}
+                  suffix="px"
+                  onChange={(brushSize) => setSettings({ brushSize })}
+                />
+                <SliderField
+                  label="Жёсткость"
+                  value={settings.brushHardness ?? 100}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushHardness) => setSettings({ brushHardness })}
+                />
+                <span className="tool-instruction">
+                  Закрась объект целиком и отпусти — сначала покажем результат · Alt убирает лишнее
+                </span>
+              </>
             ) : tool === 'pen' ? (
               <label className="checkbox-row">
                 <input

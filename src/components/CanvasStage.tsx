@@ -113,6 +113,14 @@ type Drag =
       beforeSelection: Selection | null
     }
   | {
+      type: 'repair-brush'
+      canvas: HTMLCanvasElement
+      last: Point
+      stamp: HTMLCanvasElement
+      beforeSelection: Selection | null
+      bbox: { left: number; top: number; right: number; bottom: number }
+    }
+  | {
       type: 'move' | 'resize' | 'rotate' | 'distort'
       start: Point
       layer: Layer
@@ -194,6 +202,7 @@ export function CanvasStage({
   const viewport = useRef<HTMLDivElement>(null)
   const artboard = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
+  const repairMask = useRef<HTMLCanvasElement>(null)
   const drag = useRef<Drag | null>(null)
   const activePointer = useRef<number | null>(null)
   const selectionGesture = useRef<{ base: Selection | null; mode: SelectionMode } | null>(null)
@@ -521,6 +530,22 @@ export function CanvasStage({
     for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4]
     return rasterSelection(alpha, c.width, c.height)
   }
+  /** Convert only the painted repair-mask bounds, never the whole document. */
+  const repairSelectionFromMask = (
+    c: HTMLCanvasElement,
+    bbox: { left: number; top: number; right: number; bottom: number },
+  ): Selection | null => {
+    const left = Math.max(0, Math.floor(bbox.left)),
+      top = Math.max(0, Math.floor(bbox.top)),
+      width = Math.min(c.width - left, Math.ceil(bbox.right) - left),
+      height = Math.min(c.height - top, Math.ceil(bbox.bottom) - top)
+    if (width < 1 || height < 1) return null
+    const rgba = c.getContext('2d')!.getImageData(left, top, width, height).data,
+      alpha = new Uint8ClampedArray(width * height)
+    for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3]
+    const result = rasterSelection(alpha, width, height, left, top)
+    return result.width && result.height ? result : null
+  }
   const finishPolygon = () => {
     const next = polygonSelection(polygon.current, settings.feather || 0)
     finishSelection(next)
@@ -693,6 +718,31 @@ export function CanvasStage({
       }
       strokeStamps(x, p, p, stamp, settings, false)
       setSelection(quickSelection(buffer), true)
+      return
+    }
+    if (tool === 'repair-brush') {
+      const buffer = repairMask.current
+      if (!buffer) return
+      const x = buffer.getContext('2d')!
+      x.clearRect(0, 0, buffer.width, buffer.height)
+      const stamp = brushStamp(settings.brushSize, '#b7a2ff', settings.brushHardness ?? 100),
+        radius = stamp.width / 2 + 1,
+        d: Extract<Drag, { type: 'repair-brush' }> = {
+          type: 'repair-brush',
+          canvas: buffer,
+          last: p,
+          stamp,
+          beforeSelection: selection,
+          bbox: {
+            left: p.x - radius,
+            top: p.y - radius,
+            right: p.x + radius,
+            bottom: p.y + radius,
+          },
+        }
+      drag.current = d
+      setSelection(null, true)
+      strokeStamps(x, p, p, stamp, { ...settings, brushOpacity: 100 }, e.altKey)
       return
     }
     if (tool === 'magic-wand') {
@@ -971,7 +1021,7 @@ export function CanvasStage({
   const pointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = pointFrom(e)
     if (!drag.current && pathController.move(p, e)) return
-    if (tool === 'brush' || tool === 'eraser' || tool === 'clone') {
+    if (tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'repair-brush') {
       // Cursor state at frame rate, not per pointer event: fast strokes must
       // not re-render the whole stage for every hardware sample.
       cursorPoint.current = p
@@ -1011,6 +1061,27 @@ export function CanvasStage({
       paintScheduler.current.request(() => {
         if (drag.current === d) setSelection(quickSelection(d.canvas), true)
       })
+      return
+    }
+    if (d.type === 'repair-brush') {
+      const events = e.nativeEvent.getCoalescedEvents?.() || [],
+        radius = d.stamp.width / 2 + 1
+      for (const event of events.length ? events : [e.nativeEvent]) {
+        const point = pointFrom(event)
+        strokeStamps(
+          d.canvas.getContext('2d')!,
+          d.last,
+          point,
+          d.stamp,
+          { ...settings, brushOpacity: 100 },
+          e.altKey,
+        )
+        d.last = point
+        d.bbox.left = Math.min(d.bbox.left, point.x - radius)
+        d.bbox.top = Math.min(d.bbox.top, point.y - radius)
+        d.bbox.right = Math.max(d.bbox.right, point.x + radius)
+        d.bbox.bottom = Math.max(d.bbox.bottom, point.y + radius)
+      }
       return
     }
     if (d.type === 'paint') {
@@ -1348,6 +1419,18 @@ export function CanvasStage({
       setSelection(quickSelection(d.canvas), false, 'Рисование быстрой маски')
       return
     }
+    if (d.type === 'repair-brush') {
+      const result = repairSelectionFromMask(d.canvas, d.bbox)
+      d.canvas.getContext('2d')!.clearRect(0, 0, d.canvas.width, d.canvas.height)
+      if (!result) {
+        setSelection(d.beforeSelection, true)
+        onToast('Закрась объект, который нужно убрать')
+        return
+      }
+      setSelection(result, false, 'Область удаления')
+      onRepair(result)
+      return
+    }
     if (d.type === 'lasso') {
       const selected = polygonSelection(d.points, settings.feather || 0)
       finishSelection(selected)
@@ -1511,6 +1594,10 @@ export function CanvasStage({
       selectionGesture.current = null
     }
     if (d?.type === 'quick-mask') setSelection(d.beforeSelection, true)
+    if (d?.type === 'repair-brush') {
+      d.canvas.getContext('2d')!.clearRect(0, 0, d.canvas.width, d.canvas.height)
+      setSelection(d.beforeSelection, true)
+    }
     if (d && 'before' in d) editor.change(() => d.before, '', true)
     if (d && 'duplicatedFrom' in d && d.duplicatedFrom) onSelect(d.duplicatedFrom)
     else if (d && 'before' in d && !d.before.layers.some((l) => l.id === selectedId))
@@ -1645,6 +1732,16 @@ export function CanvasStage({
         />
         {settings.quickMask && (
           <QuickMaskOverlay selection={selection} width={doc.width} height={doc.height} />
+        )}
+        {tool === 'repair-brush' && (
+          <canvas
+            ref={repairMask}
+            className="repair-mask-overlay"
+            data-testid="repair-mask-overlay"
+            aria-label="Закрашенная область удаления"
+            width={doc.width}
+            height={doc.height}
+          />
         )}
         <svg
           className="canvas-overlay"
@@ -1856,54 +1953,58 @@ export function CanvasStage({
                 ))}
             </>
           )}
-          {cursor && (tool === 'brush' || tool === 'eraser' || tool === 'clone') && (
-            <>
-              {altSampling && tool === 'brush' ? (
-                <g stroke="#fffd" strokeWidth={1 / scale}>
-                  <circle
-                    cx={cursor.x}
-                    cy={cursor.y}
-                    r={7 / scale}
-                    fill="none"
-                    stroke="#0009"
-                    strokeWidth={3 / scale}
-                  />
-                  <circle cx={cursor.x} cy={cursor.y} r={7 / scale} fill="none" />
-                  <line
-                    x1={cursor.x - 11 / scale}
-                    y1={cursor.y}
-                    x2={cursor.x + 11 / scale}
-                    y2={cursor.y}
-                  />
-                  <line
-                    x1={cursor.x}
-                    y1={cursor.y - 11 / scale}
-                    x2={cursor.x}
-                    y2={cursor.y + 11 / scale}
-                  />
-                </g>
-              ) : (
-                <>
-                  <circle
-                    cx={cursor.x}
-                    cy={cursor.y}
-                    r={settings.brushSize / 2}
-                    fill="none"
-                    stroke="#0009"
-                    strokeWidth={3 / scale}
-                  />
-                  <circle
-                    cx={cursor.x}
-                    cy={cursor.y}
-                    r={settings.brushSize / 2}
-                    fill="none"
-                    stroke="#fffd"
-                    strokeWidth={1 / scale}
-                  />
-                </>
-              )}
-            </>
-          )}
+          {cursor &&
+            (tool === 'brush' ||
+              tool === 'eraser' ||
+              tool === 'clone' ||
+              tool === 'repair-brush') && (
+              <>
+                {altSampling && tool === 'brush' ? (
+                  <g stroke="#fffd" strokeWidth={1 / scale}>
+                    <circle
+                      cx={cursor.x}
+                      cy={cursor.y}
+                      r={7 / scale}
+                      fill="none"
+                      stroke="#0009"
+                      strokeWidth={3 / scale}
+                    />
+                    <circle cx={cursor.x} cy={cursor.y} r={7 / scale} fill="none" />
+                    <line
+                      x1={cursor.x - 11 / scale}
+                      y1={cursor.y}
+                      x2={cursor.x + 11 / scale}
+                      y2={cursor.y}
+                    />
+                    <line
+                      x1={cursor.x}
+                      y1={cursor.y - 11 / scale}
+                      x2={cursor.x}
+                      y2={cursor.y + 11 / scale}
+                    />
+                  </g>
+                ) : (
+                  <>
+                    <circle
+                      cx={cursor.x}
+                      cy={cursor.y}
+                      r={settings.brushSize / 2}
+                      fill="none"
+                      stroke="#0009"
+                      strokeWidth={3 / scale}
+                    />
+                    <circle
+                      cx={cursor.x}
+                      cy={cursor.y}
+                      r={settings.brushSize / 2}
+                      fill="none"
+                      stroke="#fffd"
+                      strokeWidth={1 / scale}
+                    />
+                  </>
+                )}
+              </>
+            )}
         </svg>
       </div>
       {settings.quickMask ? (

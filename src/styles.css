@@ -4343,6 +4343,37 @@ kbd {
   accent-color: var(--accent);
   min-width: 50px;
 }
+.repair-view-buttons {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 12px;
+}
+.repair-view-buttons button {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.repair-view-buttons button.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: #b8a8ff1f;
+}
+.repair-view-buttons button:disabled {
+  opacity: 0.45;
+}
+.repair-controls .slider-number-field {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.repair-controls .slider-number-label {
+  flex: 1 1 100%;
+}
+.repair-controls .slider-number-field > .number-field {
+  width: 72px;
+}
 .repair-controls {
   display: flex;
   flex-direction: column;
@@ -5171,6 +5202,15 @@ canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+.repair-mask-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+}
+.canvas-viewport.tool-repair-brush {
+  cursor: crosshair;
 }
 .quick-mask-hint {
   position: absolute;

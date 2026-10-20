@@ -29,6 +29,7 @@ export type Tool =
   | 'clone'
   | 'bucket'
   | 'gradient'
+  | 'repair-brush'
   | 'repair'
   | 'repair-box'
 export type LayerKind = 'image' | 'text' | 'shape' | 'group' | 'adjustment'

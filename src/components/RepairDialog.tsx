@@ -1,17 +1,25 @@
 import { repairPlacement } from '../engine/repairPlacement'
 import { RepairPreview } from '../engine/repairPreview'
 import { useEffect, useRef, useState } from 'react'
-import { Bandage, LoaderCircle, Shield, SplitSquareHorizontal } from 'lucide-react'
+import {
+  Bandage,
+  LoaderCircle,
+  Paintbrush,
+  RefreshCw,
+  Shield,
+  SplitSquareHorizontal,
+} from 'lucide-react'
 import type { EditorDocument, Layer, Rect, Selection } from '../types'
 import { makeLayer } from '../engine/document'
 import { prepareDocument, renderDocument, bitmapLayer } from '../engine/render'
 import { selectionMask } from '../engine/selection'
 import type { RepairMode, RepairRequest, RepairResult } from '../engine/repair'
 import { runRepair } from '../engine/repairJob'
-import { Field, Modal, Select } from './ui'
+import { Modal, Select, SliderField } from './ui'
 interface Source extends Rect {
   pixels: Uint8ClampedArray
   mask: Uint8Array
+  originalMask: Uint8Array
   donors: Uint8Array
 }
 export function RepairDialog({
@@ -35,9 +43,12 @@ export function RepairDialog({
     [expand, setExpand] = useState(2),
     [feather, setFeather] = useState(1),
     [search, setSearch] = useState(96),
-    [split, setSplit] = useState(40),
+    [split, setSplit] = useState(0),
     [progress, setProgress] = useState(0),
     [protect, setProtect] = useState(false),
+    [editTarget, setEditTarget] = useState(false),
+    [editBrush, setEditBrush] = useState(30),
+    [seed, setSeed] = useState(777),
     [revision, setRevision] = useState(0)
   const canvas = useRef<HTMLCanvasElement>(null),
     controller = useRef<AbortController | null>(null),
@@ -99,6 +110,7 @@ export function RepairDialog({
           height,
           pixels: ctx.getImageData(0, 0, width, height).data,
           mask,
+          originalMask: mask.slice(),
           donors: new Uint8Array(mask.length).fill(255),
         }
         c.width = c.height = 1
@@ -125,7 +137,19 @@ export function RepairDialog({
     setError('')
     setProgress(0)
     const timer = setTimeout(() => {
-      const request: RepairRequest = { ...source, mode, radius, expand, feather, search }
+      const request: RepairRequest = {
+        width: source.width,
+        height: source.height,
+        pixels: source.pixels,
+        mask: source.mask,
+        donors: source.donors,
+        mode,
+        radius,
+        expand,
+        feather,
+        search,
+        seed,
+      }
       void runRepair(request, abort.signal, setProgress)
         .then((value) => {
           if (!abort.signal.aborted) {
@@ -144,7 +168,7 @@ export function RepairDialog({
       clearTimeout(timer)
       abort.abort()
     }
-  }, [source, mode, radius, expand, feather, search, revision])
+  }, [source, mode, radius, expand, feather, search, seed, revision])
   const draw = () => {
     if (!canvas.current) return
     if (!source) {
@@ -157,17 +181,22 @@ export function RepairDialog({
       preview.current?.dispose()
       preview.current = new RepairPreview(source)
     }
-    preview.current.draw(canvas.current, result, split, protect)
+    preview.current.draw(
+      canvas.current,
+      result,
+      split,
+      editTarget ? 'target' : protect ? 'donors' : 'none',
+    )
   }
   const latestDraw = useRef(draw)
   latestDraw.current = draw
-  useEffect(draw, [source, result, split, protect, revision])
+  useEffect(draw, [source, result, split, protect, editTarget, revision])
   const paintDonor = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!source || !drawing.current || !protect) return
+    if (!source || !drawing.current || (!protect && !editTarget)) return
     const bounds = e.currentTarget.getBoundingClientRect(),
       x = ((e.clientX - bounds.left) * source.width) / bounds.width,
       y = ((e.clientY - bounds.top) * source.height) / bounds.height,
-      r = Math.ceil((15 * source.width) / bounds.width)
+      r = Math.max(1, Math.ceil(((editBrush / 2) * source.width) / bounds.width))
     const from = lastDonor.current || { x, y },
       steps = Math.min(
         512,
@@ -186,8 +215,11 @@ export function RepairDialog({
           xx <= Math.min(source.width - 1, Math.ceil(cx + r));
           xx++
         )
-          if ((xx - cx) ** 2 + (yy - cy) ** 2 <= r * r)
-            source.donors[yy * source.width + xx] = e.shiftKey ? 255 : 0
+          if ((xx - cx) ** 2 + (yy - cy) ** 2 <= r * r) {
+            const index = yy * source.width + xx
+            if (editTarget) source.mask[index] = e.altKey ? 0 : 255
+            else source.donors[index] = e.shiftKey ? 255 : 0
+          }
       preview.current?.invalidate(cx - r - 1, cy - r - 1, r * 2 + 3, r * 2 + 3)
     }
     lastDonor.current = { x, y }
@@ -233,16 +265,28 @@ export function RepairDialog({
       <div className="repair-layout">
         <section className="repair-view">
           <div className="repair-view-labels">
-            <span>Оригинал</span>
-            <span>Результат · новый слой</span>
+            <span>
+              {editTarget
+                ? 'Область удаления'
+                : protect
+                  ? 'Зона образцов'
+                  : split <= 0
+                    ? 'Результат'
+                    : split >= 100
+                      ? 'Оригинал'
+                      : 'Оригинал / результат'}
+            </span>
+            <span>Отдельный слой · исходник не меняется</span>
           </div>
-          <div className={`repair-canvas-wrap checkerboard ${protect ? 'painting-donors' : ''}`}>
+          <div
+            className={`repair-canvas-wrap checkerboard ${protect || editTarget ? 'painting-donors' : ''}`}
+          >
             <canvas
               ref={canvas}
               data-testid="repair-preview"
               aria-label="Предпросмотр восстановления"
               onPointerDown={(e) => {
-                if (!protect || !source) return
+                if ((!protect && !editTarget) || !source) return
                 e.currentTarget.setPointerCapture(e.pointerId)
                 drawing.current = true
                 lastDonor.current = null
@@ -278,9 +322,41 @@ export function RepairDialog({
               max="100"
               value={split}
               onChange={(e) => setSplit(+e.target.value)}
-              disabled={protect}
+              disabled={protect || editTarget}
             />
           </label>
+          <div className="repair-view-buttons" role="group" aria-label="Режим предпросмотра">
+            <button
+              className={split === 100 ? 'active' : ''}
+              aria-pressed={split === 100}
+              disabled={protect || editTarget}
+              onClick={() => setSplit(100)}
+            >
+              До
+            </button>
+            <button
+              className={split === 50 ? 'active' : ''}
+              aria-pressed={split === 50}
+              disabled={protect || editTarget}
+              onClick={() => setSplit(50)}
+            >
+              Сравнение
+            </button>
+            <button
+              className={split === 0 ? 'active' : ''}
+              aria-pressed={split === 0}
+              disabled={protect || editTarget}
+              onClick={() => setSplit(0)}
+            >
+              После
+            </button>
+          </div>
+          {editTarget && (
+            <p className="panel-note">
+              Фиолетовым отмечено всё, что будет убрано. Докрась пропущенные края объекта; Alt+кисть
+              убирает лишнее. Результат пересчитается после отпускания мыши.
+            </p>
+          )}
           {protect && (
             <p className="panel-note">
               Зелёный — разрешённые образцы. Закрась красным то, что нельзя копировать. Shift
@@ -301,7 +377,7 @@ export function RepairDialog({
               <option value="texture">Повторяющаяся текстура</option>
             </Select>
           </label>
-          <Field
+          <SliderField
             label="Радиус заплатки"
             value={radius}
             min={2}
@@ -309,7 +385,7 @@ export function RepairDialog({
             suffix="px"
             onChange={setRadius}
           />
-          <Field
+          <SliderField
             label="Поиск образцов"
             value={search}
             min={12}
@@ -317,7 +393,7 @@ export function RepairDialog({
             suffix="px"
             onChange={setSearch}
           />
-          <Field
+          <SliderField
             label="Расширить область"
             value={expand}
             min={0}
@@ -325,7 +401,7 @@ export function RepairDialog({
             suffix="px"
             onChange={setExpand}
           />
-          <Field
+          <SliderField
             label="Смягчить край"
             value={feather}
             min={0}
@@ -334,12 +410,59 @@ export function RepairDialog({
             onChange={setFeather}
           />
           <button
+            className={`action-button ${editTarget ? 'primary-action' : ''}`}
+            aria-pressed={editTarget}
+            onClick={() => {
+              setEditTarget((v) => !v)
+              setProtect(false)
+            }}
+          >
+            <Paintbrush size={16} />
+            Уточнить область
+          </button>
+          <button
             className={`action-button ${protect ? 'primary-action' : ''}`}
             aria-pressed={protect}
-            onClick={() => setProtect((v) => !v)}
+            onClick={() => {
+              setProtect((v) => !v)
+              setEditTarget(false)
+            }}
           >
             <Shield size={16} />
             Зона образцов
+          </button>
+          {(editTarget || protect) && (
+            <SliderField
+              label="Кисть правки"
+              value={editBrush}
+              min={4}
+              max={80}
+              suffix="px"
+              onChange={setEditBrush}
+            />
+          )}
+          <button
+            className="text-button"
+            disabled={!result || working || result.mode === 'smooth'}
+            title={
+              result?.mode === 'smooth'
+                ? 'Для гладкого фона вариант только один'
+                : 'Пересобрать текстуру из других образцов'
+            }
+            onClick={() => setSeed((value) => value + 1)}
+          >
+            <RefreshCw size={13} /> Другой вариант текстуры
+          </button>
+          <button
+            className="text-button"
+            onClick={() => {
+              if (!source) return
+              source.mask.set(source.originalMask)
+              preview.current?.invalidate()
+              setRevision((n) => n + 1)
+            }}
+          >
+            Сбросить правки области
           </button>
           <button
             className="text-button"

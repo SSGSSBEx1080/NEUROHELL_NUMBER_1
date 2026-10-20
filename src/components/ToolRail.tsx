@@ -45,7 +45,8 @@ const groups = [
   [{ id: 'crop', name: 'Кадрирование', icon: Crop, key: 'C' }],
   [{ id: 'brush', name: 'Кисть', icon: Paintbrush, key: 'B' }],
   [
-    { id: 'repair', name: 'Восстановление области', icon: Bandage, key: 'J' },
+    { id: 'repair-brush', name: 'Удаление кистью', icon: Bandage, key: 'J' },
+    { id: 'repair', name: 'Восстановление лассо', icon: Lasso, key: 'J' },
     { id: 'repair-box', name: 'Восстановление прямоугольника', icon: SquareDashed, key: 'J' },
   ],
   [{ id: 'clone', name: 'Штамп', icon: Stamp, key: 'S' }],
