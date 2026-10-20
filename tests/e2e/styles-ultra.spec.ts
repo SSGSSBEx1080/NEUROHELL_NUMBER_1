@@ -189,6 +189,74 @@ test('gradient-filled stroke and radial gradient overlay render real shapes', as
     .toBe(true)
 })
 
+test('pattern overlay and pattern-filled stroke render tiles and export native Patt resources', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  const background = [36, 31, 56, 255] // #241f38
+  const foreground = [182, 163, 255, 255] // #b6a3ff
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Узор', exact: true }).click()
+  await expect(page.getByTestId('pattern-definition-editor')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Масштаб узора' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // The default 32 px checker at 50% has 8 px quadrants in layer space.
+  await expect.poll(async () => await pixel(page, 72, 54)).toEqual(foreground)
+  await expect.poll(async () => await pixel(page, 80, 54)).toEqual(background)
+
+  // A +8 px phase shifts the scaled tile by exactly one quadrant.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Узор', exact: true }).click()
+  await page.getByRole('spinbutton', { name: 'Фаза узора X' }).fill('8')
+  await page.getByRole('spinbutton', { name: 'Фаза узора X' }).press('Enter')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 72, 54)).toEqual(background)
+  await expect.poll(async () => await pixel(page, 80, 54)).toEqual(foreground)
+
+  // An inside stroke gets its own differently coloured checker tile.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Обводка', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('16')
+  await page.locator('.style-controls').getByLabel('Положение обводки').selectOption('inside')
+  await page.getByLabel('Тип заливки обводки').selectOption('pattern')
+  await expect(page.getByTestId('pattern-definition-editor')).toBeVisible()
+  await page.getByLabel('Узор обводки: основной цвет').fill('#00ff00')
+  await page.getByLabel('Узор обводки: цвет фона').fill('#0000ff')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 72, 58)).toEqual([0, 0, 255, 255])
+  await expect.poll(async () => await pixel(page, 84, 58)).toEqual([0, 255, 0, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.patternOverlay)
+  expect(layer?.effects?.patternOverlay?.scale).toBeCloseTo(0.5, 2)
+  expect(layer?.effects?.patternOverlay?.phase).toEqual({ x: 8, y: 0 })
+  expect(layer?.effects?.stroke?.[0].fillType).toBe('pattern')
+  const overlayId = layer?.effects?.patternOverlay?.pattern?.id
+  const strokeId = layer?.effects?.stroke?.[0].pattern?.id
+  expect(overlayId).toBeTruthy()
+  expect(strokeId).toBeTruthy()
+  expect(strokeId).not.toBe(overlayId)
+  expect(parsed.patterns).toHaveLength(2)
+  const overlayTile = parsed.patterns?.find((p) => p.id === overlayId)
+  expect(overlayTile?.bounds).toMatchObject({ w: 32, h: 32 })
+  expect([...(overlayTile?.data.slice(16 * 4, 16 * 4 + 4) || [])]).toEqual(foreground)
+
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.patternOverlay)
+  expect(withoutXmp.patterns).toHaveLength(2)
+  expect(stripped?.effects?.stroke?.[0].pattern?.id).toBe(strokeId)
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

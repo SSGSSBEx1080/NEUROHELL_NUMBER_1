@@ -2539,6 +2539,13 @@ kbd {
   border-radius: 6px;
   margin: 12px 0;
 }
+.pattern-preview {
+  height: 72px;
+  border: 1px solid #493451;
+  border-radius: 6px;
+  margin: 12px 0;
+  background-repeat: repeat;
+}
 .style-open-button {
   margin: 10px 16px;
   width: calc(100% - 32px);

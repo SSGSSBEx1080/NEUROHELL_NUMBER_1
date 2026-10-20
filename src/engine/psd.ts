@@ -11,8 +11,33 @@ import { inspectNativeLayers, type PsdExportReport } from './psdReport'
 import { DEFAULT_ADJUSTMENTS, MAX_STYLE_INSTANCES } from '../types'
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
-import type { Color, Layer as PsdLayer, LayerEffectsInfo, Psd, PixelData } from 'ag-psd'
-import type { BlendIfRanges, BlendMode, EditorDocument, Layer, LayerStyles } from '../types'
+import type {
+  Color,
+  EffectPattern,
+  Layer as PsdLayer,
+  LayerEffectsInfo,
+  PatternInfo,
+  Psd,
+  PixelData,
+} from 'ag-psd'
+import type {
+  BlendIfRanges,
+  BlendMode,
+  EditorDocument,
+  Layer,
+  LayerStyles,
+  PatternDefinition,
+} from '../types'
+import {
+  cleanPatternId,
+  cleanPatternName,
+  collectPatternDefinitions,
+  createImagePatternDefinition,
+  deterministicPatternId,
+  patternContentKey,
+  patternTileCanvasAsync,
+  registerPatternTile,
+} from './patterns'
 import { isBlendIfActive, parseBlendIf } from './blendIf'
 import { makeLayer, newDocument, parseProject, uid } from './document'
 import {
@@ -213,7 +238,109 @@ function gradientToPsd(definition: GradientDefinition): PsdGradient {
     })),
   }
 }
-function importStyles(src: PsdLayer): LayerStyles | undefined {
+function patternDefinitionFromPsd(info: PatternInfo): PatternDefinition | undefined {
+  try {
+    const width = info.bounds?.w || 0,
+      height = info.bounds?.h || 0
+    if (
+      width < 1 ||
+      height < 1 ||
+      width > 2048 ||
+      height > 2048 ||
+      width * height > 4_194_304 ||
+      !info.data ||
+      info.data.length < width * height * 4
+    )
+      return undefined
+    const c = canvas(width, height)
+    c.getContext('2d')!.putImageData(
+      new ImageData(new Uint8ClampedArray(info.data.slice(0, width * height * 4)), width, height),
+      0,
+      0,
+    )
+    const src = c.toDataURL('image/png')
+    cacheImage(src, c)
+    const definition = createImagePatternDefinition({
+      name: info.name,
+      src,
+      width,
+      height,
+      id: info.id,
+      psdX: info.x,
+      psdY: info.y,
+      boundsX: info.bounds.x,
+      boundsY: info.bounds.y,
+    })
+    if (definition) registerPatternTile(definition, c)
+    return definition
+  } catch {
+    return undefined
+  }
+}
+function collectPsdPatternInfos(root: Psd): PatternInfo[] {
+  const byId = new Map<string, PatternInfo>()
+  const add = (info: PatternInfo) => {
+    const id = cleanPatternId(info.id)
+    if (id && !byId.has(id)) byId.set(id, info)
+  }
+  root.patterns?.forEach(add)
+  const walk = (layers?: PsdLayer[]) => {
+    for (const layer of layers || []) {
+      layer.patterns?.forEach(add)
+      walk(layer.children)
+    }
+  }
+  walk(root.children)
+  return [...byId.values()]
+}
+function collectPsdPatternDefinitions(root: Psd): Map<string, PatternDefinition> {
+  const definitions = new Map<string, PatternDefinition>()
+  for (const info of collectPsdPatternInfos(root)) {
+    const definition = patternDefinitionFromPsd(info)
+    if (definition) definitions.set(definition.id, definition)
+  }
+  return definitions
+}
+function resolvePsdPattern(
+  ref: EffectPattern | undefined,
+  definitions: Map<string, PatternDefinition> | undefined,
+  warn?: (message: string) => void,
+): PatternDefinition | undefined {
+  if (!ref) return undefined
+  const id = cleanPatternId(ref.id)
+  const definition = id ? definitions?.get(id) : undefined
+  if (!definition) {
+    warn?.(
+      `Узор «${cleanPatternName(ref.name)}» из PSD не импортирован: в файле нет поддерживаемых пикселей Patt для его идентификатора. Эффект пропущен, остальные слои сохранены.`,
+    )
+    return undefined
+  }
+  return { ...structuredClone(definition), name: cleanPatternName(ref.name, definition.name) }
+}
+function patternInfoFromPixels(
+  definition: PatternDefinition,
+  pixels: PixelData,
+  ref: EffectPattern = { id: definition.id, name: definition.name },
+): PatternInfo {
+  return {
+    name: cleanPatternName(ref.name, definition.name),
+    id: cleanPatternId(ref.id) || definition.id,
+    x: definition.psdX || 0,
+    y: definition.psdY || 0,
+    bounds: {
+      x: definition.boundsX || 0,
+      y: definition.boundsY || 0,
+      w: pixels.width,
+      h: pixels.height,
+    },
+    data: new Uint8Array(pixels.data as ArrayLike<number>),
+  }
+}
+function importStyles(
+  src: PsdLayer,
+  patternDefinitions?: Map<string, PatternDefinition>,
+  warnPattern?: (message: string) => void,
+): LayerStyles | undefined {
   const f = src.effects,
     s = defaultStyles()
   s.fillOpacity = src.fillOpacity ?? 1
@@ -221,19 +348,29 @@ function importStyles(src: PsdLayer): LayerStyles | undefined {
     // PSD effect scale multiplies every size; bake it into editable parameters once.
     const scale = Math.min(10, Math.max(0.01, f.scale ?? 1))
     const strokes = (f.stroke || [])
-      .filter((v) => v.enabled !== false && v.fillType !== 'pattern')
+      .filter((v) => v.enabled !== false)
       .slice(0, MAX_STYLE_INSTANCES)
       .flatMap((stroke) => {
         const gradient =
           stroke.fillType === 'gradient' ? gradientFromPsd(stroke.gradient) : undefined
         if (stroke.fillType === 'gradient' && !gradient) return []
+        const pattern =
+          stroke.fillType === 'pattern'
+            ? resolvePsdPattern(stroke.pattern, patternDefinitions, warnPattern)
+            : undefined
+        if (stroke.fillType === 'pattern' && !pattern) return []
         return [
           {
             enabled: true,
             size: Math.min(STYLE_LIMITS.strokeSize, (stroke.size?.value || 1) * scale),
             color: hex(stroke.color),
-            fill: gradient ? ('gradient' as const) : ('color' as const),
+            fill: pattern
+              ? ('pattern' as const)
+              : gradient
+                ? ('gradient' as const)
+                : ('color' as const),
             gradient,
+            pattern,
             gradientShape: parseGradientShape(stroke.gradient?.style, 'linear'),
             gradientAngle: -(stroke.gradient?.angle || 0),
             gradientScale: Math.min(4, Math.max(0.1, stroke.gradient?.scale ?? 1)),
@@ -309,39 +446,69 @@ function importStyles(src: PsdLayer): LayerStyles | undefined {
           : []
       })
     if (gradients.length) s.gradients = gradients
+    const patternOverlay = f.patternOverlay
+    if (patternOverlay?.enabled !== false && patternOverlay) {
+      const pattern = resolvePsdPattern(patternOverlay.pattern, patternDefinitions, warnPattern)
+      if (pattern)
+        s.pattern = {
+          enabled: true,
+          pattern,
+          scale: Math.min(10, Math.max(0.05, patternOverlay.scale ?? 1)),
+          opacity: patternOverlay.opacity ?? 1,
+          phaseX: Math.min(10000, Math.max(-10000, patternOverlay.phase?.x || 0)),
+          phaseY: Math.min(10000, Math.max(-10000, patternOverlay.phase?.y || 0)),
+          align: patternOverlay.align !== false,
+        }
+    }
   }
   return hasStyles(s) ? s : undefined
 }
-function exportStyles(s: LayerStyles): LayerEffectsInfo {
+function exportStyles(
+  s: LayerStyles,
+  patternRef: (definition: PatternDefinition) => EffectPattern = (definition) => ({
+    id: definition.id,
+    name: definition.name,
+  }),
+): LayerEffectsInfo {
   const effects: LayerEffectsInfo = { scale: 1 }
   const strokes = s.strokes.filter((e) => e.enabled)
   if (strokes.length)
     effects.stroke = strokes.map((stroke) =>
-      stroke.fill === 'gradient' && stroke.gradient
+      stroke.fill === 'pattern' && stroke.pattern
         ? {
             enabled: true,
             position: stroke.position,
-            fillType: 'gradient' as const,
+            fillType: 'pattern' as const,
             size: px(stroke.size),
             opacity: stroke.opacity,
             blendMode: 'normal' as const,
-            gradient: {
-              ...gradientToPsd(stroke.gradient),
-              style: stroke.gradientShape,
-              angle: -stroke.gradientAngle,
-              scale: stroke.gradientScale,
-              reverse: stroke.gradientReverse,
-            },
+            pattern: patternRef(stroke.pattern),
           }
-        : {
-            enabled: true,
-            position: stroke.position,
-            fillType: 'color' as const,
-            size: px(stroke.size),
-            color: rgb(stroke.color),
-            opacity: stroke.opacity,
-            blendMode: 'normal' as const,
-          },
+        : stroke.fill === 'gradient' && stroke.gradient
+          ? {
+              enabled: true,
+              position: stroke.position,
+              fillType: 'gradient' as const,
+              size: px(stroke.size),
+              opacity: stroke.opacity,
+              blendMode: 'normal' as const,
+              gradient: {
+                ...gradientToPsd(stroke.gradient),
+                style: stroke.gradientShape,
+                angle: -stroke.gradientAngle,
+                scale: stroke.gradientScale,
+                reverse: stroke.gradientReverse,
+              },
+            }
+          : {
+              enabled: true,
+              position: stroke.position,
+              fillType: 'color' as const,
+              size: px(stroke.size),
+              color: rgb(stroke.color),
+              opacity: stroke.opacity,
+              blendMode: 'normal' as const,
+            },
     )
   const shadowTo = (shadow: LayerStyles['shadows'][number]) => ({
     enabled: true,
@@ -395,7 +562,80 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
       reverse: item.reverse,
       gradient: gradientToPsd(item.gradient),
     }))
+  if (s.pattern.enabled)
+    effects.patternOverlay = {
+      enabled: true,
+      blendMode: 'normal',
+      opacity: s.pattern.opacity,
+      scale: s.pattern.scale,
+      pattern: patternRef(s.pattern.pattern),
+      phase: { x: s.pattern.phaseX, y: s.pattern.phaseY },
+      align: s.pattern.align,
+    }
   return effects
+}
+interface PsdPatternRegistry {
+  patterns: PatternInfo[]
+  build: (doc: EditorDocument) => Promise<void>
+  ref: (definition: PatternDefinition) => EffectPattern
+}
+function createPsdPatternRegistry(original?: Psd): PsdPatternRegistry {
+  const patterns: PatternInfo[] = []
+  const byContent = new Map<string, EffectPattern>()
+  const byId = new Map<string, string>()
+  const originalById = new Map<string, PatternInfo>()
+  if (original)
+    for (const info of collectPsdPatternInfos(original)) {
+      const id = cleanPatternId(info.id)
+      if (!id) continue
+      const clean = { ...info, id, name: cleanPatternName(info.name) }
+      patterns.push(clean)
+      originalById.set(id, clean)
+      byId.set(id, `original:${id}`)
+    }
+  const contentKey = (definition: PatternDefinition) =>
+    `${patternContentKey(definition)}|${cleanPatternName(definition.name)}|${definition.psdX || 0}|${definition.psdY || 0}|${definition.boundsX || 0}|${definition.boundsY || 0}`
+  const sameOriginal = (definition: PatternDefinition, info: PatternInfo) =>
+    definition.kind === 'image' &&
+    cleanPatternName(definition.name) === cleanPatternName(info.name) &&
+    definition.width === info.bounds.w &&
+    definition.height === info.bounds.h &&
+    (definition.psdX || 0) === info.x &&
+    (definition.psdY || 0) === info.y &&
+    (definition.boundsX || 0) === info.bounds.x &&
+    (definition.boundsY || 0) === info.bounds.y
+  const add = async (definition: PatternDefinition) => {
+    const key = contentKey(definition)
+    if (byContent.has(key)) return
+    const originalInfo = originalById.get(definition.id)
+    if (originalInfo && sameOriginal(definition, originalInfo)) {
+      byContent.set(key, { id: definition.id, name: definition.name })
+      byId.set(definition.id, key)
+      return
+    }
+    const tile = await patternTileCanvasAsync(definition)
+    const pixels = tile
+      .getContext('2d', { willReadFrequently: true })!
+      .getImageData(0, 0, tile.width, tile.height)
+    let id = cleanPatternId(definition.id) || deterministicPatternId(definition)
+    if (byId.has(id) && byId.get(id) !== key) id = deterministicPatternId(definition)
+    let suffix = 1
+    while (byId.has(id) && byId.get(id) !== key)
+      id = deterministicPatternId({ ...definition, seed: definition.seed + suffix++ })
+    const ref = { id, name: cleanPatternName(definition.name) }
+    patterns.push(patternInfoFromPixels(definition, pixels, ref))
+    byContent.set(key, ref)
+    byId.set(id, key)
+  }
+  return {
+    patterns,
+    async build(doc) {
+      for (const definition of collectPatternDefinitions(doc)) await add(definition)
+    },
+    ref(definition) {
+      return byContent.get(contentKey(definition)) || { id: definition.id, name: definition.name }
+    },
+  }
 }
 type PsdBlendingRanges = NonNullable<PsdLayer['blendingRanges']>
 function importBlendIf(src: PsdLayer): BlendIfRanges | undefined {
@@ -428,6 +668,7 @@ export const __psdStyleCodecForTests = {
   gradientToPsd,
   importBlendIf,
   exportBlendIf,
+  patternInfoFromPixels,
 }
 interface EmbeddedImport {
   depth: number
@@ -470,6 +711,7 @@ export async function importPsd(
       'Восстановлены редактируемые данные ФШ777 из стандартного XMP-блока. Файл также содержит обычные PSD-слои и объединённое изображение.',
     )
   } else {
+    const patternDefinitions = collectPsdPatternDefinitions(psd)
     const visit = async (items: PsdLayer[], parentId?: string, path: number[] = []) => {
       for (const [index, src] of items.entries()) {
         if (doc.layers.length >= 100 || path.length > 12)
@@ -493,7 +735,7 @@ export async function importPsd(
           isolated: src.blendMode !== 'pass through',
           clipping: src.clipping,
           sourceText: src.text?.text?.replace(/\r\n?/g, '\n'),
-          styles: importStyles(src),
+          styles: importStyles(src, patternDefinitions, (message) => warnings.add(message)),
           blendIf: importBlendIf(src),
         })
         const correction =
@@ -800,6 +1042,12 @@ export async function exportPsd(
   let editableContents = 0
   const paths = new Map<string, number[]>(),
     linkedFiles = [...(original?.linkedFiles || [])]
+  const patternRegistry = createPsdPatternRegistry(original)
+  await patternRegistry.build(doc)
+  if (collectPatternDefinitions(doc).length)
+    notes.push(
+      'Узоры записаны как нативные PSD Patt-ресурсы и ссылки Pattern Overlay/обводки. Процедурные параметры плиток ФШ777 дополнительно хранятся в XMP; другой редактор получит готовую плитку и сможет менять масштаб/фазу эффекта.',
+    )
   const build = async (
     parentId?: string,
     parentPath: number[] = [],
@@ -967,7 +1215,10 @@ export async function exportPsd(
       out.clipping = layer.clipping
       out.protected = { ...out.protected, composite: layer.locked, position: layer.locked }
       if (!preserved || !sameVisual(layer.styles, before?.styles)) {
-        out.effects = !embeddedAppearance && layer.styles ? exportStyles(layer.styles) : undefined
+        out.effects =
+          !embeddedAppearance && layer.styles
+            ? exportStyles(layer.styles, patternRegistry.ref)
+            : undefined
         out.fillOpacity = embeddedAppearance ? 1 : (layer.styles?.fillOpacity ?? 1)
       }
       if (!preserved || !sameVisual(layer.blendIf, before?.blendIf))
@@ -1144,6 +1395,7 @@ export async function exportPsd(
     children,
     imageData,
     linkedFiles,
+    patterns: patternRegistry.patterns.length ? patternRegistry.patterns : undefined,
     imageResources: {
       ...original?.imageResources,
       versionInfo: {

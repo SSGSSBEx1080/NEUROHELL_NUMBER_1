@@ -9,6 +9,11 @@ import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from 
 import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions, bundledImageSource } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
+import {
+  collectPatternDefinitions,
+  documentPatternsReady,
+  prepareDocumentPatterns,
+} from './patterns'
 import { applyBlendIf, isBlendIfActive } from './blendIf'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
@@ -75,6 +80,17 @@ export function validateRasterBudget(doc: EditorDocument) {
         'Слишком много растров в одном проекте: до 48 мегапикселей суммарно. Уменьши изображения или объедини слои.',
       )
   }
+  const patternPixels = new Map<string, number>()
+  for (const definition of collectPatternDefinitions(doc))
+    if (definition.kind === 'image' && definition.src)
+      patternPixels.set(definition.src, (definition.width || 0) * (definition.height || 0))
+  for (const count of patternPixels.values()) {
+    pixels += count
+    if (pixels > 48_000_000)
+      throw new Error(
+        'Слишком много растров в одном проекте: до 48 мегапикселей суммарно. Уменьши изображения или объедини слои.',
+      )
+  }
   return sources
 }
 const documentFonts = (doc: EditorDocument) =>
@@ -93,6 +109,8 @@ export async function prepareDocument(doc: EditorDocument) {
     ...sources.map(loadImage),
     ...needed.map(({ font, sample }) => document.fonts.load(font, sample)),
   ])
+  const patternsLoaded = await prepareDocumentPatterns(doc)
+  if (patternsLoaded) clearStyleCache()
   await document.fonts.ready
   if (needed.length) {
     clearRenderCaches()
@@ -208,6 +226,7 @@ export function isPrepared(doc: EditorDocument) {
     document.fonts.status === 'loaded' &&
     documentFonts(doc).every(({ font, sample }) => document.fonts.check(font, sample)) &&
     (!doc.sourceId || !!originalSource(doc)) &&
+    documentPatternsReady(doc) &&
     doc.layers.every((l) => (!l.src || images.has(l.src)) && (!l.mask || images.has(l.mask.src)))
   )
 }

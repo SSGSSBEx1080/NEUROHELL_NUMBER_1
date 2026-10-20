@@ -9,6 +9,7 @@ import {
   solidGradient,
   type GradientDefinition,
 } from './gradientRamp'
+import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } from './patterns'
 import {
   MAX_STYLE_INSTANCES,
   type ColorOverlayStyle,
@@ -16,6 +17,8 @@ import {
   type GradientOverlayStyle,
   type Layer,
   type LayerStyles,
+  type PatternDefinition,
+  type PatternOverlayStyle,
   type ShadowEffectStyle,
   type StrokeEffectStyle,
   type StyleGradientShape,
@@ -87,6 +90,15 @@ export const defaultGradientOverlayStyle = (): GradientOverlayStyle => ({
   opacity: 1,
   reverse: false,
 })
+export const defaultPatternOverlayStyle = (): PatternOverlayStyle => ({
+  enabled: false,
+  pattern: defaultPatternDefinition(),
+  scale: 1,
+  opacity: 1,
+  phaseX: 0,
+  phaseY: 0,
+  align: true,
+})
 export function defaultStyles(): LayerStyles {
   return {
     fillOpacity: 1,
@@ -97,6 +109,7 @@ export function defaultStyles(): LayerStyles {
     innerGlow: defaultInnerGlowStyle(),
     overlays: [defaultOverlayStyle()],
     gradients: [defaultGradientOverlayStyle()],
+    pattern: defaultPatternOverlayStyle(),
   }
 }
 
@@ -124,12 +137,19 @@ function parseStroke(input: unknown): StrokeEffectStyle {
     d = defaultStrokeStyle()
   if (!v) return d
   const gradient = parseGradientValue(v.gradient)
+  const pattern = v.pattern === undefined ? undefined : parsePatternDefinition(v.pattern)
   return {
     enabled: v.enabled === true,
     size: num(v.size, d.size, 0, STYLE_LIMITS.strokeSize),
     color: color(v.color, d.color),
-    fill: v.fill === 'gradient' && gradient ? 'gradient' : 'color',
+    fill:
+      v.fill === 'pattern' && pattern
+        ? 'pattern'
+        : v.fill === 'gradient' && gradient
+          ? 'gradient'
+          : 'color',
     gradient,
+    pattern,
     gradientShape: parseGradientShape(v.gradientShape, d.gradientShape),
     gradientAngle: num(v.gradientAngle, d.gradientAngle, -180, 360),
     gradientScale: num(v.gradientScale, d.gradientScale, 0.1, 4),
@@ -205,6 +225,20 @@ function parseGradientOverlay(input: unknown): GradientOverlayStyle {
     reverse: v.reverse === true,
   }
 }
+function parsePatternOverlay(input: unknown): PatternOverlayStyle {
+  const v = record(input),
+    d = defaultPatternOverlayStyle()
+  if (!v) return d
+  return {
+    enabled: v.enabled === true,
+    pattern: parsePatternDefinition(v.pattern) || d.pattern,
+    scale: num(v.scale, d.scale, 0.05, 10),
+    opacity: percent(v.opacity, d.opacity),
+    phaseX: num(v.phaseX, d.phaseX, -10000, 10000),
+    phaseY: num(v.phaseY, d.phaseY, -10000, 10000),
+    align: v.align !== false,
+  }
+}
 const list = <T>(value: unknown, legacy: unknown, parse: (v: unknown) => T, make: () => T): T[] => {
   if (Array.isArray(value)) {
     const items = value.slice(0, MAX_STYLE_INSTANCES).map(parse)
@@ -236,6 +270,7 @@ export function normalizeStyles(input: unknown): LayerStyles | undefined {
     innerGlow: parseGlow(v.innerGlow, true),
     overlays: list(v.overlays, v.overlay, parseOverlay, defaultOverlayStyle),
     gradients: list(v.gradients, v.gradient, parseGradientOverlay, defaultGradientOverlayStyle),
+    pattern: parsePatternOverlay(v.pattern ?? v.patternOverlay),
   }
 }
 export const hasStyles = (s?: LayerStyles) =>
@@ -247,7 +282,8 @@ export const hasStyles = (s?: LayerStyles) =>
     s.glow.enabled ||
     s.innerGlow.enabled ||
     s.overlays.some((e) => e.enabled) ||
-    s.gradients.some((e) => e.enabled))
+    s.gradients.some((e) => e.enabled) ||
+    s.pattern.enabled)
 
 /** Short human summary for the layers panel, e.g. “Обводка ×3 · Тень”. */
 export function styleEffectSummary(s?: LayerStyles): string {
@@ -263,6 +299,7 @@ export function styleEffectSummary(s?: LayerStyles): string {
   if (s.innerGlow.enabled) parts.push('Внутреннее свечение')
   add('Цвет', s.overlays.filter((e) => e.enabled).length)
   add('Градиент', s.gradients.filter((e) => e.enabled).length)
+  if (s.pattern.enabled) parts.push('Узор')
   if (s.fillOpacity !== 1) parts.push(`Заливка ${Math.round(s.fillOpacity * 100)}%`)
   return parts.join(' · ')
 }
@@ -290,6 +327,11 @@ export function scaleLayerStyles(styles: LayerStyles, factor: number): LayerStyl
     ...clone.innerGlow,
     blur: scaled(clone.innerGlow.blur, 0, STYLE_LIMITS.blur),
   }
+  clone.pattern = {
+    ...clone.pattern,
+    phaseX: scaled(clone.pattern.phaseX, -10000, 10000),
+    phaseY: scaled(clone.pattern.phaseY, -10000, 10000),
+  }
   return clone
 }
 
@@ -309,9 +351,16 @@ const ignored = new Set([
   'flipX',
   'flipY',
 ])
+const positionMatters = (layer: Layer) =>
+  !!layer.styles?.pattern.enabled && !layer.styles.pattern.align
 const equalContent = (a: Layer, b: Layer) =>
   Object.keys(a).length === Object.keys(b).length &&
-  (Object.keys(a) as (keyof Layer)[]).every((k) => ignored.has(k) || a[k] === b[k])
+  (Object.keys(a) as (keyof Layer)[]).every(
+    (k) =>
+      (ignored.has(k) &&
+        !((k === 'x' || k === 'y') && (positionMatters(a) || positionMatters(b)))) ||
+      a[k] === b[k],
+  )
 const surface = (w: number, h: number) => {
   const c = document.createElement('canvas')
   c.width = w
@@ -392,6 +441,39 @@ export function paintGradientShape(
 }
 
 /**
+ * Tiles a pattern over a w×h surface. `originX/originY` locate the layer's
+ * local (0,0) inside the (padded) surface, in layer units; phase is the tile
+ * offset from that origin. Returns false while an image tile is not prepared.
+ */
+export function paintPatternFill(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  definition: PatternDefinition,
+  patternScale: number,
+  phaseX: number,
+  phaseY: number,
+  originX: number,
+  originY: number,
+  renderScale: number,
+): boolean {
+  const tile = patternTileCanvas(definition)
+  if (!tile) return false
+  const pattern = ctx.createPattern(tile, 'repeat')
+  if (!pattern) return false
+  const tileScale = Math.max(0.0001, patternScale * renderScale)
+  if (typeof DOMMatrix !== 'undefined' && 'setTransform' in pattern)
+    pattern.setTransform(
+      new DOMMatrix()
+        .translate((originX + phaseX) * renderScale, (originY + phaseY) * renderScale)
+        .scale(tileScale, tileScale),
+    )
+  ctx.fillStyle = pattern
+  ctx.fillRect(0, 0, w, h)
+  return true
+}
+
+/**
  * Original raster layer styles. Cached separately from position/opacity for smooth dragging.
  * Paint order (back → front): drop shadows, outer glow, content with color/gradient
  * overlays (attenuated by Fill), inner shadows/glow, strokes. Inside each ordered
@@ -456,6 +538,23 @@ export function renderStyled(
       c = content.getContext('2d')!
     c.drawImage(base, 0, 0)
     c.globalCompositeOperation = 'source-atop'
+    if (s.pattern.enabled && s.pattern.opacity > 0) {
+      const fill = surface(w, h)
+      paintPatternFill(
+        fill.getContext('2d')!,
+        w,
+        h,
+        s.pattern.pattern,
+        s.pattern.scale,
+        s.pattern.align ? s.pattern.phaseX : s.pattern.phaseX - layer.x,
+        s.pattern.align ? s.pattern.phaseY : s.pattern.phaseY - layer.y,
+        -bounds.x,
+        -bounds.y,
+        scale,
+      )
+      c.globalAlpha = s.pattern.opacity
+      c.drawImage(fill, 0, 0)
+    }
     for (const overlay of [...s.overlays].reverse())
       if (overlay.enabled) {
         c.globalAlpha = overlay.opacity
@@ -528,6 +627,25 @@ export function renderStyled(
           stroke.gradientAngle,
           stroke.gradientScale,
           stroke.gradientReverse,
+        )
+        colored = surface(w, h)
+        const cx = colored.getContext('2d')!
+        cx.drawImage(base, 0, 0)
+        cx.globalCompositeOperation = 'source-in'
+        cx.drawImage(fill, 0, 0)
+      } else if (stroke.fill === 'pattern' && stroke.pattern) {
+        const fill = surface(w, h)
+        paintPatternFill(
+          fill.getContext('2d')!,
+          w,
+          h,
+          stroke.pattern,
+          1,
+          0,
+          0,
+          -bounds.x,
+          -bounds.y,
+          scale,
         )
         colored = surface(w, h)
         const cx = colored.getContext('2d')!

@@ -44,6 +44,7 @@ import {
   scaleLayerStyles,
 } from '../engine/styles'
 import { gradientCss } from '../engine/gradientRamp'
+import { defaultPatternDefinition, prepareStylePatterns } from '../engine/patterns'
 import {
   builtinStylePresets,
   copyStyleToClipboard,
@@ -57,10 +58,11 @@ import {
 } from '../engine/libraries'
 import { downloadBlob, loadImage, renderLayer } from '../engine/render'
 import { GradientDefinitionEditor } from './GradientDefinitionEditor'
+import { PatternDefinitionEditor } from './PatternDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
-type Tab = ListKey | 'glow' | 'innerGlow' | 'blendIf' | 'library'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'pattern' | 'blendIf' | 'library'
 const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'strokes',
@@ -82,6 +84,11 @@ const sections: { id: Tab; name: string; note: string }[] = [
     note: 'Полные градиенты: цвет, прозрачность, середины и шум.',
   },
   {
+    id: 'pattern',
+    name: 'Узор',
+    note: 'Повторяющаяся плитка под наложением цвета и градиентами: процедурные узоры и плитки-изображения, масштаб, фаза и связь со слоем.',
+  },
+  {
     id: 'blendIf',
     name: 'Параметры наложения',
     note: 'Blend If: показывать пиксели по яркости/каналам этого и нижнего слоя. Разделённые пороги дают плавный переход.',
@@ -95,6 +102,7 @@ const sections: { id: Tab; name: string; note: string }[] = [
 const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): number => {
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
+  if (tab === 'pattern') return styles.pattern.enabled ? 1 : 0
   if (tab === 'library') return 0
   if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
@@ -140,6 +148,7 @@ export function LayerStyleDialog({
     let cancelled = false
     const draw = async () => {
       if (layer.src) await loadImage(layer.src)
+      await prepareStylePatterns(styles).catch(() => false)
       if (cancelled || !preview.current) return
       const canvas = preview.current,
         ctx = canvas.getContext('2d')!
@@ -173,7 +182,11 @@ export function LayerStyleDialog({
     setMessage('')
   }
   const listKey: ListKey | undefined =
-    tab !== 'glow' && tab !== 'innerGlow' && tab !== 'library' && tab !== 'blendIf'
+    tab !== 'glow' &&
+    tab !== 'innerGlow' &&
+    tab !== 'pattern' &&
+    tab !== 'library' &&
+    tab !== 'blendIf'
       ? tab
       : undefined
   const items = listKey ? styles[listKey] : []
@@ -185,7 +198,7 @@ export function LayerStyleDialog({
       [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, ...patch } : item)),
     }))
   }
-  const patchSingle = (key: 'glow' | 'innerGlow', patch: object) =>
+  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern', patch: object) =>
     setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
   const factories = {
     strokes: defaultStrokeStyle,
@@ -232,7 +245,13 @@ export function LayerStyleDialog({
   const itemLabel = (i: number): string => {
     if (listKey === 'strokes') {
       const e = styles.strokes[i]
-      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${e.fill === 'gradient' ? e.gradient?.name || 'Градиент' : e.color}`
+      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${
+        e.fill === 'gradient'
+          ? e.gradient?.name || 'Градиент'
+          : e.fill === 'pattern'
+            ? e.pattern?.name || 'Узор'
+            : e.color
+      }`
     }
     if (listKey === 'shadows' || listKey === 'innerShadows') {
       const e = styles[listKey][i]
@@ -247,11 +266,13 @@ export function LayerStyleDialog({
       ? styles.glow.enabled
       : tab === 'innerGlow'
         ? styles.innerGlow.enabled
-        : listKey
-          ? !!items[index]?.enabled
-          : false
+        : tab === 'pattern'
+          ? styles.pattern.enabled
+          : listKey
+            ? !!items[index]?.enabled
+            : false
   const setActiveEnabled = (enabled: boolean) => {
-    if (tab === 'glow' || tab === 'innerGlow') patchSingle(tab, { enabled })
+    if (tab === 'glow' || tab === 'innerGlow' || tab === 'pattern') patchSingle(tab, { enabled })
     else patchItem({ enabled })
   }
   const applyPreset = (preset: StylePreset) => {
@@ -409,11 +430,15 @@ export function LayerStyleDialog({
                     ...(e.target.value === 'gradient' && !stroke.gradient
                       ? { gradient: defaultGradientOverlayGradient() }
                       : {}),
+                    ...(e.target.value === 'pattern' && !stroke.pattern
+                      ? { pattern: defaultPatternDefinition() }
+                      : {}),
                   })
                 }
               >
                 <option value="color">Цвет</option>
                 <option value="gradient">Градиент</option>
+                <option value="pattern">Узор</option>
               </Select>
               {stroke.fill === 'color' ? (
                 <ColorField
@@ -421,6 +446,14 @@ export function LayerStyleDialog({
                   value={stroke.color}
                   onChange={(color) => patchItem({ color, enabled: true })}
                 />
+              ) : stroke.fill === 'pattern' ? (
+                stroke.pattern && (
+                  <PatternDefinitionEditor
+                    definition={stroke.pattern}
+                    label="Узор обводки"
+                    onChange={(pattern) => patchItem({ pattern, enabled: true })}
+                  />
+                )
               ) : (
                 <>
                   {stroke.gradient && (
@@ -602,6 +635,61 @@ export function LayerStyleDialog({
                 />
                 Обратить градиент
               </label>
+            </>
+          )}
+          {tab === 'pattern' && (
+            <>
+              <PatternDefinitionEditor
+                definition={styles.pattern.pattern}
+                label="Узор наложения"
+                onChange={(pattern) => patchSingle('pattern', { pattern, enabled: true })}
+              />
+              <Slider
+                label="Масштаб узора"
+                value={styles.pattern.scale * 100}
+                min={5}
+                max={1000}
+                suffix="%"
+                onChange={(v) => patchSingle('pattern', { scale: v / 100, enabled: true })}
+              />
+              <Slider
+                label="Непрозрачность узора"
+                value={styles.pattern.opacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('pattern', { opacity: v / 100 })}
+              />
+              <div className="field-grid">
+                <Field
+                  label="Фаза узора X"
+                  value={styles.pattern.phaseX}
+                  min={-10000}
+                  max={10000}
+                  suffix=" px"
+                  onChange={(phaseX) => patchSingle('pattern', { phaseX, enabled: true })}
+                />
+                <Field
+                  label="Фаза узора Y"
+                  value={styles.pattern.phaseY}
+                  min={-10000}
+                  max={10000}
+                  suffix=" px"
+                  onChange={(phaseY) => patchSingle('pattern', { phaseY, enabled: true })}
+                />
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.pattern.align}
+                  onChange={(e) =>
+                    patchSingle('pattern', { align: e.target.checked, enabled: true })
+                  }
+                />
+                Связать со слоем
+              </label>
+              <p className="panel-note">
+                Со связью начало плитки движется вместе со слоем. Без связи фаза считается от начала
+                документа, поэтому узор не сдвигается при обычном перемещении слоя.
+              </p>
             </>
           )}
           {tab === 'blendIf' && (

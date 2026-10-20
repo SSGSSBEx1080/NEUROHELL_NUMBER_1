@@ -147,6 +147,91 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.gradients[0].angle).toBeCloseTo(70, 1)
   })
 
+  it('round-trips pattern overlay and pattern-filled strokes with native Patt resources', () => {
+    const pattern = {
+      id: '123e4567-e89b-52d3-a456-426614174000',
+      name: 'Тестовая плитка',
+      kind: 'checker',
+      size: 2,
+      foreground: '#ff0000',
+      background: '#0000ff',
+      seed: 777,
+    }
+    const styles = normalizeStyles({
+      strokes: [
+        {
+          enabled: true,
+          size: 5,
+          position: 'outside',
+          opacity: 0.9,
+          fill: 'pattern',
+          pattern,
+        },
+      ],
+      pattern: {
+        enabled: true,
+        pattern,
+        scale: 1.5,
+        opacity: 0.8,
+        phaseX: 3,
+        phaseY: -2,
+        align: false,
+      },
+    })!
+    expect(styles.strokes[0].fill).toBe('pattern')
+    expect(styles.pattern.pattern.id).toBe(pattern.id)
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const pixels = {
+      width: 2,
+      height: 2,
+      data: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255]),
+    }
+    const info = __psdStyleCodecForTests.patternInfoFromPixels(styles.pattern.pattern, pixels)
+    const psd = readPsd(
+      writePsd({ width: 4, height: 4, children: [{ name: 'p', effects }], patterns: [info] }),
+      { useImageData: true },
+    )
+    const layer = psd.children![0]
+    expect(psd.patterns).toHaveLength(1)
+    expect(psd.patterns?.[0]).toMatchObject({
+      id: pattern.id,
+      bounds: { x: 0, y: 0, w: 2, h: 2 },
+    })
+    expect(psd.patterns?.[0].name).toContain('Тестовая плитка')
+    expect([...(psd.patterns?.[0].data.slice(0, 8) || [])]).toEqual([
+      255, 0, 0, 255, 0, 0, 255, 255,
+    ])
+    expect(layer.effects?.patternOverlay).toMatchObject({
+      enabled: true,
+      pattern: { id: pattern.id, name: pattern.name },
+      phase: { x: 3, y: -2 },
+      align: false,
+    })
+    expect(layer.effects?.patternOverlay?.scale).toBeCloseTo(1.5, 2)
+    expect(layer.effects?.patternOverlay?.opacity).toBeCloseTo(0.8, 2)
+    expect(layer.effects?.stroke?.[0].fillType).toBe('pattern')
+    expect(layer.effects?.stroke?.[0].pattern).toMatchObject({ id: pattern.id, name: pattern.name })
+
+    const warnings: string[] = []
+    const back = __psdStyleCodecForTests.importStyles(
+      layer,
+      new Map([[pattern.id, styles.pattern.pattern]]),
+      (message) => warnings.push(message),
+    )!
+    expect(warnings).toEqual([])
+    expect(back.pattern).toMatchObject({
+      enabled: true,
+      scale: 1.5,
+      opacity: 0.8,
+      phaseX: 3,
+      phaseY: -2,
+      align: false,
+    })
+    expect(back.pattern.pattern.id).toBe(pattern.id)
+    expect(back.strokes[0].fill).toBe('pattern')
+    expect(back.strokes[0].pattern?.id).toBe(pattern.id)
+  })
+
   it('round-trips a native noise gradient descriptor', () => {
     const styles = normalizeStyles({
       gradients: [

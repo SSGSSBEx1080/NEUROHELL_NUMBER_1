@@ -206,13 +206,38 @@ export const MAX_LAYERS = 100
 
 /** Gradient geometry shared by overlays and gradient-filled strokes (PSD gradient styles). */
 export type StyleGradientShape = 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond'
+export type PatternKind = 'checker' | 'dots' | 'stripes' | 'diagonal' | 'grid' | 'noise' | 'image'
+/**
+ * Serializable repeating tile. Procedural kinds are generated from the two
+ * colors/size/seed; `image` carries a PNG data URL (PSD pattern resources and
+ * user uploads are re-encoded to PNG). `id` is the native PSD pattern id.
+ */
+export interface PatternDefinition {
+  id: string
+  name: string
+  kind: PatternKind
+  /** Procedural square tile size in pixels. */
+  size: number
+  foreground: string
+  background: string
+  seed: number
+  src?: string
+  width?: number
+  height?: number
+  /** Opaque PSD pattern point/bounds preserved for imported resources. */
+  psdX?: number
+  psdY?: number
+  boundsX?: number
+  boundsY?: number
+}
 export interface StrokeEffectStyle {
   enabled: boolean
   size: number
   color: string
-  /** Fill of the stroke ring: a solid color or a full gradient definition. */
-  fill: 'color' | 'gradient'
+  /** Fill of the stroke ring: a solid color, a full gradient or a pattern tile. */
+  fill: 'color' | 'gradient' | 'pattern'
   gradient?: import('./engine/gradientRamp').GradientDefinition
+  pattern?: PatternDefinition
   gradientShape: StyleGradientShape
   gradientAngle: number
   gradientScale: number
@@ -249,6 +274,18 @@ export interface GradientOverlayStyle {
   opacity: number
   reverse: boolean
 }
+export interface PatternOverlayStyle {
+  enabled: boolean
+  pattern: PatternDefinition
+  /** Tile scale factor: 1 = 100%. */
+  scale: number
+  opacity: number
+  /** Tile offset in layer/document pixels, depending on `align`. */
+  phaseX: number
+  phaseY: number
+  /** True: tile origin moves with the layer. False: origin stays in document space. */
+  align: boolean
+}
 /**
  * Ordered effect stack. In every list index 0 is the topmost instance:
  * rendering paints from the end of the list towards the start.
@@ -263,6 +300,7 @@ export interface LayerStyles {
   innerGlow: GlowEffectStyle
   overlays: ColorOverlayStyle[]
   gradients: GradientOverlayStyle[]
+  pattern: PatternOverlayStyle
 }
 export const MAX_STYLE_INSTANCES = 10
 
