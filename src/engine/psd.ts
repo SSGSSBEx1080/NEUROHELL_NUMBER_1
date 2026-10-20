@@ -466,6 +466,7 @@ function importStyles(
             gradientAngle: -(stroke.gradient?.angle || 0),
             gradientScale: Math.min(4, Math.max(0.1, stroke.gradient?.scale ?? 1)),
             gradientReverse: stroke.gradient?.reverse === true,
+            gradientDither: stroke.gradient?.dither === true ? true : undefined,
             position: stroke.position || ('outside' as const),
             opacity: stroke.opacity ?? 1,
           },
@@ -541,6 +542,7 @@ function importStyles(
                 angle: -(item.angle || 0),
                 opacity: item.opacity ?? 1,
                 reverse: item.reverse === true,
+                dither: item.dither === true ? true : undefined,
                 blendMode: overlayBlendModeFromPsd(item.blendMode, 'наложения градиента', warn),
               },
             ]
@@ -669,6 +671,7 @@ function exportStyles(
                 angle: -stroke.gradientAngle,
                 scale: stroke.gradientScale,
                 reverse: stroke.gradientReverse,
+                dither: stroke.gradientDither === true,
               },
             }
           : {
@@ -739,6 +742,7 @@ function exportStyles(
       scale: item.scale,
       align: true,
       reverse: item.reverse,
+      dither: item.dither === true,
       gradient: gradientToPsd(item.gradient),
     }))
   if (s.pattern.enabled)

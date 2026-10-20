@@ -155,6 +155,7 @@ test('gradient-filled stroke and radial gradient overlay render real shapes', as
   await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
   await page.getByRole('slider', { name: 'Размер обводки' }).fill('16')
   await page.getByLabel('Тип заливки обводки').selectOption('gradient')
+  await page.getByRole('checkbox', { name: 'Дизеринг градиента обводки' }).check()
   await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
   await expect
     .poll(async () => {
@@ -210,8 +211,80 @@ test('gradient-filled stroke and radial gradient overlay render real shapes', as
   const bytes = await exportPsd(page)
   const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
   const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.stroke?.[0].gradient?.dither).toBe(true)
   expect(layer?.effects?.gradientOverlay?.[0].blendMode).toBe('screen')
   expect(layer?.effects?.solidFill?.[0].blendMode).toBe('difference')
+})
+
+test('gradient overlay dither changes quantization locally and exports natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [40, 40], [260, 160])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Библиотека градиентов').selectOption('0') // Чёрный → белый
+  await page.getByLabel('Стиль градиента наложения').selectOption('linear')
+  await page.getByRole('slider', { name: 'Угол градиента' }).fill('0')
+  await page.getByRole('slider', { name: 'Масштаб градиента' }).fill('400')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // Wait for the actual 400% black-to-white ramp, not merely for the opaque
+  // gray rectangle that was already visible before the style was applied.
+  await expect
+    .poll(async () => {
+      const left = (await pixel(page, 60, 100))[0]
+      const right = (await pixel(page, 239, 100))[0]
+      return left < 110 && right > 145
+    })
+    .toBe(true)
+
+  const regionStats = () =>
+    page.locator('[data-testid=editor-canvas]').evaluate((c: HTMLCanvasElement) => {
+      const data = c.getContext('2d')!.getImageData(60, 60, 180, 80).data
+      const values: number[] = []
+      let sum = 0
+      for (let i = 0; i < data.length; i += 4) {
+        values.push(data[i])
+        sum += data[i]
+      }
+      return { values, mean: sum / values.length }
+    })
+  const before = await regionStats()
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page
+    .getByRole('checkbox', { name: 'Дизеринг градиента (меньше полос на плавных переходах)' })
+    .check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const after = await regionStats()
+      return after.values.some((value, index) => value !== before.values[index])
+    })
+    .toBe(true)
+
+  const after = await regionStats()
+  let changed = 0
+  let maxDifference = 0
+  for (let i = 0; i < before.values.length; i++) {
+    const difference = Math.abs(after.values[i] - before.values[i])
+    if (difference) changed++
+    maxDifference = Math.max(maxDifference, difference)
+  }
+  expect(changed).toBeGreaterThan(100)
+  expect(maxDifference).toBeLessThanOrEqual(2)
+  expect(Math.abs(after.mean - before.mean)).toBeLessThan(0.75)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.gradientOverlay?.[0].dither).toBe(true)
 })
 
 test('pattern overlay and pattern-filled stroke render tiles and export native Patt resources', async ({

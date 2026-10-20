@@ -13,6 +13,7 @@ import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } f
 import { applyBevelToPixels } from './bevel'
 import { applySatinToPixels } from './satin'
 import { applyOverlayBlendToPixels } from './overlayBlend'
+import { gradientShapePosition, orderedDitherByte } from './gradientDither'
 import {
   buildContourAlphaLut,
   isLinearEffectContour,
@@ -244,6 +245,7 @@ function parseStroke(input: unknown): StrokeEffectStyle {
     gradientAngle: num(v.gradientAngle, d.gradientAngle, -180, 360),
     gradientScale: num(v.gradientScale, d.gradientScale, 0.1, 4),
     gradientReverse: v.gradientReverse === true,
+    gradientDither: v.gradientDither === true ? true : undefined,
     position:
       v.position === 'inside' || v.position === 'center' || v.position === 'outside'
         ? v.position
@@ -319,6 +321,7 @@ function parseGradientOverlay(input: unknown): GradientOverlayStyle {
     angle: num(v.angle, d.angle, -180, 360),
     opacity: percent(v.opacity, d.opacity),
     reverse: v.reverse === true,
+    dither: v.dither === true ? true : undefined,
     blendMode: optionalBlendMode(v.blendMode),
   }
 }
@@ -569,10 +572,30 @@ export function paintGradientShape(
   angleDeg: number,
   scale = 1,
   reverse = false,
+  dither = false,
 ) {
   const cx = w / 2,
     cy = h / 2,
     angle = (angleDeg * Math.PI) / 180
+  if (dither) {
+    // Canvas gradients have already been quantized to 8 bits by the time
+    // ImageData can be read. Sample the same geometry continuously here and
+    // distribute each fractional byte with a stable ordered pattern.
+    const image = ctx.createImageData(w, h),
+      out = [0, 0, 0, 0]
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const t = gradientShapePosition(shape, w, h, x, y, angleDeg, scale)
+        gradientSample(definition, reverse ? 1 - t : t, out)
+        const i = (y * w + x) * 4
+        image.data[i] = orderedDitherByte(out[0], x, y)
+        image.data[i + 1] = orderedDitherByte(out[1], x, y)
+        image.data[i + 2] = orderedDitherByte(out[2], x, y)
+        image.data[i + 3] = orderedDitherByte(out[3], x, y)
+      }
+    ctx.putImageData(image, 0, 0)
+    return
+  }
   if (shape === 'diamond') {
     const image = ctx.createImageData(w, h),
       out = [0, 0, 0, 0],
@@ -771,6 +794,7 @@ export function renderStyled(
           item.angle,
           item.scale,
           item.reverse,
+          item.dither === true,
         )
         applyOverlayFill(fill, item.blendMode, item.opacity)
       }
@@ -856,6 +880,7 @@ export function renderStyled(
           stroke.gradientAngle,
           stroke.gradientScale,
           stroke.gradientReverse,
+          stroke.gradientDither === true,
         )
         colored = surface(w, h)
         const cx = colored.getContext('2d')!

@@ -849,6 +849,16 @@ export function LayerStyleDialog({
                     />
                     Обратить градиент обводки
                   </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={stroke.gradientDither === true}
+                      onChange={(e) =>
+                        patchItem({ gradientDither: e.target.checked, enabled: true })
+                      }
+                    />
+                    Дизеринг градиента обводки
+                  </label>
                 </>
               )}
               <Slider
@@ -1099,6 +1109,14 @@ export function LayerStyleDialog({
                   onChange={(e) => patchItem({ reverse: e.target.checked, enabled: true })}
                 />
                 Обратить градиент
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={gradientItem.dither === true}
+                  onChange={(e) => patchItem({ dither: e.target.checked, enabled: true })}
+                />
+                Дизеринг градиента (меньше полос на плавных переходах)
               </label>
             </>
           )}

@@ -102,6 +102,7 @@ describe('multi-instance layer styles in native PSD effects', () => {
           gradientAngle: 30,
           gradientScale: 1.25,
           gradientReverse: true,
+          gradientDither: true,
           gradient: {
             name: 'Обводка',
             kind: 'solid',
@@ -118,6 +119,7 @@ describe('multi-instance layer styles in native PSD effects', () => {
           angle: 70,
           opacity: 0.8,
           reverse: false,
+          dither: true,
           shape: 'radial',
           scale: 1.5,
           gradient: {
@@ -138,6 +140,8 @@ describe('multi-instance layer styles in native PSD effects', () => {
     }).children![0]
     expect(layer.effects?.stroke?.[0].fillType).toBe('gradient')
     expect(layer.effects?.stroke?.[0].gradient?.style).toBe('reflected')
+    expect(layer.effects?.stroke?.[0].gradient?.dither).toBe(true)
+    expect(layer.effects?.gradientOverlay?.[0].dither).toBe(true)
     expect(layer.effects?.gradientOverlay?.[0].type).toBe('radial')
     expect(layer.effects?.gradientOverlay?.[0].scale).toBeCloseTo(1.5, 2)
     const back = __psdStyleCodecForTests.importStyles(layer)!
@@ -146,7 +150,9 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.strokes[0].gradientAngle).toBeCloseTo(30, 1)
     expect(back.strokes[0].gradientScale).toBeCloseTo(1.25, 2)
     expect(back.strokes[0].gradientReverse).toBe(true)
+    expect(back.strokes[0].gradientDither).toBe(true)
     expect(back.strokes[0].gradient?.stops).toHaveLength(2)
+    expect(back.gradients[0].dither).toBe(true)
     expect(back.gradients[0].shape).toBe('radial')
     expect(back.gradients[0].scale).toBeCloseTo(1.5, 2)
     expect(back.gradients[0].angle).toBeCloseTo(70, 1)

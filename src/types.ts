@@ -258,6 +258,8 @@ export interface StrokeEffectStyle {
   gradientAngle: number
   gradientScale: number
   gradientReverse: boolean
+  /** Undefined keeps legacy no-dither rendering and serialized objects. */
+  gradientDither?: boolean
   position: 'outside' | 'inside' | 'center'
   opacity: number
 }
@@ -306,6 +308,8 @@ export interface GradientOverlayStyle {
   angle: number
   opacity: number
   reverse: boolean
+  /** Undefined keeps legacy no-dither rendering and serialized objects. */
+  dither?: boolean
   /** Undefined keeps legacy Normal without changing old project objects. */
   blendMode?: BlendMode
 }
