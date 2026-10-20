@@ -19,6 +19,8 @@ export type ActionProperties = Partial<
     | 'fontSize'
     | 'fontWeight'
     | 'italic'
+    | 'textUnderline'
+    | 'textStrikethrough'
     | 'textAlign'
     | 'lineHeight'
     | 'letterSpacing'
@@ -123,7 +125,15 @@ export function parseActionProperties(input: unknown): ActionProperties {
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
     else if (
-      ['visible', 'italic', 'flipX', 'flipY', 'shapeFill'].includes(key) &&
+      [
+        'visible',
+        'italic',
+        'textUnderline',
+        'textStrikethrough',
+        'flipX',
+        'flipY',
+        'shapeFill',
+      ].includes(key) &&
       typeof value === 'boolean'
     )
       out[key] = value

@@ -73,6 +73,8 @@ export function exportNativeText(layer: Layer): LayerTextData {
       leading: size * (layer.lineHeight || 1.2),
       autoLeading: false,
       tracking: ((layer.letterSpacing || 0) / size) * 1000,
+      ...(layer.textUnderline ? { underline: true } : {}),
+      ...(layer.textStrikethrough ? { strikethrough: true } : {}),
     },
     paragraphStyle: { justification: layer.textAlign || 'left', autoHyphenate: false },
     ...(layout && !layout.overflow
@@ -119,8 +121,6 @@ export async function importNativeText(
     text.orientation === 'vertical' ||
     (text.warp?.style && text.warp.style !== 'none') ||
     text.textPath?.data.type === 0 ||
-    style.underline ||
-    style.strikethrough ||
     style.baselineShift ||
     style.fillFlag === false ||
     style.strokeFlag ||
@@ -173,6 +173,8 @@ export async function importNativeText(
     fontFamily: font.family,
     fontWeight: style.fauxBold ? Math.max(700, font.weight) : font.weight,
     italic: style.fauxItalic || font.italic,
+    textUnderline: style.underline === true ? true : undefined,
+    textStrikethrough: style.strikethrough === true ? true : undefined,
     fontSize: size,
     textScaleX: horizontal,
     textAlign: align as Layer['textAlign'],

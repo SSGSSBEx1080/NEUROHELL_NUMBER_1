@@ -282,6 +282,8 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       fontSize: finite(l.fontSize, 4, 1000, 48),
       fontWeight: finite(l.fontWeight, 100, 900, 500),
       italic: l.italic === true,
+      textUnderline: l.kind === 'text' && l.textUnderline === true ? true : undefined,
+      textStrikethrough: l.kind === 'text' && l.textStrikethrough === true ? true : undefined,
       textAlign: ['left', 'center', 'right'].includes(String(l.textAlign))
         ? (l.textAlign as Layer['textAlign'])
         : 'left',

@@ -35,7 +35,9 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
+  Strikethrough,
   Type,
+  Underline,
   Unlink2,
   Upload,
 } from 'lucide-react'
@@ -653,6 +655,25 @@ export function PropertiesPanel({
                           label="Курсив"
                           active={layer.italic}
                           onClick={() => patch({ italic: !layer.italic }, 'Начертание')}
+                        />
+                        <IconButton
+                          icon={Underline}
+                          label="Подчёркивание текста"
+                          active={layer.textUnderline === true}
+                          onClick={() =>
+                            patch({ textUnderline: !layer.textUnderline }, 'Подчёркивание текста')
+                          }
+                        />
+                        <IconButton
+                          icon={Strikethrough}
+                          label="Зачёркивание текста"
+                          active={layer.textStrikethrough === true}
+                          onClick={() =>
+                            patch(
+                              { textStrikethrough: !layer.textStrikethrough },
+                              'Зачёркивание текста',
+                            )
+                          }
                         />
                       </div>
                       <div className="text-style-row">

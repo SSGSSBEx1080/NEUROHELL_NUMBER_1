@@ -580,6 +580,96 @@ test('text anti-aliasing reshapes real glyph alpha, undoes and exports natively 
   expect(flatten(stripped.children || []).find((l) => l.text)?.text?.antiAlias).toBe('strong')
 })
 
+test('text underline and strikethrough draw real rules, undo and export natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 260, 'Text decorations', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'Decorated',
+      text: 'O',
+      x: 70,
+      y: 30,
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-decorations.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'Decorated' }).click()
+
+  const stats = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let left = c.width,
+        right = -1,
+        top = c.height,
+        bottom = -1,
+        maxRun = 0
+      for (let y = 0; y < c.height; y++) {
+        let run = 0
+        for (let x = 0; x < c.width; x++) {
+          const alpha = data[(y * c.width + x) * 4 + 3]
+          if (alpha > 10) {
+            left = Math.min(left, x)
+            right = Math.max(right, x)
+            top = Math.min(top, y)
+            bottom = Math.max(bottom, y)
+          }
+          run = alpha > 200 ? run + 1 : 0
+          maxRun = Math.max(maxRun, run)
+        }
+      }
+      return { left, right, top, bottom, width: right - left + 1, maxRun }
+    })
+
+  await expect.poll(async () => (await stats()).width).toBeGreaterThan(50)
+  const plain = await stats()
+  expect(plain.maxRun / plain.width).toBeLessThan(0.9)
+
+  const underline = page.getByRole('button', { name: 'Подчёркивание текста', exact: true })
+  const strikethrough = page.getByRole('button', { name: 'Зачёркивание текста', exact: true })
+  await underline.click()
+  await expect(underline).toHaveClass(/active/)
+  await expect.poll(async () => (await stats()).bottom).toBeGreaterThan(plain.bottom + 5)
+
+  await strikethrough.click()
+  await expect(strikethrough).toHaveClass(/active/)
+  await expect.poll(async () => (await stats()).maxRun / plain.width).toBeGreaterThan(0.9)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(strikethrough).not.toHaveClass(/active/)
+  await strikethrough.click()
+  await expect(strikethrough).toHaveClass(/active/)
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  const style = flatten(parsed.children || []).find((l) => l.text)?.text?.style
+  expect(style?.underline).toBe(true)
+  expect(style?.strikethrough).toBe(true)
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const strippedStyle = flatten(stripped.children || []).find((l) => l.text)?.text?.style
+  expect(strippedStyle?.underline).toBe(true)
+  expect(strippedStyle?.strikethrough).toBe(true)
+
+  // Reimporting that XMP-free PSD must reconstruct the same editable toggles
+  // from native Type style data alone.
+  await open(page, 'decorated-native-reimport.psd', Buffer.from(writePsd(stripped)))
+  await page.locator('.layer-row').filter({ hasText: 'Decorated' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('O')
+  await expect(underline).toHaveClass(/active/)
+  await expect(strikethrough).toHaveClass(/active/)
+})
+
 test('mask/style offscreens and explicit rasterization retain point text beyond its obsolete rectangle', async ({
   page,
 }) => {

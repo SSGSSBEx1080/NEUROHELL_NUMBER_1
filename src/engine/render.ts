@@ -16,6 +16,7 @@ import {
 } from './patterns'
 import { applyBlendIf, isBlendIfActive } from './blendIf'
 import { applyTextAntiAliasToPixels, textAntiAliasMode } from './textAntiAlias'
+import { textDecorationMetrics } from './textDecorations'
 import {
   DEFAULT_ADJUSTMENTS,
   type EditorDocument,
@@ -159,7 +160,32 @@ function paintText(ctx: CanvasRenderingContext2D, layer: Layer) {
   ctx.textBaseline = layer.textBaseline || 'top'
   ctx.textAlign = layer.textAlign || 'left'
   if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
-  for (const line of geometry.lines) ctx.fillText(line.text, line.x / textScale, line.y)
+  const decoration = textDecorationMetrics(size)
+  for (const line of geometry.lines) {
+    const anchorX = line.x / textScale
+    ctx.fillText(line.text, anchorX, line.y)
+    if ((!layer.textUnderline && !layer.textStrikethrough) || !line.text.trim()) continue
+    const measured = ctx.measureText(line.text)
+    const left = anchorX - (measured.actualBoundingBoxLeft || 0)
+    const right = anchorX + (measured.actualBoundingBoxRight || 0)
+    if (!(right > left)) continue
+    const baselineY =
+      (layer.textBaseline || 'top') === 'alphabetic' ? line.y : line.y + geometry.baselineOffset
+    if (layer.textUnderline)
+      ctx.fillRect(
+        left,
+        baselineY + decoration.underlineTopOffset,
+        right - left,
+        decoration.thickness,
+      )
+    if (layer.textStrikethrough)
+      ctx.fillRect(
+        left,
+        baselineY + decoration.strikethroughTopOffset,
+        right - left,
+        decoration.thickness,
+      )
+  }
 }
 const textAntiAliasCache = new Map<string, { key: Layer; image: HTMLCanvasElement; bounds: Rect }>()
 function shapedTextSurface(layer: Layer, mode: Exclude<TextAntiAliasMode, 'smooth'>) {

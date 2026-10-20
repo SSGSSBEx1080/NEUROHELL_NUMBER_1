@@ -217,6 +217,8 @@ export function runAction(
           'fontSize',
           'fontWeight',
           'italic',
+          'textUnderline',
+          'textStrikethrough',
           'textAlign',
           'lineHeight',
           'letterSpacing',

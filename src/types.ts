@@ -97,6 +97,10 @@ export interface Layer {
   fontSize?: number
   fontWeight?: number
   italic?: boolean
+  /** Undefined keeps legacy undecorated text objects unchanged. */
+  textUnderline?: boolean
+  /** Undefined keeps legacy undecorated text objects unchanged. */
+  textStrikethrough?: boolean
   textAlign?: 'left' | 'center' | 'right'
   lineHeight?: number
   letterSpacing?: number
