@@ -158,14 +158,14 @@ fieldset:disabled {
   height: 32px;
   width: 32px;
   border-radius: 9px;
-  background: var(--accent);
-  color: #272037;
   display: grid;
   place-items: center;
+  flex-shrink: 0;
 }
 .brand-mark svg {
-  width: 28px;
-  height: 28px;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .brand-name {
   font-size: 17px;
@@ -176,13 +176,14 @@ fieldset:disabled {
 .brand-name b {
   font-weight: 800;
 }
-.beta-badge {
+.ultra-badge {
   font-size: 8px;
-  letter-spacing: 1px;
-  border: 1px solid #45404f;
+  font-weight: 800;
+  letter-spacing: 1.2px;
   border-radius: 4px;
-  padding: 3px 4px;
-  color: #b3a6c7;
+  padding: 3px 5px;
+  color: #101827;
+  background: linear-gradient(100deg, #7c5cff, #00c2ff 55%, #00ffa3);
   margin-left: 0;
 }
 .main-menu {
@@ -391,11 +392,6 @@ fieldset:disabled {
   padding: 13px 0 9px;
   z-index: 20;
 }
-.tool-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
 .tool-button {
   position: relative;
   width: 36px;
@@ -424,37 +420,6 @@ fieldset:disabled {
   width: 2px;
   border-radius: 2px;
   background: var(--accent);
-}
-.tool-divider {
-  height: 1px;
-  background: #34313a;
-  margin: 10px 7px;
-}
-.tool-tooltip {
-  pointer-events: none;
-  position: absolute;
-  left: 47px;
-  top: 3px;
-  z-index: 200;
-  background: #39333f;
-  box-shadow: 0 4px 15px #0005;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  border: 1px solid #595064;
-  padding: 7px 9px;
-  border-radius: 5px;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  color: #e9e2f2;
-  font-size: 11px;
-}
-.tool-button:hover .tool-tooltip,
-.tool-button:focus-visible .tool-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0.35s;
 }
 kbd {
   font:
@@ -806,18 +771,6 @@ kbd {
 .tool-ellipse,
 .tool-eyedropper {
   cursor: crosshair;
-}
-.inline-text-editor {
-  position: absolute;
-  resize: none;
-  border: 1px dashed var(--accent);
-  outline: none;
-  background: #24202d88;
-  padding: 0;
-  overflow: hidden;
-  transform-origin: center;
-  z-index: 6;
-  border-radius: 0;
 }
 .selection-actions {
   display: flex;
@@ -2307,7 +2260,7 @@ kbd {
   .status-left .status-dot {
     flex-shrink: 0;
   }
-  .beta-badge {
+  .ultra-badge {
     display: none;
   }
   .panel-tabs {
@@ -2359,14 +2312,8 @@ kbd {
     width: 33px;
     height: 33px;
   }
-  .tool-divider {
-    margin: 7px;
-  }
   .toolbar {
     padding-top: 10px;
-  }
-  .tool-stack {
-    gap: 1px;
   }
   .tool-instruction {
     max-width: 170px;
@@ -2410,7 +2357,7 @@ kbd {
     min-width: 95px;
     font-size: 10px;
   }
-  .beta-badge {
+  .ultra-badge {
     display: none;
   }
   .brand-mark {
@@ -2427,12 +2374,6 @@ kbd {
 @media (max-height: 740px) {
   .tool-button {
     height: 29px;
-  }
-  .tool-stack {
-    gap: 1px;
-  }
-  .tool-divider {
-    margin: 6px;
   }
   .toolbar-colors {
     margin-top: 9px;
@@ -5532,4 +5473,95 @@ canvas {
 }
 .text-entry-details[open] summary {
   margin-bottom: 12px;
+}
+
+.panel-subtitle {
+  display: block;
+  margin: 14px 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.effect-count {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--accent);
+}
+.effect-instance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+}
+.effect-instance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+}
+.effect-instance.selected {
+  outline: 1px solid var(--accent);
+}
+.effect-instance-name {
+  flex: 1;
+  padding: 2px 0;
+  text-align: left;
+  font-size: 10px;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.effect-instance-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.gradient-preview-strip {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid #ffffff30;
+  margin: 10px 0 12px;
+  background-color: #d8d5df;
+}
+.alpha-ramp {
+  background-color: #d8d5df;
+}
+.gradient-library-tools {
+  margin-top: 12px;
+}
+.gradient-tool-strip {
+  width: 92px;
+  height: 22px;
+  border: 1px solid #ffffff40;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+/* ULTRA brand */
+.home-logo > .home-logo-mark {
+  background: none;
+  color: inherit;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+}
+.home-logo-mark svg,
+.about-777 svg {
+  display: block;
+}
+.ultra-word {
+  background: linear-gradient(100deg, #9d86ff, #39c2ff 55%, #2bffa8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 0.5px;
+}
+.about-777 {
+  transform: none;
+  padding-right: 4px;
 }

@@ -58,7 +58,7 @@ describe('Real recording and validated transactional playback', () => {
         fontSize: 30,
         styles: {
           ...defaultStyles(),
-          stroke: { enabled: true, size: 2, color: '#ffffff', position: 'outside' },
+          strokes: [{ enabled: true, size: 2, color: '#ffffff', position: 'outside', opacity: 1 }],
         },
         adjustments: { ...doc.layers[0].adjustments, contrast: 25 },
       })

@@ -8,7 +8,8 @@ import { exportVectorShape, importVectorShape, translateNativeVector } from './p
 import { rasterBounds, rectPoints, worldBounds } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { inspectNativeLayers, type PsdExportReport } from './psdReport'
-import { DEFAULT_ADJUSTMENTS } from '../types'
+import { DEFAULT_ADJUSTMENTS, MAX_STYLE_INSTANCES } from '../types'
+import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
 import type { Color, Layer as PsdLayer, LayerEffectsInfo, Psd, PixelData } from 'ag-psd'
 import type { BlendMode, EditorDocument, Layer, LayerStyles } from '../types'
@@ -21,7 +22,7 @@ import {
   prepareDocument,
   renderLayer,
 } from './render'
-import { defaultStyles, hasStyles } from './styles'
+import { STYLE_LIMITS, defaultStyles, hasStyles } from './styles'
 import {
   isOriginalAppearance,
   isOriginalDocument,
@@ -135,81 +136,193 @@ function imageSource(data: PixelData) {
   cacheImage(src, c)
   return src
 }
+type PsdGradient = NonNullable<
+  NonNullable<NonNullable<PsdLayer['effects']>['gradientOverlay']>[number]['gradient']
+>
+function gradientFromPsd(g: PsdGradient | undefined): GradientDefinition | undefined {
+  if (!g) return undefined
+  try {
+    if (g.type === 'noise')
+      return parseGradientDefinition({
+        name: g.name || 'Шум',
+        kind: 'noise',
+        stops: [
+          { position: 0, color: '#000000' },
+          { position: 1, color: '#ffffff' },
+        ],
+        noise: {
+          roughness: g.roughness ?? 0.5,
+          // PSD also knows HSL; it is edited here through the HSB controls (rendering differs).
+          model: g.colorModel === 'lab' ? 'lab' : g.colorModel === 'rgb' ? 'rgb' : 'hsb',
+          seed: g.randomSeed ?? 0,
+          min: g.min,
+          max: g.max,
+          restrictColors: g.restrictColors === true,
+          transparency: g.addTransparency === true,
+        },
+      })
+    if (!g.colorStops?.length) return undefined
+    return parseGradientDefinition({
+      name: g.name || 'Градиент',
+      kind: 'solid',
+      stops: g.colorStops.map((stop) => ({
+        position: stop.location,
+        color: hex(stop.color),
+        midpoint: stop.midpoint,
+      })),
+      opacityStops:
+        g.opacityStops && g.opacityStops.length >= 2
+          ? g.opacityStops.map((stop) => ({
+              position: stop.location,
+              opacity: stop.opacity,
+              midpoint: stop.midpoint,
+            }))
+          : undefined,
+    })
+  } catch {
+    return undefined
+  }
+}
+function gradientToPsd(definition: GradientDefinition): PsdGradient {
+  if (definition.kind === 'noise' && definition.noise)
+    return {
+      name: definition.name || 'ФШ777 ULTRA',
+      type: 'noise',
+      roughness: definition.noise.roughness,
+      colorModel: definition.noise.model,
+      randomSeed: definition.noise.seed,
+      restrictColors: definition.noise.restrictColors,
+      addTransparency: definition.noise.transparency,
+      min: [...definition.noise.min],
+      max: [...definition.noise.max],
+    }
+  return {
+    name: definition.name || 'ФШ777 ULTRA',
+    type: 'solid',
+    smoothness: 1,
+    colorStops: definition.stops.map((s) => ({
+      color: rgb(s.color),
+      location: s.position,
+      midpoint: s.midpoint ?? 0.5,
+    })),
+    opacityStops: definition.opacityStops.map((s) => ({
+      opacity: s.opacity,
+      location: s.position,
+      midpoint: s.midpoint ?? 0.5,
+    })),
+  }
+}
 function importStyles(src: PsdLayer): LayerStyles | undefined {
   const f = src.effects,
     s = defaultStyles()
   s.fillOpacity = src.fillOpacity ?? 1
   if (f && !f.disabled) {
-    const stroke = f.stroke?.find((v) => v.enabled !== false),
-      shadow = f.dropShadow?.find((v) => v.enabled !== false),
-      overlay = f.solidFill?.find((v) => v.enabled !== false),
-      gradient = f.gradientOverlay?.find((v) => v.enabled !== false)
-    if (stroke && (!stroke.fillType || stroke.fillType === 'color'))
-      s.stroke = {
+    // PSD effect scale multiplies every size; bake it into editable parameters once.
+    const scale = Math.min(10, Math.max(0.01, f.scale ?? 1))
+    const strokes = (f.stroke || [])
+      .filter((v) => v.enabled !== false && (!v.fillType || v.fillType === 'color'))
+      .slice(0, MAX_STYLE_INSTANCES)
+      .map((stroke) => ({
         enabled: true,
-        size: Math.min(80, stroke.size?.value || 1),
+        size: Math.min(STYLE_LIMITS.strokeSize, (stroke.size?.value || 1) * scale),
         color: hex(stroke.color),
-        position: stroke.position || 'outside',
-      }
-    if (shadow) {
+        position: stroke.position || ('outside' as const),
+        opacity: stroke.opacity ?? 1,
+      }))
+    if (strokes.length) s.strokes = strokes
+    const shadowFrom = (shadow: NonNullable<typeof f.dropShadow>[number]) => {
       const a = ((shadow.angle || 0) * Math.PI) / 180,
-        distance = shadow.distance?.value || 0
-      s.shadow = {
+        distance = (shadow.distance?.value || 0) * scale
+      return {
         enabled: true,
         color: hex(shadow.color, '#000000'),
         opacity: shadow.opacity ?? 0.5,
-        blur: Math.min(100, shadow.size?.value || 0),
+        blur: Math.min(STYLE_LIMITS.blur, (shadow.size?.value || 0) * scale),
         x: -Math.cos(a) * distance,
         y: Math.sin(a) * distance,
       }
     }
+    const shadows = (f.dropShadow || [])
+      .filter((v) => v.enabled !== false)
+      .slice(0, MAX_STYLE_INSTANCES)
+      .map(shadowFrom)
+    if (shadows.length) s.shadows = shadows
+    const innerShadows = (f.innerShadow || [])
+      .filter((v) => v.enabled !== false)
+      .slice(0, MAX_STYLE_INSTANCES)
+      .map(shadowFrom)
+    if (innerShadows.length) s.innerShadows = innerShadows
     if (f.outerGlow?.enabled !== false && f.outerGlow)
       s.glow = {
         enabled: true,
         color: hex(f.outerGlow.color),
-        blur: Math.min(100, f.outerGlow.size?.value || 0),
+        blur: Math.min(STYLE_LIMITS.blur, (f.outerGlow.size?.value || 0) * scale),
         opacity: f.outerGlow.opacity ?? 0.5,
       }
-    if (overlay)
-      s.overlay = { enabled: true, color: hex(overlay.color), opacity: overlay.opacity ?? 1 }
-    if (gradient?.gradient?.type === 'solid' && gradient.gradient.colorStops.length)
-      s.gradient = {
+    if (f.innerGlow?.enabled !== false && f.innerGlow)
+      s.innerGlow = {
         enabled: true,
-        from: hex(gradient.gradient.colorStops[0].color),
-        to: hex(gradient.gradient.colorStops.at(-1)!.color),
-        angle: -(gradient.angle || 0),
-        opacity: gradient.opacity ?? 1,
+        color: hex(f.innerGlow.color),
+        blur: Math.min(STYLE_LIMITS.blur, (f.innerGlow.size?.value || 0) * scale),
+        opacity: f.innerGlow.opacity ?? 0.5,
       }
+    const overlays = (f.solidFill || [])
+      .filter((v) => v.enabled !== false)
+      .slice(0, MAX_STYLE_INSTANCES)
+      .map((overlay) => ({
+        enabled: true,
+        color: hex(overlay.color),
+        opacity: overlay.opacity ?? 1,
+      }))
+    if (overlays.length) s.overlays = overlays
+    const gradients = (f.gradientOverlay || [])
+      .filter((v) => v.enabled !== false)
+      .slice(0, MAX_STYLE_INSTANCES)
+      .flatMap((item) => {
+        const gradient = gradientFromPsd(item.gradient)
+        return gradient
+          ? [
+              {
+                enabled: true,
+                gradient,
+                angle: -(item.angle || 0),
+                opacity: item.opacity ?? 1,
+                reverse: item.reverse === true,
+              },
+            ]
+          : []
+      })
+    if (gradients.length) s.gradients = gradients
   }
   return hasStyles(s) ? s : undefined
 }
 function exportStyles(s: LayerStyles): LayerEffectsInfo {
   const effects: LayerEffectsInfo = { scale: 1 }
-  if (s.stroke.enabled)
-    effects.stroke = [
-      {
-        enabled: true,
-        position: s.stroke.position,
-        fillType: 'color',
-        size: px(s.stroke.size),
-        color: rgb(s.stroke.color),
-        opacity: 1,
-        blendMode: 'normal',
-      },
-    ]
-  if (s.shadow.enabled)
-    effects.dropShadow = [
-      {
-        enabled: true,
-        color: rgb(s.shadow.color),
-        size: px(s.shadow.blur),
-        distance: px(Math.hypot(s.shadow.x, s.shadow.y)),
-        angle: (Math.atan2(s.shadow.y, -s.shadow.x) * 180) / Math.PI,
-        opacity: s.shadow.opacity,
-        blendMode: 'multiply',
-        useGlobalLight: false,
-      },
-    ]
+  const strokes = s.strokes.filter((e) => e.enabled)
+  if (strokes.length)
+    effects.stroke = strokes.map((stroke) => ({
+      enabled: true,
+      position: stroke.position,
+      fillType: 'color' as const,
+      size: px(stroke.size),
+      color: rgb(stroke.color),
+      opacity: stroke.opacity,
+      blendMode: 'normal' as const,
+    }))
+  const shadowTo = (shadow: LayerStyles['shadows'][number]) => ({
+    enabled: true,
+    color: rgb(shadow.color),
+    size: px(shadow.blur),
+    distance: px(Math.hypot(shadow.x, shadow.y)),
+    angle: (Math.atan2(shadow.y, -shadow.x) * 180) / Math.PI,
+    opacity: shadow.opacity,
+    blendMode: 'multiply' as const,
+    useGlobalLight: false,
+  })
+  const shadows = s.shadows.filter((e) => e.enabled)
+  if (shadows.length) effects.dropShadow = shadows.map(shadowTo)
+  const innerShadows = s.innerShadows.filter((e) => e.enabled)
+  if (innerShadows.length) effects.innerShadow = innerShadows.map(shadowTo)
   if (s.glow.enabled)
     effects.outerGlow = {
       enabled: true,
@@ -218,41 +331,43 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
       opacity: s.glow.opacity,
       blendMode: 'screen',
     }
-  if (s.overlay.enabled)
-    effects.solidFill = [
-      {
-        enabled: true,
-        color: rgb(s.overlay.color),
-        opacity: s.overlay.opacity,
-        blendMode: 'normal',
-      },
-    ]
-  if (s.gradient.enabled)
-    effects.gradientOverlay = [
-      {
-        enabled: true,
-        type: 'linear',
-        angle: -s.gradient.angle,
-        opacity: s.gradient.opacity,
-        blendMode: 'normal',
-        scale: 1,
-        align: true,
-        gradient: {
-          name: 'ФШ777',
-          type: 'solid',
-          smoothness: 1,
-          colorStops: [
-            { color: rgb(s.gradient.from), location: 0, midpoint: 0.5 },
-            { color: rgb(s.gradient.to), location: 1, midpoint: 0.5 },
-          ],
-          opacityStops: [
-            { opacity: 1, location: 0, midpoint: 0.5 },
-            { opacity: 1, location: 1, midpoint: 0.5 },
-          ],
-        },
-      },
-    ]
+  if (s.innerGlow.enabled)
+    effects.innerGlow = {
+      enabled: true,
+      color: rgb(s.innerGlow.color),
+      size: px(s.innerGlow.blur),
+      opacity: s.innerGlow.opacity,
+      blendMode: 'screen',
+      source: 'edge',
+    }
+  const overlays = s.overlays.filter((e) => e.enabled)
+  if (overlays.length)
+    effects.solidFill = overlays.map((overlay) => ({
+      enabled: true,
+      color: rgb(overlay.color),
+      opacity: overlay.opacity,
+      blendMode: 'normal' as const,
+    }))
+  const gradients = s.gradients.filter((e) => e.enabled)
+  if (gradients.length)
+    effects.gradientOverlay = gradients.map((item) => ({
+      enabled: true,
+      type: 'linear' as const,
+      angle: -item.angle,
+      opacity: item.opacity,
+      blendMode: 'normal',
+      scale: 1,
+      align: true,
+      reverse: item.reverse,
+      gradient: gradientToPsd(item.gradient),
+    }))
   return effects
+}
+export const __psdStyleCodecForTests = {
+  importStyles,
+  exportStyles,
+  gradientFromPsd,
+  gradientToPsd,
 }
 interface EmbeddedImport {
   depth: number

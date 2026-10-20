@@ -1,17 +1,83 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Paintbrush, RotateCcw, Sparkles } from 'lucide-react'
-import type { Layer, LayerStyles } from '../types'
-import { defaultStyles } from '../engine/styles'
-import { loadImage, renderLayer } from '../engine/render'
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCopy,
+  ClipboardPaste,
+  Copy,
+  Download,
+  Paintbrush,
+  Plus,
+  RotateCcw,
+  Save,
+  Scaling,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react'
+import { MAX_STYLE_INSTANCES, type Layer, type LayerStyles } from '../types'
+import {
+  STYLE_LIMITS,
+  defaultGradientOverlayStyle,
+  defaultInnerShadowStyle,
+  defaultOverlayStyle,
+  defaultShadowStyle,
+  defaultStrokeStyle,
+  defaultStyles,
+  normalizeStyles,
+  scaleLayerStyles,
+} from '../engine/styles'
+import { gradientCss } from '../engine/gradientRamp'
+import {
+  builtinStylePresets,
+  copyStyleToClipboard,
+  loadStyleLibrary,
+  parseStyleLibraryFile,
+  readStyleClipboard,
+  saveStyleLibrary,
+  serializeStyleLibrary,
+  type StylePreset,
+} from '../engine/libraries'
+import { downloadBlob, loadImage, renderLayer } from '../engine/render'
+import { GradientDefinitionEditor } from './GradientDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
-const sections = [
-  { id: 'stroke', name: 'Обводка', note: 'Чёткие границы. Новые акценты.' },
-  { id: 'shadow', name: 'Тень', note: 'Добавь немного глубины.' },
-  { id: 'glow', name: 'Внешнее свечение', note: 'Пусть идея светится.' },
-  { id: 'overlay', name: 'Наложение цвета', note: 'Новый цвет, та же форма.' },
-  { id: 'gradient', name: 'Градиент', note: 'Цвет, который движется.' },
-] as const
+type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'library'
+const sections: { id: Tab; name: string; note: string }[] = [
+  {
+    id: 'strokes',
+    name: 'Обводка',
+    note: 'Несколько обводок: верхняя строка списка — поверх остальных.',
+  },
+  { id: 'shadows', name: 'Тень', note: 'Отдельные тени со своим цветом, сдвигом и прозрачностью.' },
+  { id: 'innerShadows', name: 'Внутренняя тень', note: 'Тень от края внутрь формы.' },
+  { id: 'glow', name: 'Внешнее свечение', note: 'Свет вокруг формы.' },
+  { id: 'innerGlow', name: 'Внутреннее свечение', note: 'Свет от края внутрь.' },
+  {
+    id: 'overlays',
+    name: 'Наложение цвета',
+    note: 'Цвет поверх содержимого, без изменения пикселей.',
+  },
+  {
+    id: 'gradients',
+    name: 'Градиент',
+    note: 'Полные градиенты: цвет, прозрачность, середины и шум.',
+  },
+  {
+    id: 'library',
+    name: 'Библиотека стилей',
+    note: 'Пресеты, копирование между слоями и масштаб эффектов.',
+  },
+]
+const enabledOf = (styles: LayerStyles, tab: Tab): number => {
+  if (tab === 'glow') return styles.glow.enabled ? 1 : 0
+  if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
+  if (tab === 'library') return 0
+  return styles[tab].filter((e) => e.enabled).length
+}
+
 export function LayerStyleDialog({
   layer,
   onClose,
@@ -22,14 +88,17 @@ export function LayerStyleDialog({
   onApply: (styles: LayerStyles) => void
 }) {
   const [styles, setStyles] = useState<LayerStyles>(() =>
-    structuredClone(layer.styles || defaultStyles()),
+    structuredClone(normalizeStyles(layer.styles) || defaultStyles()),
   )
-  const [tab, setTab] = useState<(typeof sections)[number]['id']>('stroke')
+  const [tab, setTab] = useState<Tab>('strokes')
+  const [selected, setSelected] = useState(0)
+  const [presetName, setPresetName] = useState('')
+  const [scalePercent, setScalePercent] = useState(100)
+  const [library, setLibrary] = useState<StylePreset[]>(() => loadStyleLibrary())
+  const [message, setMessage] = useState('')
   const preview = useRef<HTMLCanvasElement>(null)
-  const patch = <K extends Exclude<keyof LayerStyles, 'fillOpacity'>>(
-    key: K,
-    value: Partial<LayerStyles[K]>,
-  ) => setStyles((s) => ({ ...s, [key]: { ...s[key], ...value } }))
+  const file = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     let cancelled = false
     const draw = async () => {
@@ -60,7 +129,104 @@ export function LayerStyleDialog({
       cancelled = true
     }
   }, [layer, styles])
-  const active = styles[tab]
+
+  const chooseTab = (next: Tab) => {
+    setTab(next)
+    setSelected(0)
+    setMessage('')
+  }
+  const listKey: ListKey | undefined =
+    tab !== 'glow' && tab !== 'innerGlow' && tab !== 'library' ? tab : undefined
+  const items = listKey ? styles[listKey] : []
+  const index = Math.min(selected, Math.max(0, items.length - 1))
+  const patchItem = (patch: object) => {
+    if (!listKey) return
+    setStyles((s) => ({
+      ...s,
+      [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    }))
+  }
+  const patchSingle = (key: 'glow' | 'innerGlow', patch: object) =>
+    setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
+  const factories = {
+    strokes: defaultStrokeStyle,
+    shadows: defaultShadowStyle,
+    innerShadows: defaultInnerShadowStyle,
+    overlays: defaultOverlayStyle,
+    gradients: defaultGradientOverlayStyle,
+  } as const
+  const addItem = () => {
+    if (!listKey || items.length >= MAX_STYLE_INSTANCES) return
+    const copy = structuredClone(items[index] || factories[listKey]()) as { enabled: boolean }
+    copy.enabled = true
+    setStyles((s) => ({
+      ...s,
+      [listKey]: [
+        ...s[listKey].slice(0, index + 1),
+        copy,
+        ...s[listKey].slice(index + 1),
+      ] as LayerStyles[ListKey],
+    }))
+    setSelected(index + 1)
+  }
+  const removeItem = () => {
+    if (!listKey) return
+    if (items.length <= 1) {
+      setStyles((s) => ({ ...s, [listKey]: [factories[listKey]()] }))
+      setSelected(0)
+      return
+    }
+    setStyles((s) => ({ ...s, [listKey]: s[listKey].filter((_, i) => i !== index) }))
+    setSelected(Math.max(0, index - 1))
+  }
+  const moveItem = (direction: -1 | 1) => {
+    if (!listKey) return
+    const target = index + direction
+    if (target < 0 || target >= items.length) return
+    setStyles((s) => {
+      const next = [...s[listKey]]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return { ...s, [listKey]: next }
+    })
+    setSelected(target)
+  }
+  const itemLabel = (i: number): string => {
+    if (listKey === 'strokes') {
+      const e = styles.strokes[i]
+      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${e.color}`
+    }
+    if (listKey === 'shadows' || listKey === 'innerShadows') {
+      const e = styles[listKey][i]
+      return `${e.x}, ${e.y} · ${e.blur} px · ${e.color}`
+    }
+    if (listKey === 'overlays') return styles.overlays[i].color
+    if (listKey === 'gradients') return styles.gradients[i].gradient.name || 'Градиент'
+    return ''
+  }
+  const activeEnabled =
+    tab === 'glow'
+      ? styles.glow.enabled
+      : tab === 'innerGlow'
+        ? styles.innerGlow.enabled
+        : listKey
+          ? !!items[index]?.enabled
+          : false
+  const setActiveEnabled = (enabled: boolean) => {
+    if (tab === 'glow' || tab === 'innerGlow') patchSingle(tab, { enabled })
+    else patchItem({ enabled })
+  }
+  const applyPreset = (preset: StylePreset) => {
+    setStyles(structuredClone(preset.styles))
+    setSelected(0)
+    setMessage(`Применён стиль «${preset.name}» — нажми «Применить стиль», чтобы сохранить в слое.`)
+  }
+  const stroke = styles.strokes[index] || defaultStrokeStyle()
+  const shadow =
+    (listKey === 'innerShadows' ? styles.innerShadows[index] : styles.shadows[index]) ||
+    defaultShadowStyle()
+  const overlay = styles.overlays[index] || defaultOverlayStyle()
+  const gradientItem = styles.gradients[index] || defaultGradientOverlayStyle()
+
   return (
     <Modal
       title="Характер — в деталях"
@@ -70,25 +236,32 @@ export function LayerStyleDialog({
     >
       <div className="style-layout">
         <nav className="style-navigation">
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              className={tab === s.id ? 'selected' : ''}
-              onClick={() => setTab(s.id)}
-            >
-              <span className={`effect-check ${styles[s.id].enabled ? 'on' : ''}`}>
-                {styles[s.id].enabled && <Check size={10} />}
-              </span>
-              {s.name}
-            </button>
-          ))}
+          {sections.map((s) => {
+            const count = enabledOf(styles, s.id)
+            return (
+              <button
+                key={s.id}
+                className={tab === s.id ? 'selected' : ''}
+                onClick={() => chooseTab(s.id)}
+              >
+                <span className={`effect-check ${count ? 'on' : ''}`}>
+                  {count > 0 && <Check size={10} />}
+                </span>
+                {s.name}
+                {count > 1 && <span className="effect-count">×{count}</span>}
+              </button>
+            )
+          })}
           <div className="style-fill">
             <Slider
-              label="Заливка слоя"
+              label="Заливка слоя (Fill)"
               value={styles.fillOpacity * 100}
               onChange={(v) => setStyles((s) => ({ ...s, fillOpacity: v / 100 }))}
               suffix="%"
             />
+            <p className="panel-note">
+              Заливка ослабляет содержимое, но не обводки, тени и свечение.
+            </p>
           </div>
         </nav>
         <div className="style-controls">
@@ -97,32 +270,91 @@ export function LayerStyleDialog({
               <Paintbrush size={16} />
               {sections.find((s) => s.id === tab)!.name}
             </span>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                aria-label="Включить эффект"
-                checked={active.enabled}
-                onChange={(e) => patch(tab, { enabled: e.target.checked })}
-              />
-              Включить
-            </label>
+            {tab !== 'library' && (
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  aria-label="Включить эффект"
+                  checked={activeEnabled}
+                  onChange={(e) => setActiveEnabled(e.target.checked)}
+                />
+                Включить
+              </label>
+            )}
           </div>
           <p className="panel-note">{sections.find((s) => s.id === tab)!.note}</p>
-          {tab === 'stroke' && (
+
+          {listKey && (
+            <div className="effect-instance-list" data-testid="effect-instance-list">
+              {items.map((item, i) => (
+                <div key={i} className={`effect-instance ${i === index ? 'selected' : ''}`}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Включить экземпляр ${i + 1}`}
+                    checked={item.enabled}
+                    onChange={(e) =>
+                      setStyles((s) => ({
+                        ...s,
+                        [listKey]: s[listKey].map((old, j) =>
+                          j === i ? { ...old, enabled: e.target.checked } : old,
+                        ),
+                      }))
+                    }
+                  />
+                  <button className="effect-instance-name" onClick={() => setSelected(i)}>
+                    #{i + 1} · {itemLabel(i)}
+                  </button>
+                </div>
+              ))}
+              <div className="effect-instance-tools">
+                <button
+                  className="compact-button"
+                  aria-label="Добавить экземпляр эффекта"
+                  disabled={items.length >= MAX_STYLE_INSTANCES}
+                  onClick={addItem}
+                >
+                  <Plus size={13} /> Добавить
+                </button>
+                <button
+                  className="compact-button"
+                  aria-label="Выше в порядке"
+                  disabled={index === 0}
+                  onClick={() => moveItem(-1)}
+                >
+                  <ChevronUp size={13} /> Выше
+                </button>
+                <button
+                  className="compact-button"
+                  aria-label="Ниже в порядке"
+                  disabled={index >= items.length - 1}
+                  onClick={() => moveItem(1)}
+                >
+                  <ChevronDown size={13} /> Ниже
+                </button>
+                <button
+                  className="compact-button"
+                  aria-label="Удалить экземпляр эффекта"
+                  onClick={removeItem}
+                >
+                  <Trash2 size={13} /> Удалить
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'strokes' && (
             <>
               <Slider
                 label="Размер обводки"
-                value={styles.stroke.size}
-                max={80}
+                value={stroke.size}
+                max={STYLE_LIMITS.strokeSize}
                 suffix=" px"
-                onChange={(size) => patch('stroke', { size, enabled: true })}
+                onChange={(size) => patchItem({ size, enabled: true })}
               />
               <Select
                 aria-label="Положение обводки"
-                value={styles.stroke.position}
-                onChange={(e) =>
-                  patch('stroke', { position: e.target.value as LayerStyles['stroke']['position'] })
-                }
+                value={stroke.position}
+                onChange={(e) => patchItem({ position: e.target.value })}
               >
                 <option value="outside">Снаружи</option>
                 <option value="center">По центру</option>
@@ -130,121 +362,286 @@ export function LayerStyleDialog({
               </Select>
               <ColorField
                 label="Цвет обводки слоя"
-                value={styles.stroke.color}
-                onChange={(color) => patch('stroke', { color, enabled: true })}
+                value={stroke.color}
+                onChange={(color) => patchItem({ color, enabled: true })}
+              />
+              <Slider
+                label="Непрозрачность обводки"
+                value={stroke.opacity * 100}
+                suffix="%"
+                onChange={(v) => patchItem({ opacity: v / 100, enabled: true })}
               />
             </>
           )}
-          {tab === 'shadow' && (
+          {(tab === 'shadows' || tab === 'innerShadows') && (
             <>
               <ColorField
                 label="Цвет тени"
-                value={styles.shadow.color}
-                onChange={(color) => patch('shadow', { color, enabled: true })}
+                value={shadow.color}
+                onChange={(color) => patchItem({ color, enabled: true })}
               />
               <Slider
                 label="Размытие тени"
-                value={styles.shadow.blur}
-                max={100}
+                value={shadow.blur}
+                max={STYLE_LIMITS.blur}
                 suffix=" px"
-                onChange={(blur) => patch('shadow', { blur, enabled: true })}
+                onChange={(blur) => patchItem({ blur, enabled: true })}
               />
               <div className="field-grid">
                 <Field
                   label="Сдвиг X"
-                  value={styles.shadow.x}
-                  min={-180}
-                  max={180}
-                  onChange={(x) => patch('shadow', { x, enabled: true })}
+                  value={shadow.x}
+                  min={-STYLE_LIMITS.offset}
+                  max={STYLE_LIMITS.offset}
+                  onChange={(x) => patchItem({ x, enabled: true })}
                 />
                 <Field
                   label="Сдвиг Y"
-                  value={styles.shadow.y}
-                  min={-180}
-                  max={180}
-                  onChange={(y) => patch('shadow', { y, enabled: true })}
+                  value={shadow.y}
+                  min={-STYLE_LIMITS.offset}
+                  max={STYLE_LIMITS.offset}
+                  onChange={(y) => patchItem({ y, enabled: true })}
                 />
               </div>
               <Slider
                 label="Непрозрачность тени"
-                value={styles.shadow.opacity * 100}
+                value={shadow.opacity * 100}
                 suffix="%"
-                onChange={(v) => patch('shadow', { opacity: v / 100 })}
+                onChange={(v) => patchItem({ opacity: v / 100 })}
               />
             </>
           )}
-          {tab === 'glow' && (
+          {(tab === 'glow' || tab === 'innerGlow') && (
             <>
               <ColorField
                 label="Цвет свечения"
-                value={styles.glow.color}
-                onChange={(color) => patch('glow', { color, enabled: true })}
+                value={styles[tab].color}
+                onChange={(color) => patchSingle(tab, { color, enabled: true })}
               />
               <Slider
                 label="Радиус свечения"
-                value={styles.glow.blur}
-                max={100}
+                value={styles[tab].blur}
+                max={STYLE_LIMITS.blur}
                 suffix=" px"
-                onChange={(blur) => patch('glow', { blur, enabled: true })}
+                onChange={(blur) => patchSingle(tab, { blur, enabled: true })}
               />
               <Slider
                 label="Непрозрачность свечения"
-                value={styles.glow.opacity * 100}
+                value={styles[tab].opacity * 100}
                 suffix="%"
-                onChange={(v) => patch('glow', { opacity: v / 100 })}
+                onChange={(v) => patchSingle(tab, { opacity: v / 100 })}
               />
             </>
           )}
-          {tab === 'overlay' && (
+          {tab === 'overlays' && (
             <>
               <ColorField
                 label="Цвет наложения"
-                value={styles.overlay.color}
-                onChange={(color) => patch('overlay', { color, enabled: true })}
+                value={overlay.color}
+                onChange={(color) => patchItem({ color, enabled: true })}
               />
               <Slider
                 label="Непрозрачность цвета"
-                value={styles.overlay.opacity * 100}
+                value={overlay.opacity * 100}
                 suffix="%"
-                onChange={(v) => patch('overlay', { opacity: v / 100, enabled: true })}
+                onChange={(v) => patchItem({ opacity: v / 100, enabled: true })}
               />
             </>
           )}
-          {tab === 'gradient' && (
+          {tab === 'gradients' && (
             <>
               <div
                 className="gradient-strip"
-                style={{
-                  background: `linear-gradient(${styles.gradient.angle}deg,${styles.gradient.from},${styles.gradient.to})`,
-                }}
+                style={{ background: gradientCss(gradientItem.gradient, gradientItem.angle, 32) }}
               />
-              <div className="field-grid">
-                <ColorField
-                  label="Начало градиента"
-                  value={styles.gradient.from}
-                  onChange={(from) => patch('gradient', { from, enabled: true })}
-                />
-                <ColorField
-                  label="Конец градиента"
-                  value={styles.gradient.to}
-                  onChange={(to) => patch('gradient', { to, enabled: true })}
-                />
-              </div>
+              <GradientDefinitionEditor
+                definition={gradientItem.gradient}
+                onChange={(gradient) => patchItem({ gradient, enabled: true })}
+                onFinish={() => {}}
+              />
               <Slider
                 label="Угол градиента"
-                value={styles.gradient.angle}
+                value={gradientItem.angle}
                 max={360}
                 suffix="°"
-                onChange={(angle) => patch('gradient', { angle, enabled: true })}
+                onChange={(angle) => patchItem({ angle, enabled: true })}
               />
               <Slider
                 label="Непрозрачность градиента"
-                value={styles.gradient.opacity * 100}
+                value={gradientItem.opacity * 100}
                 suffix="%"
-                onChange={(v) => patch('gradient', { opacity: v / 100 })}
+                onChange={(v) => patchItem({ opacity: v / 100 })}
               />
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={gradientItem.reverse}
+                  onChange={(e) => patchItem({ reverse: e.target.checked, enabled: true })}
+                />
+                Обратить градиент
+              </label>
             </>
           )}
+          {tab === 'library' && (
+            <div data-testid="style-library">
+              <span className="panel-subtitle">Готовые стили</span>
+              <div className="path-button-grid">
+                {builtinStylePresets.map((preset) => (
+                  <button
+                    key={preset.name}
+                    className="compact-button"
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+              <span className="panel-subtitle">Мои стили ({library.length})</span>
+              <div className="path-button-grid">
+                {library.map((preset) => (
+                  <button
+                    key={preset.name}
+                    className="compact-button"
+                    onClick={() => applyPreset(preset)}
+                  >
+                    ★ {preset.name}
+                  </button>
+                ))}
+                {!library.length && (
+                  <span className="panel-note">Пока пусто — сохрани текущий стиль ниже.</span>
+                )}
+              </div>
+              <label className="dialog-label">
+                Название нового стиля
+                <input
+                  className="dialog-input"
+                  aria-label="Название нового стиля"
+                  value={presetName}
+                  maxLength={80}
+                  placeholder="Например: Заголовок ULTRA"
+                  onChange={(e) => setPresetName(e.target.value)}
+                />
+              </label>
+              <div className="path-button-grid">
+                <button
+                  className="compact-button"
+                  disabled={!presetName.trim()}
+                  onClick={() => {
+                    const preset = { name: presetName.trim(), styles: structuredClone(styles) }
+                    const next = [...library.filter((p) => p.name !== preset.name), preset].slice(
+                      -64,
+                    )
+                    setLibrary(next)
+                    saveStyleLibrary(next)
+                    setPresetName('')
+                    setMessage(`Стиль «${preset.name}» сохранён в библиотеку.`)
+                  }}
+                >
+                  <Save size={13} /> Сохранить стиль
+                </button>
+                <button
+                  className="compact-button"
+                  disabled={
+                    !presetName.trim() || !library.some((p) => p.name === presetName.trim())
+                  }
+                  onClick={() => {
+                    const next = library.filter((p) => p.name !== presetName.trim())
+                    setLibrary(next)
+                    saveStyleLibrary(next)
+                    setMessage('Стиль удалён из библиотеки.')
+                  }}
+                >
+                  <Trash2 size={13} /> Удалить по названию
+                </button>
+                <button className="compact-button" onClick={() => file.current?.click()}>
+                  <Upload size={13} /> Импорт стилей
+                </button>
+                <button
+                  className="compact-button"
+                  disabled={!library.length}
+                  onClick={() =>
+                    void downloadBlob(
+                      new Blob([serializeStyleLibrary(library)], { type: 'application/json' }),
+                      'styles.777styles.json',
+                    ).catch((e) => setMessage(e instanceof Error ? e.message : 'Ошибка экспорта'))
+                  }
+                >
+                  <Download size={13} /> Экспорт стилей
+                </button>
+              </div>
+              <span className="panel-subtitle">Между слоями</span>
+              <div className="path-button-grid">
+                <button
+                  className="compact-button"
+                  onClick={() => {
+                    copyStyleToClipboard(styles)
+                    setMessage('Стиль скопирован. Открой стили другого слоя и вставь.')
+                  }}
+                >
+                  <ClipboardCopy size={13} /> Копировать стиль
+                </button>
+                <button
+                  className="compact-button"
+                  onClick={() => {
+                    const pasted = readStyleClipboard()
+                    if (pasted) {
+                      setStyles(pasted)
+                      setSelected(0)
+                      setMessage('Стиль вставлен в предпросмотр.')
+                    } else setMessage('Буфер стилей пуст.')
+                  }}
+                >
+                  <ClipboardPaste size={13} /> Вставить стиль
+                </button>
+              </div>
+              <span className="panel-subtitle">Масштаб эффектов</span>
+              <div className="field-grid">
+                <Field
+                  label="Масштаб"
+                  value={scalePercent}
+                  min={5}
+                  max={400}
+                  suffix="%"
+                  onChange={setScalePercent}
+                />
+                <button
+                  className="compact-button"
+                  onClick={() => setStyles((s) => scaleLayerStyles(s, scalePercent / 100))}
+                >
+                  <Scaling size={13} /> Масштабировать размеры и сдвиги
+                </button>
+              </div>
+              <input
+                ref={file}
+                type="file"
+                accept="application/json,.json"
+                hidden
+                aria-label="Импорт библиотеки стилей"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!picked) return
+                  void picked
+                    .text()
+                    .then((text) => {
+                      const imported = parseStyleLibraryFile(text)
+                      const names = new Set(imported.map((p) => p.name))
+                      const next = [
+                        ...library.filter((p) => !names.has(p.name)),
+                        ...imported,
+                      ].slice(-64)
+                      setLibrary(next)
+                      saveStyleLibrary(next)
+                      setMessage(`Импортировано стилей: ${imported.length}.`)
+                    })
+                    .catch((err: unknown) =>
+                      setMessage(err instanceof Error ? err.message : 'Ошибка импорта стилей'),
+                    )
+                }}
+              />
+            </div>
+          )}
+          {message && <p className="panel-note">{message}</p>}
         </div>
       </div>
       <div className="style-preview">
@@ -256,7 +653,20 @@ export function LayerStyleDialog({
           <RotateCcw size={14} />
           Сбросить стили
         </button>
-        <button className="primary-button" onClick={() => onApply(styles)}>
+        <button
+          className="text-button"
+          onClick={() => {
+            copyStyleToClipboard(styles)
+            setMessage('Стиль скопирован.')
+          }}
+        >
+          <Copy size={14} />
+          Копировать
+        </button>
+        <button
+          className="primary-button"
+          onClick={() => onApply(normalizeStyles(styles) || styles)}
+        >
           <Sparkles size={15} />
           Применить стиль
         </button>

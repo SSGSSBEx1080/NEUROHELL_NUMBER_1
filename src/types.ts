@@ -186,7 +186,9 @@ export interface ToolSettings {
   sampleAllLayers?: boolean
   quickMask?: boolean
   editMask?: boolean
-  gradientType?: 'linear' | 'radial'
+  gradientType?: 'linear' | 'radial' | 'reflected' | 'angle'
+  /** Selected tool gradient; undefined means the live foreground → background ramp. */
+  gradient?: import('./engine/gradientRamp').GradientDefinition
 }
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
   brightness: 0,
@@ -201,19 +203,55 @@ export const DEFAULT_ADJUSTMENTS: Adjustments = {
 export const MAX_DIMENSION = 4096
 export const MAX_LAYERS = 100
 
+export interface StrokeEffectStyle {
+  enabled: boolean
+  size: number
+  color: string
+  position: 'outside' | 'inside' | 'center'
+  opacity: number
+}
+export interface ShadowEffectStyle {
+  enabled: boolean
+  color: string
+  blur: number
+  x: number
+  y: number
+  opacity: number
+}
+export interface GlowEffectStyle {
+  enabled: boolean
+  color: string
+  blur: number
+  opacity: number
+}
+export interface ColorOverlayStyle {
+  enabled: boolean
+  color: string
+  opacity: number
+}
+export interface GradientOverlayStyle {
+  enabled: boolean
+  gradient: import('./engine/gradientRamp').GradientDefinition
+  angle: number
+  opacity: number
+  reverse: boolean
+}
+/**
+ * Ordered effect stack. In every list index 0 is the topmost instance:
+ * rendering paints from the end of the list towards the start.
+ * Fill opacity only attenuates the layer content, never the effects.
+ */
 export interface LayerStyles {
   fillOpacity: number
-  stroke: {
-    enabled: boolean
-    size: number
-    color: string
-    position: 'outside' | 'inside' | 'center'
-  }
-  shadow: { enabled: boolean; color: string; blur: number; x: number; y: number; opacity: number }
-  glow: { enabled: boolean; color: string; blur: number; opacity: number }
-  overlay: { enabled: boolean; color: string; opacity: number }
-  gradient: { enabled: boolean; from: string; to: string; angle: number; opacity: number }
+  strokes: StrokeEffectStyle[]
+  shadows: ShadowEffectStyle[]
+  innerShadows: ShadowEffectStyle[]
+  glow: GlowEffectStyle
+  innerGlow: GlowEffectStyle
+  overlays: ColorOverlayStyle[]
+  gradients: GradientOverlayStyle[]
 }
+export const MAX_STYLE_INSTANCES = 10
 
 export type Quad = [Point, Point, Point, Point]
 

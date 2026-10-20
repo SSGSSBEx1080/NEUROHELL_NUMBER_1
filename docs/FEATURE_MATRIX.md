@@ -1,8 +1,8 @@
-# ФШ777 0.7.1 · Карта функциональности
+# ФШ777 ULTRA 0.8 · Карта функциональности
 
 Это карта фактически реализованных направлений, **не утверждение об эквивалентности Photoshop 2026 и не исчерпывающий список каждой его кнопки**. Собственный код и интерфейс; закрытый Adobe engine/ресурсы не копируются. Ориентир — публичное руководство и официальные release notes, включая v27.11 за сентябрь 2026. [3](https://helpx.adobe.com/photoshop/desktop/whats-new/photoshop-on-desktop-release-notes.html)
 
-| Направление                  | Состояние 0.7.1                                                                          | Существенная граница                                                                                 |
+| Направление                  | Состояние 0.8                                                                          | Существенная граница                                                                                 |
 | ---------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Самостоятельное приложение   | Windows x64 installer / ZIP, без Node/сервера                                            | Неподписанный prerelease; Linux/macOS/ARM64 бинарники не выпускаются                                 |
 | Документы                    | Главная, новый/open/recents/recovery, шесть вкладок                                      | Холст 4096², 100 слоёв; не многогигабайтный PSB                                                      |
@@ -26,10 +26,11 @@
 | Точность tone                | Независимый пересчёт нескольких native RGB/8 fixtures                                    | Не доказана произвольная Adobe/ICC/16-bit эквивалентность                                            |
 | Смарт-содержимое             | Embedded PSD, отдельная вкладка/Apply/undo; native XMP-free subset                       | Guarded depth/budgets; arbitrary linked AI/PDF/warp/filter/animation не раскрываются                 |
 | Фильтры                      | 6 CPU-фильтров на явной копии с оригиналом, preview/cancel/selection                     | До 8 Мп; не native Adobe Smart Filter stack                                                          |
-| Стили                        | Stroke/shadow/glow/color/gradient overlay                                                | Нет полного Adobe FX/bevel/texture/contour engine                                                    |
+| Стили                        | Упорядоченный стек: до 10 stroke/drop\+inner shadow/color\+gradient overlay, outer+inner glow, Fill только для содержимого, масштаб эффектов, библиотека и copy/paste; native multi-FX в PSD | Нет bevel/satin/pattern/contour; обводка только цветом (не градиент/узор); отключённые в PSD экземпляры после правки не сохраняются; полного Adobe FX engine нет |
+| Градиенты                    | Цвет+alpha точки, середины, библиотека/обмен JSON, seeded noise RGB/HSB/Lab, 4 формы инструмента, те же данные в gradient overlay и карте градиента | Собственный алгоритм шума (не Adobe); HSL из PSD редактируется как HSB; наложение градиента в стилях только линейное |
 | Кисти                        | Size/opacity/hardness/spacing, eraser, clone, bucket, gradient                           | Не полная ABR/brush dynamics/pen-pressure/mixer-brush система                                        |
 | Восстановление J             | Локальный smooth/exemplar worker, donors/preview/new layer                               | Не генеративный Remove/Firefly; потерянный рисунок не гарантируется                                  |
-| Операции                     | Проверяемая запись/replay, параметры type/vector/correction, shortcuts, JSON, ATN subset | Selection/pixels/masks/multi-object edits остаются явными blockers                                   |
+| Операции и пакет             | Проверяемая запись/replay, параметры type/vector/correction/styles, shortcuts, JSON, ATN subset; пакет до 50 файлов только в копии с журналом и отменой | Selection/pixels/masks/multi-object edits остаются явными blockers; операция пакета начинается с верхнего доступного слоя |
 | Поиск                        | Ctrl+F, реальные команды/tools/actions, aliases, раскладка, recents                      | Не Adobe Discover/онлайн-база уроков/AI Assistant                                                    |
 | PSD/PSB                      | Native supported structures, merged, original preservation, SHA-256 stale-XMP check      | Не universal import/export fidelity; Photoshop/XnConvert не запускались                              |
 | Экспорт                      | PNG/JPEG/WebP/PSD/PSB, CUBE верхнего color stack, scale/background, backup .777          | Нет полного PDF/SVG/TIFF/RAW/print delivery pipeline                                                 |
@@ -40,6 +41,13 @@
 ## Текстовые блоки и рабочая среда
 
 Переиспользуемое содержимое, метки, заметки, состояния, связь со слоем и обмен `.777texts.json`. Старые записи/настройки мигрируют без подмены пользовательских данных. Главная не запускает учебные задания, а методы восстановления и свойства рамок описаны как общие инструменты.
+
+## Дополнения 0.8 ULTRA
+
+- Порядок экземпляров эффектов — часть данных, а не только картинки: список сверху вниз = сверху вниз по стеку отрисовки; то же сохраняется порядком дескрипторов PSD.
+- Старые одиночные стили и двухцветные градиенты 0.7 мигрируют в одноэлементные списки и настоящие точки без изменения параметров.
+- Пакет никогда не пишет поверх входного файла: веб — скачивание копий, desktop — выбранная папка по непрозрачному id и запрет перезаписи на уровне основного процесса.
+- Брендинг ULTRA не меняет appId/профиль: прежние недавние проекты и настройки остаются на месте.
 
 ## Дополнения 0.7
 
@@ -52,6 +60,6 @@
 
 Сначала — подлинные данные слоя, предсказуемая геометрия, маски, compositing и undo; затем удобство операций. Название кнопки не считается реализацией. Каждый checkpoint отправляется на GitHub; Windows-публикация следует за запуском исходного приложения и упакованного EXE.
 
-Тесты не подменяют внешнюю сертификацию: `tests/unit`, `tests/e2e`, `tests/interop/check_psd.py`, `tests/desktop/smoke.cjs`. Детали и точные пределы — [COMPATIBILITY](COMPATIBILITY.md), ход работы — [UPDATE-0.7.1](UPDATE-0.7.1.md).
+Тесты не подменяют внешнюю сертификацию: `tests/unit`, `tests/e2e`, `tests/interop/check_psd.py`, `tests/desktop/smoke.cjs`. Детали и точные пределы — [COMPATIBILITY](COMPATIBILITY.md), ход работы — [UPDATE-0.8](UPDATE-0.8.md).
 
 Следующие крупные самостоятельные направления: проблемные пользовательские PSD/ICC, rich/path text и полный Boolean/vector workflow, полноценный multi-transform, дополнительные native smart filters, brush dynamics, channels и color-managed higher-bit-depth pipeline. Наличие плана не означает, что эти функции уже доступны.

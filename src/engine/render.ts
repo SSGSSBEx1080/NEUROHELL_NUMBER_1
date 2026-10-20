@@ -460,7 +460,22 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
   }
   const mask = rasterMask(layer),
     styles = layer.styles
-  const angle = ((styles?.gradient.angle || 0) * Math.PI) / 180
+  const flipAngle = (degrees: number) => {
+    const angle = (degrees * Math.PI) / 180
+    return (
+      (Math.atan2(
+        Math.sin(angle) * (layer.flipY ? -1 : 1),
+        Math.cos(angle) * (layer.flipX ? -1 : 1),
+      ) *
+        180) /
+      Math.PI
+    )
+  }
+  const flipShadow = <T extends { x: number; y: number }>(e: T): T => ({
+    ...e,
+    x: e.x * (layer.flipX ? -1 : 1),
+    y: e.y * (layer.flipY ? -1 : 1),
+  })
   rasterGeometry.set(canvas, {
     source: layer,
     patch: {
@@ -476,21 +491,9 @@ export async function rasterizeLayer(layer: Layer): Promise<HTMLCanvasElement> {
         styles && (layer.flipX || layer.flipY)
           ? {
               ...styles,
-              shadow: {
-                ...styles.shadow,
-                x: styles.shadow.x * (layer.flipX ? -1 : 1),
-                y: styles.shadow.y * (layer.flipY ? -1 : 1),
-              },
-              gradient: {
-                ...styles.gradient,
-                angle:
-                  (Math.atan2(
-                    Math.sin(angle) * (layer.flipY ? -1 : 1),
-                    Math.cos(angle) * (layer.flipX ? -1 : 1),
-                  ) *
-                    180) /
-                  Math.PI,
-              },
+              shadows: styles.shadows.map(flipShadow),
+              innerShadows: styles.innerShadows.map(flipShadow),
+              gradients: styles.gradients.map((g) => ({ ...g, angle: flipAngle(g.angle) })),
             }
           : styles,
     },

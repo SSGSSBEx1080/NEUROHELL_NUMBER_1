@@ -628,7 +628,7 @@ test('warped strokes, local effects and masks stay editable inside placed PSD co
     { x: 0.12, y: 1.03 },
   ] as const
   const styles = defaultStyles()
-  styles.shadow = { enabled: true, color: '#263549', blur: 6, x: 9, y: 7, opacity: 0.7 }
+  styles.shadows = [{ enabled: true, color: '#263549', blur: 6, x: 9, y: 7, opacity: 0.7 }]
   styles.fillOpacity = 0.8
   doc.layers = [
     makeLayer({

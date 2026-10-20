@@ -8,7 +8,12 @@ import {
   parseProject,
 } from '../../src/engine/document'
 import { processPixels } from '../../src/engine/pixels'
-import { defaultStyles, normalizeStyles } from '../../src/engine/styles'
+import {
+  defaultStyles,
+  normalizeStyles,
+  scaleLayerStyles,
+  styleEffectSummary,
+} from '../../src/engine/styles'
 import { actionBlockers, builtinActions, parseActionSet, runAction } from '../../src/engine/actions'
 import { parseAtn } from '../../src/engine/atn'
 import { validatePsdHeader } from '../../src/engine/psdHeader'
@@ -135,20 +140,47 @@ describe('Local pixel operations', () => {
   })
 })
 describe('Layer styles', () => {
-  it('bounds blur, stroke and opacity while rejecting CSS injection', () => {
+  it('migrates legacy single effects, bounds values and rejects CSS injection', () => {
     const s = normalizeStyles({
       fillOpacity: -10,
       stroke: { size: 99999, color: 'url(https://tracking)', position: 'somewhere', enabled: true },
       shadow: { blur: Infinity, opacity: 999 },
       overlay: { color: '#abcdef' },
+      gradient: { enabled: true, from: '#111111', to: '#eeeeee', angle: 30, opacity: 0.5 },
     })!
-    expect(s.stroke.size).toBe(80)
-    expect(s.stroke.color).toBe('#ffffff')
-    expect(s.stroke.position).toBe('outside')
-    expect(s.shadow.blur).toBe(20)
-    expect(s.shadow.opacity).toBe(1)
+    expect(s.strokes).toHaveLength(1)
+    expect(s.strokes[0].size).toBe(120)
+    expect(s.strokes[0].color).toBe('#ffffff')
+    expect(s.strokes[0].position).toBe('outside')
+    expect(s.shadows[0].blur).toBe(20)
+    expect(s.shadows[0].opacity).toBe(1)
     expect(s.fillOpacity).toBe(0)
-    expect(s.overlay.color).toBe('#abcdef')
+    expect(s.overlays[0].color).toBe('#abcdef')
+    expect(s.gradients[0].gradient.stops.map((stop) => stop.color)).toEqual(['#111111', '#eeeeee'])
+    expect(s.gradients[0].angle).toBe(30)
+  })
+
+  it('caps ordered effect lists and scales only distance parameters', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      enabled: true,
+      size: i + 1,
+      color: '#ff0000',
+      position: 'outside',
+      opacity: 0.5,
+    }))
+    const s = normalizeStyles({ strokes: many })!
+    expect(s.strokes).toHaveLength(10)
+    expect(s.strokes[1].size).toBe(2)
+    const scaled = scaleLayerStyles(
+      normalizeStyles({
+        strokes: [{ enabled: true, size: 10, color: '#ff0000', position: 'outside', opacity: 0.5 }],
+        shadows: [{ enabled: true, color: '#000000', blur: 8, x: 4, y: -6, opacity: 0.4 }],
+      })!,
+      1.5,
+    )
+    expect(scaled.strokes[0]).toMatchObject({ size: 15, opacity: 0.5, color: '#ff0000' })
+    expect(scaled.shadows[0]).toMatchObject({ blur: 12, x: 6, y: -9, opacity: 0.4 })
+    expect(styleEffectSummary(scaled)).toContain('Обводка')
   })
 })
 describe('Actions and ATN', () => {

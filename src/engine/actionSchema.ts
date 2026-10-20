@@ -144,7 +144,7 @@ export function parseActionProperties(input: unknown): ActionProperties {
     )
       out[key] = value
     else if (key === 'styles' && (value === null || object(value))) {
-      if (value && JSON.stringify(value).length > 4000)
+      if (value && JSON.stringify(value).length > 24000)
         throw new Error('Слишком большой стиль операции')
       out[key] = value === null ? null : normalizeStyles(value)
     } else if (key === 'textFrame' && (value === null || object(value)))

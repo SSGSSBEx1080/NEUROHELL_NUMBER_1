@@ -4,12 +4,8 @@ import { exportCanvas } from '../engine/render'
 import { runSelection } from '../engine/selectionJob'
 import { rasterSelection, type ColorRangeMode } from '../engine/selectionPixels'
 import { ColorField, Field, Modal, Select } from './ui'
-export const selectionModeNames: Record<SelectionMode, string> = {
-  replace: 'Новое выделение',
-  add: 'Добавить',
-  subtract: 'Вычесть',
-  intersect: 'Пересечение',
-}
+export { selectionModeNames } from './selection-labels'
+import { selectionModeNames } from './selection-labels'
 export function ColorRangeDialog({
   doc,
   initialMode,

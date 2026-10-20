@@ -1,4 +1,4 @@
-# Архитектура ФШ777 · 0.7.1
+# Архитектура ФШ777 · 0.8
 
 Независимый TypeScript/React-редактор с Canvas 2D и отдельной Electron-оболочкой. Сервер обработки изображений не нужен. Adobe-код не используется; ag-psd — MIT-кодек формата, не готовый движок Photoshop.
 
@@ -124,7 +124,7 @@ J передаёт worker копии пикселей/масок: исходны
 - `maskOperations`: меняются mask pixels/defaultColor, не layer kind. `commandSearch` и `CommandPalette` используют те же обработчики, что меню/инструменты, имеют aliases/раскладку/recents, не исполняют строки как код.
 - Persistent source keys immutable: одинаковый PNG не заменяет уже используемый HTMLImage/Canvas другим представлением с чуть отличающейся фильтрацией Chromium. `mask-preview:` — явное исключение для живой кисти. Исправление проверяется на повороте/отражении/blur/маске без расширения допуска.
 
-Тестовая матрица 0.7.1: 265 unit в 29 файлах, 119 production browser, 35 independent PSD fixtures, 11 desktop security/IPC/font-probe. Native Windows smoke дополнен command search, levels/curves+mask, Quick Mask, native guide resource, Wand worker, filter worker/сохранением original smart/undo. Эти проверки не равны интерактивному NSIS-install тесту, Adobe execution или полной сертификации формата.
+Тестовая матрица 0.8: 284 unit в 32 файлах, 122 production browser, 35 independent PSD fixtures, 12 desktop security/IPC/font-probe/batch. Native Windows smoke дополнен command search, levels/curves+mask, Quick Mask, native guide resource, Wand worker, filter worker/сохранением original smart/undo. Эти проверки не равны интерактивному NSIS-install тесту, Adobe execution или полной сертификации формата.
 
 Синтетический CPU-benchmark: `node --expose-gc scripts/benchmark-filters.mjs 4096 2048`. Отдельный процесс Node, без PNG encode/UI/Windows; результат не используется для сравнений скорости с Photoshop.
 
@@ -143,3 +143,11 @@ J передаёт worker копии пикселей/масок: исходны
 - `bundledAssets.ts` — фиксированная таблица разрешённых локальных ресурсов. Legacy bytes в `public/compat/` запрашиваются только для соответствующих сохранённых документов; новые документы и главная их не используют.
 - `tests/fixtures/editor/text-blocks.cjs` строит синтетические PNG/текстовые данные без зависимости от приложения или иллюстраций. Browser/desktop/benchmark используют один контракт, не скрытый production-test endpoint.
 - `textPreview.ts` восстанавливает истинную однотонную заливку eligible TypeLayer cache после Canvas premultiplication quantization. Перед нормализацией проверяется весь кеш; неизвестные/цветные варианты остаются исходными. Native тип слоя и metadata не меняются.
+
+## Стили, градиенты, библиотеки и пакет 0.8
+
+- `styles.ts` — единственный шлюз нормализации (`normalizeStyles`) и рендера стилей. Каноническая модель — упорядоченные массивы экземпляров; легаси-одиночки 0.7 мигрируют внутри нормализатора, поэтому `document.ts`, операции и PSD получают одну форму данных. Отрисовка идёт группами «тени → внешнее свечение → содержимое с наложениями (Fill) → внутренние эффекты → обводки», внутри списка индекс 0 верхний.
+- `gradientRamp.ts` расширен до полного определения градиента: color/opacity stops, midpoint-искажение по семантике дескриптора, детерминированный `mulberry32` шум в RGB/HSB/Lab и семплирование в Canvas/CSS из одних функций. `GradientEditor` (карта градиента) и `GradientDefinitionEditor` (инструмент и наложения) редактируют одни данные, а не превью.
+- `libraries.ts` — локальные библиотеки градиентов/стилей, буфер стиля и строгий JSON-обмен с лимитами; документы библиотек не содержат. `batch.ts` — последовательный пакетный конвейер поверх обычных импорта, `runAction` и экспорта, без отдельной «пакетной» семантики операций.
+- Десктопный вывод пакета: основной процесс хранит выбранную пользователем папку по непрозрачному UUID (`chooseBatchFolder`/`saveBatchFile`); renderer не получает и не передаёт путей, имя файла проходит тот же `validateSaveRequest`, запись атомарна и не перезаписывает существующие файлы.
+- Знак ULTRA задан одним SVG (`components/Brand.tsx` ≡ `public/favicon.svg`); `scripts/generate-icons.mjs` воспроизводимо строит из него `desktop/icon.png` и PNG-сжатый `icon.ico`.

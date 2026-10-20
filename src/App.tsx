@@ -1,24 +1,14 @@
-import { ExportLutDialog } from './components/ExportLutDialog'
 import { usePathTool } from './hooks/usePathTool'
-import { RasterFilterDialog } from './components/RasterFilterDialog'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
 import { insertFilteredCopy } from './engine/filterLayers'
-import { CommandPalette, type EditorCommand } from './components/CommandPalette'
 import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
-import { ArrangeDialog } from './components/ArrangeDialog'
-import { GuidesDialog } from './components/GuidesDialog'
 import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
-import { ColorRangeDialog, selectionModeNames } from './components/ColorRangeDialog'
-import { SelectionModifyDialog, selectionModifyNames } from './components/SelectionModifyDialog'
 import { rasterSelection, type SelectionModify } from './engine/selectionPixels'
 import { runSelection } from './engine/selectionJob'
 import { selectionSource } from './engine/selectionSource'
-import { CorrectionDialog } from './components/CorrectionDialog'
 import { insertAdjustment } from './engine/adjustmentLayers'
 import { correctionNames, type CorrectionKind } from './engine/adjustmentTypes'
-import { PsdReportDialog } from './components/PsdReportDialog'
 import type { PsdExportReport } from './engine/psdReport'
-import { parseTextEntriesFile, MAX_TEXT_ENTRIES } from './engine/textEntriesFormat'
 import { insertRepairLayer } from './engine/repairPlacement'
 import { ActionsPanel } from './components/ActionsPanel'
 import { PanelDock } from './components/PanelDock'
@@ -31,12 +21,11 @@ import {
   hasPendingActionDraft,
 } from './engine/actionStorage'
 import { RecordingBar } from './components/RecordingBar'
-import { TextEntriesPanel } from './components/TextEntriesPanel'
-import { RepairDialog } from './components/RepairDialog'
+const TextEntriesPanel = lazy(() =>
+  import('./components/TextEntriesPanel').then((m) => ({ default: m.TextEntriesPanel })),
+)
 import { useEasterEggs } from './hooks/useEasterEggs'
 import { HomeScreen } from './components/HomeScreen'
-import { ImageSizeDialog } from './components/ImageSizeDialog'
-import { CloseDocumentDialog } from './components/CloseDocumentDialog'
 import { useWorkspace } from './hooks/useWorkspace'
 import {
   groupLayers,
@@ -48,20 +37,100 @@ import {
 } from './engine/layerOperations'
 import { makeSmartObject } from './engine/smartObjects'
 import { Home, FolderPlus, Layers3, SquareStack, RectangleHorizontal } from 'lucide-react'
-import { FontsDialog } from './components/FontsDialog'
-import { SettingsDialog } from './components/SettingsDialog'
+import type { EditorCommand } from './components/CommandPalette'
+import { selectionModeNames, selectionModifyNames } from './components/selection-labels'
+
+// Dialogs load on first open so the initial workspace bundle stays small; behavior is identical.
+const ExportLutDialog = lazy(() =>
+  import('./components/ExportLutDialog').then((m) => ({ default: m.ExportLutDialog })),
+)
+const RasterFilterDialog = lazy(() =>
+  import('./components/RasterFilterDialog').then((m) => ({ default: m.RasterFilterDialog })),
+)
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+const ArrangeDialog = lazy(() =>
+  import('./components/ArrangeDialog').then((m) => ({ default: m.ArrangeDialog })),
+)
+const GuidesDialog = lazy(() =>
+  import('./components/GuidesDialog').then((m) => ({ default: m.GuidesDialog })),
+)
+const ColorRangeDialog = lazy(() =>
+  import('./components/ColorRangeDialog').then((m) => ({ default: m.ColorRangeDialog })),
+)
+const SelectionModifyDialog = lazy(() =>
+  import('./components/SelectionModifyDialog').then((m) => ({ default: m.SelectionModifyDialog })),
+)
+const CorrectionDialog = lazy(() =>
+  import('./components/CorrectionDialog').then((m) => ({ default: m.CorrectionDialog })),
+)
+const PsdReportDialog = lazy(() =>
+  import('./components/PsdReportDialog').then((m) => ({ default: m.PsdReportDialog })),
+)
+const RepairDialog = lazy(() =>
+  import('./components/RepairDialog').then((m) => ({ default: m.RepairDialog })),
+)
+const ImageSizeDialog = lazy(() =>
+  import('./components/ImageSizeDialog').then((m) => ({ default: m.ImageSizeDialog })),
+)
+const CloseDocumentDialog = lazy(() =>
+  import('./components/CloseDocumentDialog').then((m) => ({ default: m.CloseDocumentDialog })),
+)
+const FontsDialog = lazy(() =>
+  import('./components/FontsDialog').then((m) => ({ default: m.FontsDialog })),
+)
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+)
+const ColorDialog = lazy(() =>
+  import('./components/ColorDialog').then((m) => ({ default: m.ColorDialog })),
+)
+const ActionsDialog = lazy(() =>
+  import('./components/ActionsDialog').then((m) => ({ default: m.ActionsDialog })),
+)
+const LayerStyleDialog = lazy(() =>
+  import('./components/LayerStyleDialog').then((m) => ({ default: m.LayerStyleDialog })),
+)
+const GradientToolDialog = lazy(() =>
+  import('./components/GradientToolDialog').then((m) => ({ default: m.GradientToolDialog })),
+)
+const BatchDialog = lazy(() =>
+  import('./components/BatchDialog').then((m) => ({ default: m.BatchDialog })),
+)
+const CompatibilityDialog = lazy(() =>
+  import('./components/CompatibilityDialog').then((m) => ({ default: m.CompatibilityDialog })),
+)
+const ExportDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.ExportDialog })),
+)
+const HelpDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.HelpDialog })),
+)
+const NewDocumentDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.NewDocumentDialog })),
+)
+const ReplaceDialog = lazy(() =>
+  import('./components/Dialogs').then((m) => ({ default: m.ReplaceDialog })),
+)
+const dialogFallback = (
+  <div className="busy-overlay" role="status">
+    <div>
+      <LoaderCircle className="spin" size={22} />
+      <span>Загружаем окно…</span>
+    </div>
+  </div>
+)
 import { loadSystemFonts, restoreFonts } from './engine/fonts'
 import { ToolRail, TOOLS as tools, cycleTool, selectionTools } from './components/ToolRail'
 import { selectionMask, combineSelection, invertSelection } from './engine/selection'
 import { loadPreferences, savePreferences } from './engine/preferences'
 import { FileManager } from './engine/fileManager'
-import { ColorDialog } from './components/ColorDialog'
-import { ActionsDialog } from './components/ActionsDialog'
 import { parseActionSet, runAction, type StudioAction } from './engine/actions'
-import { parseAtn } from './engine/atn'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  Blend,
   Search,
   Check,
   ChevronDown,
@@ -93,13 +162,12 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { LayerStyleDialog } from './components/LayerStyleDialog'
-import { CompatibilityDialog } from './components/CompatibilityDialog'
+import { BrandMark } from './components/Brand'
+import { gradientCss, solidGradient } from './engine/gradientRamp'
 import type { CompatibilityReport } from './engine/psd'
 import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
-import { ExportDialog, HelpDialog, NewDocumentDialog, ReplaceDialog } from './components/Dialogs'
 import { Dropdown, type MenuItem } from './components/Dropdown'
 import { Field, IconButton, Select } from './components/ui'
 import { useEditor } from './hooks/useEditor'
@@ -205,6 +273,8 @@ export default function App() {
     | 'arrange'
     | 'commands'
     | 'raster-filter'
+    | 'gradient-tool'
+    | 'batch'
     | null
   >(null)
   const [lastFilter, setLastFilter] = useState<RasterFilter | null>(null)
@@ -932,7 +1002,7 @@ export default function App() {
         if (actionFile.size > 8 * 1024 * 1024)
           throw new Error('Набор операций должен быть меньше 8 МБ')
         const imported = /\.atn$/i.test(actionFile.name)
-          ? parseAtn(await actionFile.arrayBuffer())
+          ? (await import('./engine/atn')).parseAtn(await actionFile.arrayBuffer())
           : parseActionSet(JSON.parse(await actionFile.text()))
         if (actions.length + imported.length > 100)
           throw new Error('До 100 операций в наборе. Удали ненужные перед импортом.')
@@ -947,12 +1017,15 @@ export default function App() {
         if (textEntriesFile.size > 8 * 1024 * 1024)
           throw new Error('Файл текстов должен быть до 8 МиБ')
         const id = editor.documentRef.current.id
-        const imported = parseTextEntriesFile(JSON.parse(await textEntriesFile.text()))
+        const textEntriesFormat = await import('./engine/textEntriesFormat')
+        const imported = textEntriesFormat.parseTextEntriesFile(
+          JSON.parse(await textEntriesFile.text()),
+        )
         if (editor.documentRef.current.id !== id)
           throw new Error('Документ изменился — повтори импорт текстовых блоков')
         if (
           (editor.documentRef.current.textEntries?.length || 0) + imported.length >
-          MAX_TEXT_ENTRIES
+          textEntriesFormat.MAX_TEXT_ENTRIES
         )
           throw new Error('До 200 текстовых блоков')
         editor.change(
@@ -1601,6 +1674,11 @@ export default function App() {
       action: () => setModal('export'),
     },
     {
+      label: 'Пакетная обработка…',
+      icon: Layers3,
+      action: () => setModal('batch'),
+    },
+    {
       label: 'Открыть демопроект',
       icon: Sparkles,
       action: () => openDocument(demoDocument()),
@@ -1793,6 +1871,14 @@ export default function App() {
       action: () => setModal('styles'),
       disabled: !selected || selected.locked || selected.kind === 'adjustment',
       divider: true,
+    },
+    {
+      label: 'Градиент инструмента…',
+      icon: Blend,
+      action: () => {
+        setTool('gradient')
+        setModal('gradient-tool')
+      },
     },
     {
       label: 'Растрировать содержимое',
@@ -2031,18 +2117,19 @@ export default function App() {
     { label: 'Поиск команд…', icon: Search, shortcut: 'Ctrl F', action: openCommands },
     { label: 'Библиотека шрифтов…', icon: Type, action: () => setModal('fonts') },
     { label: 'Горячие клавиши', icon: Keyboard, shortcut: '?', action: () => setModal('help') },
-    { label: 'О ФШ 777', icon: Sparkles, action: () => setModal('about') },
+    { label: 'О ФШ777 ULTRA', icon: Sparkles, action: () => setModal('about') },
   ]
 
   const homeCommands = new Set([
     'Новый проект',
+    'Пакетная обработка…',
     'Открыть файл…',
     'Главная / недавние',
     'Открыть демопроект',
     'Настройки…',
     'Библиотека шрифтов…',
     'Горячие клавиши',
-    'О ФШ 777',
+    'О ФШ777 ULTRA',
   ])
   const commands: EditorCommand[] = (
     [
@@ -2140,17 +2227,15 @@ export default function App() {
           <button
             className="brand"
             onClick={() => setModal('about')}
-            aria-label="О редакторе ФШ 777"
+            aria-label="О редакторе ФШ777 ULTRA"
           >
             <span className="brand-mark">
-              <svg viewBox="0 0 32 32" aria-hidden="true">
-                <path d="M7 7h20v5L16 26H7l12-13H7z" fill="currentColor" />
-              </svg>
+              <BrandMark size={32} />
             </span>
             <span className="brand-name">
               ФШ <b>777</b>
             </span>
-            <span className="beta-badge">BETA</span>
+            <span className="ultra-badge">ULTRA</span>
           </button>
           <nav className="main-menu" aria-label="Меню редактора">
             <Dropdown label="Файл" items={fileMenu} />
@@ -2364,16 +2449,39 @@ export default function App() {
                 Перо P · узлы A · Shift: несколько · параметры справа
               </span>
             ) : tool === 'gradient' ? (
-              <Select
-                aria-label="Тип градиента"
-                value={settings.gradientType || 'linear'}
-                onChange={(e) =>
-                  setSettings({ gradientType: e.target.value as 'linear' | 'radial' })
-                }
-              >
-                <option value="linear">Линейный</option>
-                <option value="radial">Радиальный</option>
-              </Select>
+              <>
+                <button
+                  className="gradient-tool-strip"
+                  aria-label="Выбрать градиент"
+                  title="Выбрать или изменить градиент"
+                  style={{
+                    background: gradientCss(
+                      settings.gradient ||
+                        solidGradient([
+                          { position: 0, color: settings.color },
+                          { position: 1, color: settings.secondaryColor },
+                        ]),
+                      90,
+                      24,
+                    ),
+                  }}
+                  onClick={() => setModal('gradient-tool')}
+                />
+                <Select
+                  aria-label="Тип градиента"
+                  value={settings.gradientType || 'linear'}
+                  onChange={(e) =>
+                    setSettings({
+                      gradientType: e.target.value as 'linear' | 'radial' | 'reflected' | 'angle',
+                    })
+                  }
+                >
+                  <option value="linear">Линейный</option>
+                  <option value="radial">Радиальный</option>
+                  <option value="reflected">Отражённый</option>
+                  <option value="angle">Угловой</option>
+                </Select>
+              </>
             ) : (
               <span className="tool-instruction">
                 {tool === 'repair' || tool === 'repair-box'
@@ -2704,17 +2812,19 @@ export default function App() {
                 />
               }
               texts={
-                <TextEntriesPanel
-                  key={doc.id}
-                  editor={editor}
-                  selection={selection}
-                  busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
-                  onToast={toastMessage}
-                  onDraw={() => {
-                    setTool('text-frame')
-                    toastMessage('Протяни рамку на холсте. Затем размести в ней текстовый блок.')
-                  }}
-                />
+                <Suspense fallback={null}>
+                  <TextEntriesPanel
+                    key={doc.id}
+                    editor={editor}
+                    selection={selection}
+                    busy={!!busy || !!modal || !!pendingDocument || !!workspace.closing}
+                    onToast={toastMessage}
+                    onDraw={() => {
+                      setTool('text-frame')
+                      toastMessage('Протяни рамку на холсте. Затем размести в ней текстовый блок.')
+                    }}
+                  />
+                </Suspense>
               }
               actions={
                 <ActionsPanel
@@ -2750,6 +2860,10 @@ export default function App() {
                   onMask={(id) => void addMask(id)}
                   onSmart={() => void convertSmart()}
                   onOpenSmart={(id) => void workspace.openSmart(id)}
+                  onStyle={(id) => {
+                    setSelectedId(id)
+                    setModal('styles')
+                  }}
                   editingMask={!!settings.editMask}
                   onPixels={() => setSettings({ editMask: false })}
                 />
@@ -2777,226 +2891,242 @@ export default function App() {
           e.target.value = ''
         }}
       />
-      {workspace.closing && workspace.closingDocument && (
-        <CloseDocumentDialog
-          name={workspace.closingDocument.name}
-          smart={!!workspace.tabs.find((t) => t.id === workspace.closing)?.parent}
-          onSave={() => {
-            const closing = workspace.closingDocument!
-            setBusy('Сохраняем PSD…')
-            void FileManager.save(closing)
-              .catch((e) => toastMessage(e.message))
-              .finally(() => setBusy(null))
-          }}
-          onApply={() => void workspace.applySmart(workspace.closing!)}
-          onConfirm={() => void workspace.close()}
-          onCancel={() => workspace.setClosing(null)}
-        />
-      )}
-      {(modal === 'image-size' || modal === 'canvas-size') && (
-        <ImageSizeDialog
-          doc={doc}
-          resize={modal === 'image-size'}
-          onApply={imageSize}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'repair' && selection && (
-        <RepairDialog
-          doc={doc}
-          selection={selection}
-          onClose={closeModal}
-          onApply={(layer, belowText) => {
-            if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
-            validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
-            editor.change(
-              (d) => insertRepairLayer(d, layer, belowText),
-              'Восстановление области · новый слой',
-            )
-            setSelectedId(layer.id)
-            closeModal()
-            toastMessage(
-              'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
-            )
-          }}
-        />
-      )}
-      {modal === 'settings' && (
-        <SettingsDialog value={preferences} onChange={setPreferences} onClose={closeModal} />
-      )}
-      {modal === 'fonts' && (
-        <FontsDialog
-          onClose={closeModal}
-          onChoose={(fontFamily) => {
-            if (selected?.kind === 'text' && !selected.locked)
-              editor.patchLayer(selected.id, { fontFamily }, 'Шрифт')
-            else toastMessage(`Шрифт ${fontFamily} доступен в свойствах текста`)
-          }}
-        />
-      )}
-      {modal === 'new' && (
-        <NewDocumentDialog
-          onClose={closeModal}
-          onSave={() => void saveProject()}
-          onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))}
-        />
-      )}
-      {modal === 'export' && (
-        <ExportDialog
-          doc={doc}
-          onClose={closeModal}
-          onSave={() => void saveProject()}
-          onToast={toastMessage}
-        />
-      )}
-      {(modal === 'help' || modal === 'about') && (
-        <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />
-      )}
-      {modal === 'color' && (
-        <ColorDialog
-          color={settings.color}
-          onClose={closeModal}
-          onApply={(color) => {
-            setSettings({ color })
-            if (
-              selected &&
-              !selected.locked &&
-              ['shape', 'text'].includes(selected.kind) &&
-              !settings.quickMask &&
-              !settings.editMask
-            )
-              editor.patchLayer(selected.id, { color }, 'Цвет слоя')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'actions' && (
-        <ActionsDialog
-          actions={actions}
-          storageError={actionsError}
-          recording={!!recorder.recording}
-          onRecord={startActionRecording}
-          onUpdate={(action) => setActions((a) => a.map((v) => (v.id === action.id ? action : v)))}
-          onClose={closeModal}
-          onImport={() => input.current?.click()}
-          onRun={executeAction}
-          onCapture={captureAction}
-          onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
-          canRun={!!selected && !selected.locked && !workspace.home}
-        />
-      )}
-      {modal === 'styles' && selected && (
-        <LayerStyleDialog
-          layer={selected}
-          onClose={closeModal}
-          onApply={(styles) => {
-            editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'export-lut' && (
-        <ExportLutDialog
-          doc={doc}
-          onClose={closeModal}
-          onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
-        />
-      )}
-      {modal === 'psd-report' && lastExport && (
-        <PsdReportDialog
-          report={lastExport.report}
-          filename={lastExport.filename}
-          onClose={closeModal}
-        />
-      )}
-      {pendingDocument && compatibility && (
-        <CompatibilityDialog
-          report={compatibility}
-          onClose={() => {
-            setPendingDocument(null)
-            setCompatibility(null)
-          }}
-          onSave={() => void saveProject()}
-          onConfirm={() => openDocument(pendingDocument)}
-        />
-      )}
-      {pendingDocument && !compatibility && (
-        <ReplaceDialog
-          name={pendingDocument.name}
-          onClose={closeReplace}
-          onSave={() => void saveProject()}
-          onConfirm={() => openDocument(pendingDocument)}
-        />
-      )}
-      {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
-      {modal === 'raster-filter' && selectedId && (
-        <RasterFilterDialog
-          doc={doc}
-          id={selectedId}
-          selection={selection}
-          initial={lastFilter || defaultRasterFilter('unsharp')}
-          onClose={closeModal}
-          onApply={(copy, filter, hide) => {
-            if (editor.documentRef.current !== doc)
-              throw new Error('Документ изменился. Открой фильтр заново.')
-            const next = insertFilteredCopy(doc, selectedId, copy, hide)
-            editor.change(() => next, 'Фильтр на растровой копии')
-            setSelectedId(copy.id)
-            setLastFilter(filter)
-            setSettings({ editMask: false, quickMask: false })
-            setTool('move')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'arrange' && (
-        <ArrangeDialog
-          doc={doc}
-          ids={arrangeIds}
-          onClose={closeModal}
-          onApply={(next, label) => {
-            if (editor.documentRef.current !== doc)
-              throw new Error('Документ изменился во время компоновки. Открой окно заново.')
-            editor.change(() => next, label)
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'guides' && (
-        <GuidesDialog
-          doc={doc}
-          onClose={closeModal}
-          onApply={(value) => {
-            updateLayout(value, 'Настройка направляющих и сетки')
-            closeModal()
-          }}
-        />
-      )}
-      {modal === 'color-range' && (
-        <ColorRangeDialog
-          doc={doc}
-          initialMode={settings.selectionMode || 'replace'}
-          onApply={(area, mode) => {
-            applySelection(area, mode, 'Цветовой диапазон')
-            closeModal()
-          }}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'selection-modify' && selection && (
-        <SelectionModifyDialog
-          selection={selection}
-          width={doc.width}
-          height={doc.height}
-          initial={selectionModify}
-          onApply={(area, kind) => {
-            setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
-            closeModal()
-          }}
-          onClose={closeModal}
-        />
-      )}
-      {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
+      <Suspense fallback={dialogFallback}>
+        {workspace.closing && workspace.closingDocument && (
+          <CloseDocumentDialog
+            name={workspace.closingDocument.name}
+            smart={!!workspace.tabs.find((t) => t.id === workspace.closing)?.parent}
+            onSave={() => {
+              const closing = workspace.closingDocument!
+              setBusy('Сохраняем PSD…')
+              void FileManager.save(closing)
+                .catch((e) => toastMessage(e.message))
+                .finally(() => setBusy(null))
+            }}
+            onApply={() => void workspace.applySmart(workspace.closing!)}
+            onConfirm={() => void workspace.close()}
+            onCancel={() => workspace.setClosing(null)}
+          />
+        )}
+        {(modal === 'image-size' || modal === 'canvas-size') && (
+          <ImageSizeDialog
+            doc={doc}
+            resize={modal === 'image-size'}
+            onApply={imageSize}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'repair' && selection && (
+          <RepairDialog
+            doc={doc}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(layer, belowText) => {
+              if (doc.layers.length >= MAX_LAYERS) throw new Error('В документе уже 100 слоёв')
+              validateRasterBudget({ ...doc, layers: [...doc.layers, layer] })
+              editor.change(
+                (d) => insertRepairLayer(d, layer, belowText),
+                'Восстановление области · новый слой',
+              )
+              setSelectedId(layer.id)
+              closeModal()
+              toastMessage(
+                'Результат на отдельном слое. Исходные пиксели сохранены; Ctrl+Z отменяет изменение.',
+              )
+            }}
+          />
+        )}
+        {modal === 'settings' && (
+          <SettingsDialog value={preferences} onChange={setPreferences} onClose={closeModal} />
+        )}
+        {modal === 'fonts' && (
+          <FontsDialog
+            onClose={closeModal}
+            onChoose={(fontFamily) => {
+              if (selected?.kind === 'text' && !selected.locked)
+                editor.patchLayer(selected.id, { fontFamily }, 'Шрифт')
+              else toastMessage(`Шрифт ${fontFamily} доступен в свойствах текста`)
+            }}
+          />
+        )}
+        {modal === 'new' && (
+          <NewDocumentDialog
+            onClose={closeModal}
+            onSave={() => void saveProject()}
+            onCreate={(w, h, name, bg) => openDocument(newDocument(w, h, name, bg))}
+          />
+        )}
+        {modal === 'export' && (
+          <ExportDialog
+            doc={doc}
+            onClose={closeModal}
+            onSave={() => void saveProject()}
+            onToast={toastMessage}
+          />
+        )}
+        {(modal === 'help' || modal === 'about') && (
+          <HelpDialog onClose={closeModal} initialTab={modal === 'about' ? 'about' : 'shortcuts'} />
+        )}
+        {modal === 'color' && (
+          <ColorDialog
+            color={settings.color}
+            onClose={closeModal}
+            onApply={(color) => {
+              setSettings({ color })
+              if (
+                selected &&
+                !selected.locked &&
+                ['shape', 'text'].includes(selected.kind) &&
+                !settings.quickMask &&
+                !settings.editMask
+              )
+                editor.patchLayer(selected.id, { color }, 'Цвет слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'actions' && (
+          <ActionsDialog
+            actions={actions}
+            storageError={actionsError}
+            recording={!!recorder.recording}
+            onRecord={startActionRecording}
+            onUpdate={(action) =>
+              setActions((a) => a.map((v) => (v.id === action.id ? action : v)))
+            }
+            onClose={closeModal}
+            onImport={() => input.current?.click()}
+            onRun={executeAction}
+            onCapture={captureAction}
+            onDelete={(id) => setActions((a) => a.filter((v) => v.id !== id))}
+            canRun={!!selected && !selected.locked && !workspace.home}
+          />
+        )}
+        {modal === 'batch' && (
+          <BatchDialog actions={actions} onClose={closeModal} onToast={toastMessage} />
+        )}
+        {modal === 'gradient-tool' && (
+          <GradientToolDialog
+            gradient={settings.gradient}
+            color={settings.color}
+            secondaryColor={settings.secondaryColor}
+            onChange={(gradient) => setSettings({ gradient })}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'styles' && selected && (
+          <LayerStyleDialog
+            layer={selected}
+            onClose={closeModal}
+            onApply={(styles) => {
+              editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'export-lut' && (
+          <ExportLutDialog
+            doc={doc}
+            onClose={closeModal}
+            onSaved={(name) => toastMessage(`Цветовая таблица сохранена: ${name}`)}
+          />
+        )}
+        {modal === 'psd-report' && lastExport && (
+          <PsdReportDialog
+            report={lastExport.report}
+            filename={lastExport.filename}
+            onClose={closeModal}
+          />
+        )}
+        {pendingDocument && compatibility && (
+          <CompatibilityDialog
+            report={compatibility}
+            onClose={() => {
+              setPendingDocument(null)
+              setCompatibility(null)
+            }}
+            onSave={() => void saveProject()}
+            onConfirm={() => openDocument(pendingDocument)}
+          />
+        )}
+        {pendingDocument && !compatibility && (
+          <ReplaceDialog
+            name={pendingDocument.name}
+            onClose={closeReplace}
+            onSave={() => void saveProject()}
+            onConfirm={() => openDocument(pendingDocument)}
+          />
+        )}
+        {modal === 'commands' && <CommandPalette commands={commands} onClose={closeModal} />}
+        {modal === 'raster-filter' && selectedId && (
+          <RasterFilterDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            initial={lastFilter || defaultRasterFilter('unsharp')}
+            onClose={closeModal}
+            onApply={(copy, filter, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой фильтр заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Фильтр на растровой копии')
+              setSelectedId(copy.id)
+              setLastFilter(filter)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'arrange' && (
+          <ArrangeDialog
+            doc={doc}
+            ids={arrangeIds}
+            onClose={closeModal}
+            onApply={(next, label) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился во время компоновки. Открой окно заново.')
+              editor.change(() => next, label)
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'guides' && (
+          <GuidesDialog
+            doc={doc}
+            onClose={closeModal}
+            onApply={(value) => {
+              updateLayout(value, 'Настройка направляющих и сетки')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'color-range' && (
+          <ColorRangeDialog
+            doc={doc}
+            initialMode={settings.selectionMode || 'replace'}
+            onApply={(area, mode) => {
+              applySelection(area, mode, 'Цветовой диапазон')
+              closeModal()
+            }}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'selection-modify' && selection && (
+          <SelectionModifyDialog
+            selection={selection}
+            width={doc.width}
+            height={doc.height}
+            initial={selectionModify}
+            onApply={(area, kind) => {
+              setSelection(area, false, `${selectionModifyNames[kind]} выделение`)
+              closeModal()
+            }}
+            onClose={closeModal}
+          />
+        )}
+        {modal === 'correction' && <CorrectionDialog onAdd={addCorrection} onClose={closeModal} />}
+      </Suspense>
       {busy && (
         <div className="busy-overlay" role="status">
           <div>
@@ -3029,7 +3159,7 @@ export default function App() {
       )}
       <div className="small-screen-note">
         <span className="brand-mark">
-          <Sparkles size={22} />
+          <BrandMark size={48} />
         </span>
         <h2>Идеям нужно чуть больше места</h2>
         <p>

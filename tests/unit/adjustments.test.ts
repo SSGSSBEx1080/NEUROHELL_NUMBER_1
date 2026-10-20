@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { initializeCanvas, readPsd, writePsd } from 'ag-psd'
-import { applyCorrection, curveValue, histogram } from '../../src/engine/adjustmentMath'
+import {
+  applyCorrection,
+  applyCorrectionInPlace,
+  curveValue,
+  histogram,
+} from '../../src/engine/adjustmentMath'
 import {
   correctionNames,
   defaultCorrection,
@@ -37,6 +42,28 @@ describe('non-destructive adjustment mathematics', () => {
     const result = applyCorrection(rgba, defaultCorrection(type), 0.7)
     expect([result[3], result[7], result[11]]).toEqual([255, 128, 0])
     expect(result.slice(8)).toEqual(rgba.slice(8))
+  })
+  it.each(all)('%s in-place result is byte-identical to the copying apply', (type) => {
+    // Deterministic pseudo-random buffer incl. transparent pixels; guards the
+    // render-path fast loop and the in-place aliasing contract forever.
+    let seed = 1234567
+    const random = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    const source = Uint8ClampedArray.from({ length: 257 * 4 }, (_, i) =>
+      i % 4 === 3 ? (random() < 0.2 ? 0 : 255) : Math.floor(random() * 256),
+    )
+    const mask = Uint8ClampedArray.from({ length: 257 }, () => Math.floor(random() * 256))
+    const correction = defaultCorrection(type)
+    for (const args of [
+      [0.85, undefined, undefined],
+      [1, mask, undefined],
+      [0.6, undefined, 'multiply'],
+      [0, undefined, undefined],
+    ] as const) {
+      const expected = applyCorrection(source, correction, args[0], args[1], args[2] as never)
+      const inPlace = new Uint8ClampedArray(source)
+      applyCorrectionInPlace(inPlace, correction, args[0], args[1], args[2] as never)
+      expect(inPlace).toEqual(expected)
+    }
   })
   it('mixes masked strength once, without doubling semitransparent alpha', () => {
     expect([

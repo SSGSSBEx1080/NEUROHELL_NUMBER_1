@@ -3,7 +3,13 @@ const test = require('node:test'),
   fs = require('node:fs/promises'),
   path = require('node:path'),
   os = require('node:os')
-const { atomicWrite, validateSaveRequest, saveFile } = require('../../desktop/files.cjs')
+const {
+  atomicWrite,
+  validateSaveRequest,
+  saveFile,
+  chooseBatchFolder,
+  saveBatchFile,
+} = require('../../desktop/files.cjs')
 test('native save validates bounded data and format, never accepts renderer paths', () => {
   for (const value of [
     null,
@@ -75,4 +81,46 @@ test('CUBE export stays an explicitly allowed bounded text format, never an exec
   assert.throws(() =>
     validateSaveRequest({ name: 'look.cube', bytes: new TextEncoder().encode('console.log(1)') }),
   )
+})
+
+test('batch output writes only inside the user-picked folder and never overwrites', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fsh777-batch-'))
+  try {
+    await assert.rejects(() =>
+      saveBatchFile({ folderId: 'missing', name: 'a.png', bytes: new Uint8Array([1]) }),
+    )
+    const cancelled = await chooseBatchFolder(
+      {},
+      { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    )
+    assert.equal(cancelled.state, 'cancelled')
+    const chosen = await chooseBatchFolder(
+      {},
+      { showOpenDialog: async () => ({ canceled: false, filePaths: [dir] }) },
+    )
+    assert.equal(chosen.state, 'completed')
+    assert.equal(typeof chosen.id, 'string')
+    assert.equal(chosen.name, path.basename(dir))
+    await fs.writeFile(path.join(dir, 'copy.png'), 'original')
+    const first = await saveBatchFile({
+      folderId: chosen.id,
+      name: '../evil/copy.png',
+      bytes: new Uint8Array([9]),
+    })
+    assert.equal(first.state, 'completed')
+    assert.equal(first.name, 'copy (2).png')
+    assert.equal(await fs.readFile(path.join(dir, 'copy.png'), 'utf8'), 'original')
+    assert.deepEqual([...(await fs.readFile(path.join(dir, 'copy (2).png')))], [9])
+    const second = await saveBatchFile({
+      folderId: chosen.id,
+      name: 'copy.png',
+      bytes: new Uint8Array([7]),
+    })
+    assert.equal(second.name, 'copy (3).png')
+    await assert.rejects(() =>
+      saveBatchFile({ folderId: chosen.id, name: 'run.exe', bytes: new Uint8Array([1]) }),
+    )
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
 })

@@ -71,7 +71,7 @@ async function saveFile(value, window, dialog, downloads) {
   if (!filename) {
     const ext = path.extname(name).slice(1).toLowerCase()
     const result = await dialog.showSaveDialog(window, {
-      title: 'ФШ 777 — сохранить файл',
+      title: 'ФШ777 ULTRA — сохранить файл',
       buttonLabel: 'Сохранить',
       defaultPath: path.join(downloads, name),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
@@ -96,4 +96,49 @@ async function saveFile(value, window, dialog, downloads) {
     }
   }
 }
-module.exports = { validateSaveRequest, atomicWrite, saveFile }
+const batchFolders = new Map()
+/**
+ * The renderer never sees or supplies a filesystem path: it receives an opaque
+ * id for a folder the user picked in the native dialog, and every batch file
+ * is written inside that folder under a validated basename, without overwriting.
+ */
+async function chooseBatchFolder(window, dialog) {
+  const result = await dialog.showOpenDialog(window, {
+    title: 'ФШ777 ULTRA — папка для пакетного вывода',
+    buttonLabel: 'Выбрать папку вывода',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (result.canceled || !result.filePaths?.length) return { state: 'cancelled', name: '' }
+  const folder = result.filePaths[0]
+  const stat = await fs.stat(folder).catch(() => undefined)
+  if (!stat?.isDirectory()) throw new Error('Выбранная папка вывода недоступна')
+  const id = randomUUID()
+  batchFolders.set(id, folder)
+  if (batchFolders.size > 4) batchFolders.delete(batchFolders.keys().next().value)
+  return { state: 'completed', id, name: path.basename(folder) || folder }
+}
+async function saveBatchFile(value) {
+  const { name, bytes } = validateSaveRequest(value)
+  const folder = typeof value?.folderId === 'string' ? batchFolders.get(value.folderId) : undefined
+  if (!folder) throw new Error('Папка пакетного вывода не выбрана или уже недоступна')
+  const ext = path.extname(name)
+  const stem = name.slice(0, name.length - ext.length) || 'file'
+  for (let attempt = 1; attempt <= 100; attempt++) {
+    const candidate = attempt === 1 ? name : `${stem} (${attempt})${ext}`
+    const target = path.join(folder, candidate)
+    if (path.dirname(target) !== folder) throw new Error('Недопустимое имя файла пакета')
+    try {
+      await fs.access(target)
+      continue // Never overwrite an existing file during batch output.
+    } catch {
+      await atomicWrite(target, bytes)
+      return { state: 'completed', name: candidate }
+    }
+  }
+  return {
+    state: 'interrupted',
+    name,
+    message: 'Не нашлось свободного имени файла в папке вывода (100 совпадений).',
+  }
+}
+module.exports = { validateSaveRequest, atomicWrite, saveFile, chooseBatchFolder, saveBatchFile }
