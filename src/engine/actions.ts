@@ -2,6 +2,7 @@ import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 import { isLayerLocked, uid } from './document'
 import { deleteLayers, duplicateLayers } from './layerOperations'
 import { parseActionCommand, type ActionCommand } from './actionSchema'
+import { synchronizeStylesToGlobalLight } from './globalLight'
 export { parseActionCommand, type ActionCommand, type ActionProperties } from './actionSchema'
 export interface ActionStep {
   name: string
@@ -253,7 +254,15 @@ export function runAction(
         next = {
           ...next,
           ...values,
-          ...(styles !== undefined ? { styles: styles || undefined } : {}),
+          ...(styles !== undefined
+            ? {
+                styles: styles
+                  ? current.globalLight
+                    ? synchronizeStylesToGlobalLight(styles, current.globalLight)
+                    : styles
+                  : undefined,
+              }
+            : {}),
           ...(textFrame !== undefined ? { textFrame: textFrame || undefined } : {}),
           ...(blendIf !== undefined ? { blendIf: blendIf || undefined } : {}),
         }

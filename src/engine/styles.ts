@@ -266,6 +266,7 @@ function parseShadow(input: unknown, inner = false): ShadowEffectStyle {
     opacity: percent(v.opacity, d.opacity),
     contour: parseEffectContour(v.contour, d.contour),
     antialiased: v.antialiased === true,
+    useGlobalLight: v.useGlobalLight === true ? true : undefined,
   }
 }
 function parseGlow(input: unknown, inner = false): GlowEffectStyle {

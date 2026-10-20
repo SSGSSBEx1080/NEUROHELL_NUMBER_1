@@ -161,6 +161,12 @@ export interface DocumentColorProfile {
   /** Human-readable discarded/retagged source when colour numbers did not change. */
   assignedFrom?: string
 }
+export interface GlobalLightSettings {
+  /** PSD light angle in degrees: 0° right, 90° top, 120° top-left. */
+  angle: number
+  /** Light altitude in degrees, 0..90. Only Bevel & Emboss consumes it. */
+  altitude: number
+}
 export interface EditorDocument {
   version: 1
   id: string
@@ -171,6 +177,8 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   colorProfile?: DocumentColorProfile
+  /** Explicit document master light. Absence preserves legacy per-effect angles. */
+  globalLight?: GlobalLightSettings
   dpi?: number
   layout?: DocumentLayout
   textEntries?: TextEntry[]
@@ -287,6 +295,8 @@ export interface ShadowEffectStyle {
   opacity: number
   contour?: EffectContourDefinition
   antialiased?: boolean
+  /** Undefined/false is a local offset; true follows the document Global Light angle. */
+  useGlobalLight?: boolean
 }
 export interface GlowEffectStyle {
   enabled: boolean

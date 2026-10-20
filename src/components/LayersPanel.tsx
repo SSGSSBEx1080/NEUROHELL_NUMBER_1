@@ -37,6 +37,7 @@ import {
   readStyleClipboardBlendIf,
 } from '../engine/libraries'
 import { defaultStyles, hasStyles, styleEffectSummary } from '../engine/styles'
+import { synchronizeStylesToGlobalLight } from '../engine/globalLight'
 import { isBlendIfActive } from '../engine/blendIf'
 import { Field, IconButton, Select } from './ui'
 interface Props {
@@ -649,7 +650,12 @@ export function LayersPanel({
                 if (pasted)
                   editor.patchLayer(
                     context.id,
-                    { styles: pasted, blendIf: readStyleClipboardBlendIf() },
+                    {
+                      styles: editor.document.globalLight
+                        ? synchronizeStylesToGlobalLight(pasted, editor.document.globalLight)
+                        : pasted,
+                      blendIf: readStyleClipboardBlendIf(),
+                    },
                     'Вставка стиля слоя',
                   )
                 setContext(null)

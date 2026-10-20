@@ -92,6 +92,9 @@ const ActionsDialog = lazy(() =>
 const LayerStyleDialog = lazy(() =>
   import('./components/LayerStyleDialog').then((m) => ({ default: m.LayerStyleDialog })),
 )
+const GlobalLightDialog = lazy(() =>
+  import('./components/GlobalLightDialog').then((m) => ({ default: m.GlobalLightDialog })),
+)
 const GradientToolDialog = lazy(() =>
   import('./components/GradientToolDialog').then((m) => ({ default: m.GradientToolDialog })),
 )
@@ -165,6 +168,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   Sparkles,
+  Sun,
   SquareDashed,
   Trash2,
   Type,
@@ -198,6 +202,13 @@ import {
   parseProject,
   uid,
 } from './engine/document'
+import {
+  countLinkedGlobalLightEffects,
+  effectiveGlobalLight,
+  normalizeGlobalLight,
+  synchronizeDocumentGlobalLight,
+  synchronizeStylesToGlobalLight,
+} from './engine/globalLight'
 import {
   encodeBitmap,
   bitmapLayer,
@@ -275,6 +286,7 @@ export default function App() {
     | 'help'
     | 'about'
     | 'styles'
+    | 'global-light'
     | 'actions'
     | 'color'
     | 'settings'
@@ -1004,6 +1016,10 @@ export default function App() {
       locked: false,
       parentId: undefined,
       sourcePath: undefined,
+      styles:
+        doc.globalLight && clipboardLayer.styles
+          ? synchronizeStylesToGlobalLight(clipboardLayer.styles, doc.globalLight)
+          : clipboardLayer.styles,
       mask: clipboardLayer.mask
         ? {
             ...clipboardLayer.mask,
@@ -2061,6 +2077,11 @@ export default function App() {
       action: () => setModal('styles'),
       disabled: !selected || selected.locked || selected.kind === 'adjustment',
       divider: true,
+    },
+    {
+      label: 'Глобальный свет…',
+      icon: Sun,
+      action: () => setModal('global-light'),
     },
     {
       label: 'Градиент инструмента…',
@@ -3219,9 +3240,38 @@ export default function App() {
         {modal === 'styles' && selected && (
           <LayerStyleDialog
             layer={selected}
+            globalLight={effectiveGlobalLight(doc)}
+            hasExplicitGlobalLight={!!doc.globalLight}
             onClose={closeModal}
-            onApply={(styles, blendIf) => {
-              editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
+            onApply={(styles, blendIf, globalLight) => {
+              if (globalLight) {
+                const nextLight = normalizeGlobalLight(globalLight)
+                editor.change((current) => {
+                  if (isLayerLocked(current, selected.id)) return current
+                  const withStyle = {
+                    ...current,
+                    layers: current.layers.map((layer) =>
+                      layer.id === selected.id ? { ...layer, styles, blendIf } : layer,
+                    ),
+                  }
+                  return synchronizeDocumentGlobalLight(withStyle, nextLight)
+                }, 'Стиль слоя и глобальный свет')
+              } else editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'global-light' && (
+          <GlobalLightDialog
+            value={effectiveGlobalLight(doc)}
+            explicit={!!doc.globalLight}
+            linkedCount={countLinkedGlobalLightEffects(doc, true)}
+            onClose={closeModal}
+            onApply={(globalLight) => {
+              editor.change(
+                (current) => synchronizeDocumentGlobalLight(current, globalLight),
+                'Глобальный свет',
+              )
               closeModal()
             }}
           />
