@@ -8,6 +8,7 @@ import { parseDocumentTextEntries } from './textEntriesFormat'
 import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
+import { parseBlendIf } from './blendIf'
 import {
   DEFAULT_ADJUSTMENTS,
   MAX_DIMENSION,
@@ -260,6 +261,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       textBaseline: l.textBaseline === 'alphabetic' ? 'alphabetic' : 'top',
       textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
       styles: l.kind === 'adjustment' ? undefined : normalizeStyles(l.styles),
+      blendIf: parseBlendIf(l.blendIf),
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff',
       src: typeof l.src === 'string' ? l.src : undefined,

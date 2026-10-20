@@ -16,7 +16,21 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import { MAX_STYLE_INSTANCES, type Layer, type LayerStyles } from '../types'
+import {
+  MAX_STYLE_INSTANCES,
+  type BlendIfChannelKey,
+  type BlendIfQuad,
+  type BlendIfRanges,
+  type Layer,
+  type LayerStyles,
+} from '../types'
+import {
+  BLEND_IF_CHANNELS,
+  blendIfChannelNames,
+  defaultBlendIf,
+  isBlendIfActive,
+  parseBlendIf,
+} from '../engine/blendIf'
 import {
   STYLE_LIMITS,
   defaultGradientOverlayStyle,
@@ -35,6 +49,7 @@ import {
   loadStyleLibrary,
   parseStyleLibraryFile,
   readStyleClipboard,
+  readStyleClipboardBlendIf,
   saveStyleLibrary,
   serializeStyleLibrary,
   type StylePreset,
@@ -44,7 +59,7 @@ import { GradientDefinitionEditor } from './GradientDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
-type Tab = ListKey | 'glow' | 'innerGlow' | 'library'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'blendIf' | 'library'
 const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'strokes',
@@ -66,15 +81,21 @@ const sections: { id: Tab; name: string; note: string }[] = [
     note: 'Полные градиенты: цвет, прозрачность, середины и шум.',
   },
   {
+    id: 'blendIf',
+    name: 'Параметры наложения',
+    note: 'Blend If: показывать пиксели по яркости/каналам этого и нижнего слоя. Разделённые пороги дают плавный переход.',
+  },
+  {
     id: 'library',
     name: 'Библиотека стилей',
     note: 'Пресеты, копирование между слоями и масштаб эффектов.',
   },
 ]
-const enabledOf = (styles: LayerStyles, tab: Tab): number => {
+const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): number => {
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
   if (tab === 'library') return 0
+  if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
 }
 
@@ -85,11 +106,26 @@ export function LayerStyleDialog({
 }: {
   layer: Layer
   onClose: () => void
-  onApply: (styles: LayerStyles) => void
+  onApply: (styles: LayerStyles, blendIf: BlendIfRanges | undefined) => void
 }) {
   const [styles, setStyles] = useState<LayerStyles>(() =>
     structuredClone(normalizeStyles(layer.styles) || defaultStyles()),
   )
+  const [blendIf, setBlendIf] = useState<BlendIfRanges>(
+    () => parseBlendIf(layer.blendIf) || defaultBlendIf(),
+  )
+  const [blendChannel, setBlendChannel] = useState<BlendIfChannelKey>('gray')
+  const patchQuad = (side: 'source' | 'under', index: number, value: number) =>
+    setBlendIf((current) => {
+      const quad = [...current[blendChannel][side]] as BlendIfQuad
+      quad[index] = Math.min(255, Math.max(0, Math.round(value)))
+      // Keep each split pair ordered, like dragging a split slider triangle.
+      if (index === 0 && quad[1] < quad[0]) quad[1] = quad[0]
+      if (index === 1 && quad[0] > quad[1]) quad[0] = quad[1]
+      if (index === 2 && quad[3] < quad[2]) quad[3] = quad[2]
+      if (index === 3 && quad[2] > quad[3]) quad[2] = quad[3]
+      return { ...current, [blendChannel]: { ...current[blendChannel], [side]: quad } }
+    })
   const [tab, setTab] = useState<Tab>('strokes')
   const [selected, setSelected] = useState(0)
   const [presetName, setPresetName] = useState('')
@@ -136,7 +172,9 @@ export function LayerStyleDialog({
     setMessage('')
   }
   const listKey: ListKey | undefined =
-    tab !== 'glow' && tab !== 'innerGlow' && tab !== 'library' ? tab : undefined
+    tab !== 'glow' && tab !== 'innerGlow' && tab !== 'library' && tab !== 'blendIf'
+      ? tab
+      : undefined
   const items = listKey ? styles[listKey] : []
   const index = Math.min(selected, Math.max(0, items.length - 1))
   const patchItem = (patch: object) => {
@@ -237,7 +275,7 @@ export function LayerStyleDialog({
       <div className="style-layout">
         <nav className="style-navigation">
           {sections.map((s) => {
-            const count = enabledOf(styles, s.id)
+            const count = enabledOf(styles, s.id, blendIf)
             return (
               <button
                 key={s.id}
@@ -270,7 +308,7 @@ export function LayerStyleDialog({
               <Paintbrush size={16} />
               {sections.find((s) => s.id === tab)!.name}
             </span>
-            {tab !== 'library' && (
+            {tab !== 'library' && tab !== 'blendIf' && (
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -482,6 +520,75 @@ export function LayerStyleDialog({
               </label>
             </>
           )}
+          {tab === 'blendIf' && (
+            <div data-testid="blend-if-controls">
+              <Select
+                aria-label="Канал Blend If"
+                value={blendChannel}
+                onChange={(e) => setBlendChannel(e.target.value as BlendIfChannelKey)}
+              >
+                {BLEND_IF_CHANNELS.map((key) => (
+                  <option value={key} key={key}>
+                    {blendIfChannelNames[key]}
+                  </option>
+                ))}
+              </Select>
+              {(
+                [
+                  ['source', 'Этот слой'],
+                  ['under', 'Нижний слой'],
+                ] as const
+              ).map(([side, title]) => {
+                const quad = blendIf[blendChannel][side]
+                const labels = [
+                  'Тени: скрывать ниже',
+                  'Тени: переход до',
+                  'Света: переход от',
+                  'Света: скрывать выше',
+                ]
+                return (
+                  <div key={side}>
+                    <span className="panel-subtitle">{title}</span>
+                    {labels.map((label, i) => (
+                      <Slider
+                        key={label}
+                        label={`${title} — ${label}`}
+                        value={quad[i]}
+                        min={0}
+                        max={255}
+                        suffix=""
+                        onChange={(v) => patchQuad(side, i, v)}
+                      />
+                    ))}
+                  </div>
+                )
+              })}
+              <div className="effect-instance-tools">
+                <button
+                  className="compact-button"
+                  onClick={() =>
+                    setBlendIf((current) => ({
+                      ...current,
+                      [blendChannel]: {
+                        source: [0, 0, 255, 255] as BlendIfQuad,
+                        under: [0, 0, 255, 255] as BlendIfQuad,
+                      },
+                    }))
+                  }
+                >
+                  <RotateCcw size={13} /> Сбросить канал
+                </button>
+                <button className="compact-button" onClick={() => setBlendIf(defaultBlendIf())}>
+                  <RotateCcw size={13} /> Сбросить всё
+                </button>
+              </div>
+              <p className="panel-note">
+                {layer.kind === 'adjustment'
+                  ? 'У корректирующего слоя нет своих пикселей: работает только диапазон «Нижний слой» — как маска силы коррекции.'
+                  : 'Результат виден на холсте документа после «Применить стиль»: предпросмотр ниже показывает один слой без подложки.'}
+              </p>
+            </div>
+          )}
           {tab === 'library' && (
             <div data-testid="style-library">
               <span className="panel-subtitle">Готовые стили</span>
@@ -574,7 +681,7 @@ export function LayerStyleDialog({
                 <button
                   className="compact-button"
                   onClick={() => {
-                    copyStyleToClipboard(styles)
+                    copyStyleToClipboard(styles, parseBlendIf(blendIf))
                     setMessage('Стиль скопирован. Открой стили другого слоя и вставь.')
                   }}
                 >
@@ -586,6 +693,7 @@ export function LayerStyleDialog({
                     const pasted = readStyleClipboard()
                     if (pasted) {
                       setStyles(pasted)
+                      setBlendIf(readStyleClipboardBlendIf() || defaultBlendIf())
                       setSelected(0)
                       setMessage('Стиль вставлен в предпросмотр.')
                     } else setMessage('Буфер стилей пуст.')
@@ -656,7 +764,7 @@ export function LayerStyleDialog({
         <button
           className="text-button"
           onClick={() => {
-            copyStyleToClipboard(styles)
+            copyStyleToClipboard(styles, parseBlendIf(blendIf))
             setMessage('Стиль скопирован.')
           }}
         >
@@ -665,7 +773,7 @@ export function LayerStyleDialog({
         </button>
         <button
           className="primary-button"
-          onClick={() => onApply(normalizeStyles(styles) || styles)}
+          onClick={() => onApply(normalizeStyles(styles) || styles, parseBlendIf(blendIf))}
         >
           <Sparkles size={15} />
           Применить стиль

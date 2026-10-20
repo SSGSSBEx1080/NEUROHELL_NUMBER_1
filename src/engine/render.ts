@@ -9,6 +9,7 @@ import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from 
 import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions, bundledImageSource } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
+import { applyBlendIf, isBlendIfActive } from './blendIf'
 import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
@@ -297,6 +298,45 @@ export function renderDocument(
         )
       }
     }
+    // Blend If: paint the layer flat into a surface, modulate its alpha by its
+    // own resulting pixels and by a snapshot of the composite underneath, then
+    // blend the surface with the layer's real opacity/mode. All surfaces share
+    // the document pixel grid, so the snapshot aligns 1:1.
+    const applyRanges = (
+      layerCanvas: HTMLCanvasElement,
+      target: CanvasRenderingContext2D,
+      ranges: NonNullable<Layer['blendIf']>,
+    ) => {
+      const back = surface()
+      try {
+        const bx = back.getContext('2d', { willReadFrequently: true })!
+        bx.drawImage(target.canvas, 0, 0, doc.width, doc.height)
+        const sx = layerCanvas.getContext('2d', { willReadFrequently: true })!,
+          image = sx.getImageData(0, 0, width, height),
+          under = bx.getImageData(0, 0, width, height)
+        applyBlendIf(image.data, under.data, ranges)
+        sx.putImageData(image, 0, 0)
+      } finally {
+        release(back)
+      }
+    }
+    const paintBlendIf = (layer: Layer, target: CanvasRenderingContext2D) => {
+      const surf = surface()
+      try {
+        paint(
+          { ...layer, opacity: 1, blendMode: 'source-over', blendIf: undefined },
+          surf.getContext('2d')!,
+        )
+        applyRanges(surf, target, layer.blendIf!)
+        target.save()
+        target.globalAlpha = layer.opacity
+        target.globalCompositeOperation = layer.blendMode
+        target.drawImage(surf, 0, 0, doc.width, doc.height)
+        target.restore()
+      } finally {
+        release(surf)
+      }
+    }
     for (let i = 0; i < siblings.length; i++) {
       const layer = siblings[i]
       if (layer.clipping) continue // Orphan clipping layers have no visible base.
@@ -314,7 +354,8 @@ export function renderDocument(
         continue
       }
       if (end === i + 1) {
-        paint(layer, target)
+        if (isBlendIfActive(layer.blendIf)) paintBlendIf(layer, target)
+        else paint(layer, target)
         continue
       }
       // A clipping stack shares the base alpha and base opacity. Normalizing before
@@ -333,6 +374,7 @@ export function renderDocument(
           if (siblings[j].visible && siblings[j].id !== hideId) paint(siblings[j], x)
         x.globalCompositeOperation = 'destination-in'
         x.drawImage(base, 0, 0, doc.width, doc.height)
+        if (isBlendIfActive(layer.blendIf)) applyRanges(group, target, layer.blendIf!)
         target.save()
         target.globalAlpha = layer.opacity
         target.globalCompositeOperation = layer.blendMode

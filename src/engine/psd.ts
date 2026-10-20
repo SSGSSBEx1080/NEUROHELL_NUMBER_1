@@ -12,7 +12,8 @@ import { DEFAULT_ADJUSTMENTS, MAX_STYLE_INSTANCES } from '../types'
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
 import type { Color, Layer as PsdLayer, LayerEffectsInfo, Psd, PixelData } from 'ag-psd'
-import type { BlendMode, EditorDocument, Layer, LayerStyles } from '../types'
+import type { BlendIfRanges, BlendMode, EditorDocument, Layer, LayerStyles } from '../types'
+import { isBlendIfActive, parseBlendIf } from './blendIf'
 import { makeLayer, newDocument, parseProject, uid } from './document'
 import {
   cacheImage,
@@ -363,11 +364,37 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
     }))
   return effects
 }
+type PsdBlendingRanges = NonNullable<PsdLayer['blendingRanges']>
+function importBlendIf(src: PsdLayer): BlendIfRanges | undefined {
+  const r = src.blendingRanges
+  if (!r) return undefined
+  const channel = (source?: number[], under?: number[]) => ({ source, under })
+  return parseBlendIf({
+    gray: channel(r.compositeGrayBlendSource, r.compositeGraphBlendDestinationRange),
+    red: channel(r.ranges?.[0]?.sourceRange, r.ranges?.[0]?.destRange),
+    green: channel(r.ranges?.[1]?.sourceRange, r.ranges?.[1]?.destRange),
+    blue: channel(r.ranges?.[2]?.sourceRange, r.ranges?.[2]?.destRange),
+  })
+}
+function exportBlendIf(ranges: BlendIfRanges | undefined): PsdBlendingRanges | undefined {
+  if (!ranges || !isBlendIfActive(ranges)) return undefined
+  const pair = (key: 'red' | 'green' | 'blue') => ({
+    sourceRange: [...ranges[key].source],
+    destRange: [...ranges[key].under],
+  })
+  return {
+    compositeGrayBlendSource: [...ranges.gray.source],
+    compositeGraphBlendDestinationRange: [...ranges.gray.under],
+    ranges: [pair('red'), pair('green'), pair('blue')],
+  }
+}
 export const __psdStyleCodecForTests = {
   importStyles,
   exportStyles,
   gradientFromPsd,
   gradientToPsd,
+  importBlendIf,
+  exportBlendIf,
 }
 interface EmbeddedImport {
   depth: number
@@ -434,6 +461,7 @@ export async function importPsd(
           clipping: src.clipping,
           sourceText: src.text?.text?.replace(/\r\n?/g, '\n'),
           styles: importStyles(src),
+          blendIf: importBlendIf(src),
         })
         const correction =
           !group && !src.vectorMask && !src.realMask && !src.effects
@@ -909,6 +937,8 @@ export async function exportPsd(
         out.effects = !embeddedAppearance && layer.styles ? exportStyles(layer.styles) : undefined
         out.fillOpacity = embeddedAppearance ? 1 : (layer.styles?.fillOpacity ?? 1)
       }
+      if (!preserved || !sameVisual(layer.blendIf, before?.blendIf))
+        out.blendingRanges = exportBlendIf(layer.blendIf)
       if (layer.mask && !embeddedAppearance) {
         const m = layer.mask,
           old = before?.mask

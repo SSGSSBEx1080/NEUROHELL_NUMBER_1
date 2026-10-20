@@ -2,6 +2,7 @@ import { parseShapePaths } from './shapeGeometry'
 import { parseCorrection } from './adjustmentTypes'
 import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
+import { parseBlendIf } from './blendIf'
 import { parseTextFrame } from './textLayout'
 export type ActionProperties = Partial<
   Pick<
@@ -39,7 +40,11 @@ export type ActionProperties = Partial<
     | 'flipX'
     | 'flipY'
   >
-> & { styles?: LayerStyles | null; textFrame?: TextFrame | null }
+> & {
+  styles?: LayerStyles | null
+  textFrame?: TextFrame | null
+  blendIf?: import('../types').BlendIfRanges | null
+}
 export type ActionCommand =
   | { type: 'adjust'; values: Partial<Adjustments> }
   | { type: 'invert' | 'flipX' | 'flipY' | 'reset' | 'delete' }
@@ -147,7 +152,9 @@ export function parseActionProperties(input: unknown): ActionProperties {
       if (value && JSON.stringify(value).length > 24000)
         throw new Error('Слишком большой стиль операции')
       out[key] = value === null ? null : normalizeStyles(value)
-    } else if (key === 'textFrame' && (value === null || object(value)))
+    } else if (key === 'blendIf' && (value === null || object(value)))
+      out[key] = value === null ? null : parseBlendIf(value)
+    else if (key === 'textFrame' && (value === null || object(value)))
       out[key] = value === null ? null : parseTextFrame(value)
     else throw new Error(`Неподдерживаемое свойство операции: ${key.slice(0, 60)}`)
   }

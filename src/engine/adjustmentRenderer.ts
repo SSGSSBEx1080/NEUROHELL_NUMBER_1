@@ -1,5 +1,6 @@
 import type { Layer, LayerMask } from '../types'
 import { applyCorrectionInPlace } from './adjustmentMath'
+import { blendIfUnderMask, isBlendIfUnderActive } from './blendIf'
 const masks = new Map<
   string,
   { mask: LayerMask; matrix: string; width: number; height: number; data: Uint8ClampedArray }
@@ -55,7 +56,17 @@ export function renderCorrection(
 ) {
   if (!layer.correction || !layer.visible || layer.opacity <= 0) return
   const image = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height)
-  const mask = layer.mask?.enabled && maskSource ? coverage(ctx, layer, maskSource) : undefined
+  let mask = layer.mask?.enabled && maskSource ? coverage(ctx, layer, maskSource) : undefined
+  if (isBlendIfUnderActive(layer.blendIf)) {
+    // Adjustment layers have no own pixels: only the underlying Blend If side
+    // can act, as a strength mask computed from the backdrop before correction.
+    const under = blendIfUnderMask(image.data, image.width * image.height, layer.blendIf!)
+    if (mask) {
+      const combined = new Uint8ClampedArray(mask.length)
+      for (let p = 0; p < mask.length; p++) combined[p] = Math.round((mask[p] * under[p]) / 255)
+      mask = combined
+    } else mask = under
+  }
   applyCorrectionInPlace(image.data, layer.correction, layer.opacity, mask, layer.blendMode)
   ctx.putImageData(image, 0, 0)
 }

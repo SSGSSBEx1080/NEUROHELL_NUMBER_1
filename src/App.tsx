@@ -3018,8 +3018,8 @@ export default function App() {
           <LayerStyleDialog
             layer={selected}
             onClose={closeModal}
-            onApply={(styles) => {
-              editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
+            onApply={(styles, blendIf) => {
+              editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
               closeModal()
             }}
           />

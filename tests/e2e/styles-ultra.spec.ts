@@ -95,6 +95,53 @@ test('three ordered strokes survive Fill 0 and export as native PSD effects', as
   expect(stripped?.effects?.stroke).toHaveLength(3)
 })
 
+test('Blend If hides a layer by underlying and own luminance and exports native PSD ranges', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  // Backdrop: black left half + white right half on two layers.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [2, 2], [148, 198])
+  await page.getByLabel('Цвет фигуры').fill('#000000')
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [152, 2], [298, 198])
+  await page.getByLabel('Цвет фигуры').fill('#ffffff')
+  // Top: red over everything.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [2, 2], [298, 198])
+  await page.getByLabel('Цвет фигуры').fill('#ff0000')
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([255, 0, 0, 255])
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Параметры наложения', exact: false }).click()
+  await expect(page.getByTestId('blend-if-controls')).toBeVisible()
+  // Underlying gray: hide where the backdrop is darker than 128.
+  await page.getByRole('slider', { name: 'Нижний слой — Тени: скрывать ниже' }).fill('128')
+  await page.getByRole('slider', { name: 'Нижний слой — Тени: переход до' }).fill('128')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 225, 100)).toEqual([255, 0, 0, 255])
+
+  // This layer: red luminance is 77, so hiding above 50 removes it everywhere.
+  // (The layer now also has an fx mark button, so target the explicit open button.)
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Параметры наложения', exact: false }).click()
+  await page.getByRole('button', { name: 'Сбросить всё', exact: true }).click()
+  await page.getByRole('slider', { name: 'Этот слой — Света: переход от' }).fill('50')
+  await page.getByRole('slider', { name: 'Этот слой — Света: скрывать выше' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 225, 100)).toEqual([255, 255, 255, 255])
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([0, 0, 0, 255])
+
+  // The ranges travel natively in the PSD layer record, not in our sidecar.
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.blendingRanges)
+  expect(layer?.blendingRanges?.compositeGrayBlendSource).toEqual([0, 0, 50, 50])
+  expect(layer?.blendingRanges?.ranges).toHaveLength(3)
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

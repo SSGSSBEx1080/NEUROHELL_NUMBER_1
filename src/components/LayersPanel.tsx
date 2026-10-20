@@ -31,8 +31,13 @@ import { createPortal } from 'react-dom'
 import type { Editor } from '../hooks/useEditor'
 import type { BlendMode, Layer, SelectionMode } from '../types'
 import { visibleLayerRows } from '../engine/layerOperations'
-import { copyStyleToClipboard, readStyleClipboard } from '../engine/libraries'
+import {
+  copyStyleToClipboard,
+  readStyleClipboard,
+  readStyleClipboardBlendIf,
+} from '../engine/libraries'
 import { defaultStyles, hasStyles, styleEffectSummary } from '../engine/styles'
+import { isBlendIfActive } from '../engine/blendIf'
 import { Field, IconButton, Select } from './ui'
 interface Props {
   editor: Editor
@@ -463,11 +468,15 @@ export function LayersPanel({
                     {l.name}
                   </span>
                 )}
-                {hasStyles(l.styles) && (
+                {(hasStyles(l.styles) || isBlendIfActive(l.blendIf)) && (
                   <button
                     className="layer-fx-mark"
                     aria-label={`Стиль слоя: ${l.name}`}
-                    title={styleEffectSummary(l.styles) || 'Эффекты слоя'}
+                    title={
+                      [styleEffectSummary(l.styles), isBlendIfActive(l.blendIf) ? 'Blend If' : '']
+                        .filter(Boolean)
+                        .join(' · ') || 'Эффекты слоя'
+                    }
                     onClick={(e) => {
                       e.stopPropagation()
                       onSelect(l.id)
@@ -622,9 +631,9 @@ export function LayersPanel({
               Стиль слоя…
             </button>
             <button
-              disabled={!hasStyles(contextual.styles)}
+              disabled={!hasStyles(contextual.styles) && !isBlendIfActive(contextual.blendIf)}
               onClick={() => {
-                if (contextual.styles) copyStyleToClipboard(contextual.styles)
+                copyStyleToClipboard(contextual.styles || defaultStyles(), contextual.blendIf)
                 setContext(null)
               }}
             >
@@ -637,7 +646,12 @@ export function LayersPanel({
               }
               onClick={() => {
                 const pasted = readStyleClipboard()
-                if (pasted) editor.patchLayer(context.id, { styles: pasted }, 'Вставка стиля слоя')
+                if (pasted)
+                  editor.patchLayer(
+                    context.id,
+                    { styles: pasted, blendIf: readStyleClipboardBlendIf() },
+                    'Вставка стиля слоя',
+                  )
                 setContext(null)
               }}
             >
@@ -645,9 +659,16 @@ export function LayersPanel({
               Вставить стиль
             </button>
             <button
-              disabled={contextual.locked || !hasStyles(contextual.styles)}
+              disabled={
+                contextual.locked ||
+                (!hasStyles(contextual.styles) && !isBlendIfActive(contextual.blendIf))
+              }
               onClick={() => {
-                editor.patchLayer(context.id, { styles: undefined }, 'Очистка стиля слоя')
+                editor.patchLayer(
+                  context.id,
+                  { styles: undefined, blendIf: undefined },
+                  'Очистка стиля слоя',
+                )
                 setContext(null)
               }}
             >

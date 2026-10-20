@@ -115,6 +115,7 @@ export interface Layer {
   strokeColor?: string
   strokeWidth?: number
   warp?: Quad
+  blendIf?: BlendIfRanges
   textScaleX?: number
   textBaseline?: 'top' | 'alphabetic'
   textFrame?: TextFrame
@@ -252,6 +253,28 @@ export interface LayerStyles {
   gradients: GradientOverlayStyle[]
 }
 export const MAX_STYLE_INSTANCES = 10
+
+/**
+ * One Blend If slider pair per side, in native PSD quad order:
+ * [blackLow, blackHigh, whiteLow, whiteHigh], each 0..255.
+ * Below blackLow the pixel is hidden, blackLow..blackHigh fades in,
+ * above whiteLow it fades out towards whiteHigh. Default [0, 0, 255, 255].
+ */
+export type BlendIfQuad = [number, number, number, number]
+export interface BlendIfChannel {
+  /** Ranges of this layer's own resulting pixels. */
+  source: BlendIfQuad
+  /** Ranges of the composite underneath this layer. */
+  under: BlendIfQuad
+}
+/** Advanced blending ranges ("Blend If"), stored next to styles like in PSD layer records. */
+export interface BlendIfRanges {
+  gray: BlendIfChannel
+  red: BlendIfChannel
+  green: BlendIfChannel
+  blue: BlendIfChannel
+}
+export type BlendIfChannelKey = keyof BlendIfRanges
 
 export type Quad = [Point, Point, Point, Point]
 
