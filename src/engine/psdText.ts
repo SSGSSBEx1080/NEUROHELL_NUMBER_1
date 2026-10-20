@@ -1,10 +1,11 @@
 import type { LayerTextData, TextStyle } from 'ag-psd'
 import type { Layer } from '../types'
 import { nativeFontStyle, resolveNativeFont } from './fonts'
-import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
+import { getTextGeometry, clearTextGeometryCache, textBaselineShiftPx } from './textGeometry'
 import { getTextLayout, textFont } from './textLayout'
 import { layerPoint } from './shapeGeometry'
 import { homography, validQuad } from './projection'
+import { textAntiAliasFromPsd, textAntiAliasMode } from './textAntiAlias'
 const px = (value: number) => ({ units: 'Pixels' as const, value })
 const rgb = (color: string) => ({
   r: parseInt(color.slice(1, 3), 16),
@@ -18,7 +19,8 @@ export function affineText(layer: Layer) {
 /** Native point text is NOT a paragraph box. Its transform origin is an alphabetic baseline. */
 export function exportNativeText(layer: Layer): LayerTextData {
   const geometry = getTextGeometry(layer),
-    layout = layer.textFrame ? getTextLayout(layer) : undefined
+    layout = layer.textFrame ? getTextLayout(layer) : undefined,
+    baselineShift = textBaselineShiftPx(layer)
   const size = geometry.fontSize,
     pad = Math.min(
       layer.textFrame?.padding || 0,
@@ -62,7 +64,7 @@ export function exportNativeText(layer: Layer): LayerTextData {
     right: bounds.right.value,
     bottom: bounds.bottom.value,
     orientation: 'horizontal',
-    antiAlias: 'smooth',
+    antiAlias: textAntiAliasMode(layer.textAntiAlias),
     useFractionalGlyphWidths: true,
     style: {
       ...nativeFontStyle(layer.fontFamily || 'Manrope', layer.fontWeight || 500, layer.italic),
@@ -72,6 +74,9 @@ export function exportNativeText(layer: Layer): LayerTextData {
       leading: size * (layer.lineHeight || 1.2),
       autoLeading: false,
       tracking: ((layer.letterSpacing || 0) / size) * 1000,
+      ...(layer.textUnderline ? { underline: true } : {}),
+      ...(layer.textStrikethrough ? { strikethrough: true } : {}),
+      ...(baselineShift !== 0 ? { baselineShift } : {}),
     },
     paragraphStyle: { justification: layer.textAlign || 'left', autoHyphenate: false },
     ...(layout && !layout.overflow
@@ -118,9 +123,6 @@ export async function importNativeText(
     text.orientation === 'vertical' ||
     (text.warp?.style && text.warp.style !== 'none') ||
     text.textPath?.data.type === 0 ||
-    style.underline ||
-    style.strikethrough ||
-    style.baselineShift ||
     style.fillFlag === false ||
     style.strokeFlag ||
     t.length !== 6 ||
@@ -139,6 +141,12 @@ export async function importNativeText(
   const size = (style.fontSize || 48) * Math.abs(sy) * vertical,
     horizontal = ((style.horizontalScale || 1) * sx) / (Math.abs(sy) * vertical)
   if (size < 4 || size > 1000 || horizontal < 0.01 || horizontal > 100) return
+  const rawBaselineShift = style.baselineShift ?? 0
+  if (typeof rawBaselineShift !== 'number' || !Number.isFinite(rawBaselineShift)) return
+  // PSD stores this as an absolute Type-object distance: the layer matrix
+  // scales it, but character VerticalScale does not (16 stays 16 at 150%).
+  const baselineShift = rawBaselineShift * Math.abs(sy)
+  if (Math.abs(baselineShift) > 1000) return
   const color = style.fillColor
   if (color && !('r' in color)) return
   const align =
@@ -154,6 +162,8 @@ export async function importNativeText(
     warn(
       `Шрифт «${style.font?.name || 'не указан'}» не найден в каталоге редактора. Рабочий текст использует Manrope; исходный PSD без правок остаётся неизменным. Установи нужный шрифт перед редактированием.`,
     )
+  const antiAlias = textAntiAliasFromPsd(text.antiAlias)
+  if (antiAlias.warning) warn(antiAlias.warning)
   const nativeSize = style.fontSize || 48,
     leading =
       style.autoLeading !== false
@@ -170,11 +180,15 @@ export async function importNativeText(
     fontFamily: font.family,
     fontWeight: style.fauxBold ? Math.max(700, font.weight) : font.weight,
     italic: style.fauxItalic || font.italic,
+    textUnderline: style.underline === true ? true : undefined,
+    textStrikethrough: style.strikethrough === true ? true : undefined,
+    textBaselineShift: baselineShift !== 0 ? baselineShift : undefined,
     fontSize: size,
     textScaleX: horizontal,
     textAlign: align as Layer['textAlign'],
     lineHeight: leading / (nativeSize * vertical),
     letterSpacing: ((style.tracking || 0) * size) / 1000,
+    textAntiAlias: antiAlias.mode,
     textBaseline: text.shapeType === 'box' ? 'top' : 'alphabetic',
     color:
       color && 'r' in color

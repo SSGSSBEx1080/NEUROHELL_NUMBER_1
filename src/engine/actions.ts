@@ -170,7 +170,7 @@ export function runAction(
       selected.kind === 'adjustment' &&
       (c.type !== 'properties' ||
         Object.keys(c.values).some(
-          (k) => !['name', 'visible', 'opacity', 'blendMode', 'correction'].includes(k),
+          (k) => !['name', 'visible', 'opacity', 'blendMode', 'correction', 'blendIf'].includes(k),
         ))
     )
       throw new Error(
@@ -217,6 +217,9 @@ export function runAction(
           'fontSize',
           'fontWeight',
           'italic',
+          'textUnderline',
+          'textStrikethrough',
+          'textBaselineShift',
           'textAlign',
           'lineHeight',
           'letterSpacing',
@@ -246,12 +249,13 @@ export function runAction(
           ].some((k) => k in c.values)
         )
           throw new Error('Шаг фигуры требует векторный слой')
-        const { styles, textFrame, ...values } = c.values
+        const { styles, textFrame, blendIf, ...values } = c.values
         next = {
           ...next,
           ...values,
           ...(styles !== undefined ? { styles: styles || undefined } : {}),
           ...(textFrame !== undefined ? { textFrame: textFrame || undefined } : {}),
+          ...(blendIf !== undefined ? { blendIf: blendIf || undefined } : {}),
         }
         break
       }

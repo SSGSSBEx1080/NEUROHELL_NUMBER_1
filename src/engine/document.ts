@@ -8,6 +8,9 @@ import { parseDocumentTextEntries } from './textEntriesFormat'
 import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
+import { parseBlendIf } from './blendIf'
+import { parseDocumentColorProfile, workingDocumentColorProfile } from './colorProfiles'
+import { parseTextAntiAlias } from './textAntiAlias'
 import {
   DEFAULT_ADJUSTMENTS,
   MAX_DIMENSION,
@@ -43,7 +46,17 @@ export function newDocument(
   name = 'Без названия',
   background = '#ffffff',
 ): EditorDocument {
-  return { version: 1, id: uid(), name, width, height, background, dpi: 72, layers: [] }
+  return {
+    version: 1,
+    id: uid(),
+    name,
+    width,
+    height,
+    background,
+    dpi: 72,
+    colorProfile: workingDocumentColorProfile(),
+    layers: [],
+  }
 }
 export function demoDocument(): EditorDocument {
   const doc = newDocument(1600, 1000, 'За пределами', '#18131d')
@@ -260,6 +273,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       textBaseline: l.textBaseline === 'alphabetic' ? 'alphabetic' : 'top',
       textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
       styles: l.kind === 'adjustment' ? undefined : normalizeStyles(l.styles),
+      blendIf: parseBlendIf(l.blendIf),
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff',
       src: typeof l.src === 'string' ? l.src : undefined,
@@ -268,11 +282,18 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       fontSize: finite(l.fontSize, 4, 1000, 48),
       fontWeight: finite(l.fontWeight, 100, 900, 500),
       italic: l.italic === true,
+      textUnderline: l.kind === 'text' && l.textUnderline === true ? true : undefined,
+      textStrikethrough: l.kind === 'text' && l.textStrikethrough === true ? true : undefined,
+      textBaselineShift:
+        l.kind === 'text' && finite(l.textBaselineShift, -1000, 1000, 0) !== 0
+          ? finite(l.textBaselineShift, -1000, 1000, 0)
+          : undefined,
       textAlign: ['left', 'center', 'right'].includes(String(l.textAlign))
         ? (l.textAlign as Layer['textAlign'])
         : 'left',
       lineHeight: finite(l.lineHeight, 0.5, 4, 1.2),
       letterSpacing: finite(l.letterSpacing, -30, 100, 0),
+      textAntiAlias: l.kind === 'text' ? parseTextAntiAlias(l.textAntiAlias) : undefined,
       shape: Object.hasOwn(shapeNames, String(l.shape)) ? (l.shape as Layer['shape']) : 'rectangle',
       shapeFill: l.shapeFill !== false,
       cornerRadii:
@@ -357,6 +378,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : undefined,
     })),
     sourceId: typeof d.sourceId === 'string' ? d.sourceId.slice(0, 100) : undefined,
+    colorProfile: parseDocumentColorProfile(d.colorProfile),
     dpi: finite(d.dpi, 1, 1200, 72),
     version: 1,
     id: typeof d.id === 'string' ? d.id.slice(0, 100) : uid(),

@@ -80,6 +80,55 @@ export function preserveUnknownResources(original: ArrayBuffer, output: ArrayBuf
   return bytes.buffer
 }
 
+/** Return an owned copy of one PSD image-resource payload (1039 is the ICC profile). */
+export function imageResourceData(buffer: ArrayBuffer, id: number): Uint8Array | undefined {
+  const block = resources(buffer).blocks.find((b) => b.id === id)
+  return block ? new Uint8Array(buffer, block.dataStart, block.length).slice() : undefined
+}
+
+function imageResourceBlock(id: number, data: Uint8Array): Uint8Array {
+  const block = new Uint8Array(12 + data.length + (data.length % 2))
+  const view = new DataView(block.buffer)
+  view.setUint32(0, 0x3842494d) // 8BIM
+  view.setUint16(4, id)
+  // Empty Pascal name padded to an even field width.
+  view.setUint32(8, data.length)
+  block.set(data, 12)
+  return block
+}
+
+/** Replace/remove every image resource with `id`, rebuilding only that section. */
+export function withImageResource(buffer: ArrayBuffer, id: number, data?: Uint8Array): ArrayBuffer {
+  if (data && data.length > 64 * 1024 * 1024) throw new Error('Ресурс PSD слишком большой')
+  const info = resources(buffer)
+  const keep = info.blocks.filter((block) => block.id !== id)
+  const replacement = data ? imageResourceBlock(id, data) : undefined
+  const resourceSize =
+    keep.reduce((n, block) => n + block.end - block.start, 0) + (replacement?.length || 0)
+  if (!replacement && keep.length === info.blocks.length) return buffer
+  if (resourceSize > 0xffffffff) throw new Error('Секция ресурсов PSD превышает формат')
+  const bytes = new Uint8Array(buffer.byteLength - (info.end - info.start) + resourceSize)
+  bytes.set(new Uint8Array(buffer, 0, info.start))
+  let offset = info.start
+  for (const block of keep) {
+    bytes.set(new Uint8Array(buffer, block.start, block.end - block.start), offset)
+    offset += block.end - block.start
+  }
+  if (replacement) {
+    bytes.set(replacement, offset)
+    offset += replacement.length
+  }
+  bytes.set(new Uint8Array(buffer, info.end), offset)
+  new DataView(bytes.buffer).setUint32(info.lengthAt, resourceSize)
+  return bytes.buffer
+}
+
+/** Set PSD ICC resource 1039 and the explicit untagged flag 1041 consistently. */
+export function withPsdIccProfile(buffer: ArrayBuffer, profile?: Uint8Array): ArrayBuffer {
+  const withProfile = withImageResource(buffer, 1039, profile)
+  return withImageResource(withProfile, 1041, new Uint8Array([profile ? 0 : 1]))
+}
+
 export function xmpResource(buffer: ArrayBuffer) {
   const block = resources(buffer).blocks.find((b) => b.id === 1060)
   return block ? { start: block.dataStart, length: block.length } : undefined

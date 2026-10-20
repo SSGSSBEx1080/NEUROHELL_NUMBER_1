@@ -98,8 +98,18 @@ const GradientToolDialog = lazy(() =>
 const BatchDialog = lazy(() =>
   import('./components/BatchDialog').then((m) => ({ default: m.BatchDialog })),
 )
-const CompatibilityDialog = lazy(() =>
-  import('./components/CompatibilityDialog').then((m) => ({ default: m.CompatibilityDialog })),
+const ImportReportDialog = lazy(() =>
+  import('./components/CompatibilityDialog').then((m) => ({ default: m.ImportReportDialog })),
+)
+const PsdColorProfileDialog = lazy(() =>
+  import('./components/ColorProfileDialogs').then((m) => ({
+    default: m.PsdColorProfileDialog,
+  })),
+)
+const DocumentProfileDialog = lazy(() =>
+  import('./components/ColorProfileDialogs').then((m) => ({
+    default: m.DocumentProfileDialog,
+  })),
 )
 const ExportDialog = lazy(() =>
   import('./components/Dialogs').then((m) => ({ default: m.ExportDialog })),
@@ -145,6 +155,7 @@ import {
   LoaderCircle,
   Maximize,
   Minus,
+  Palette,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -165,6 +176,13 @@ import {
 import { BrandMark } from './components/Brand'
 import { gradientCss, solidGradient } from './engine/gradientRamp'
 import type { CompatibilityReport } from './engine/psd'
+import type { PsdColorProfileChoice } from './components/ColorProfileDialogs'
+import type { DocumentColorDecision } from './engine/documentColor'
+import {
+  builtinColorProfile,
+  documentColorProfileLabel,
+  type ColorProfileModel,
+} from './engine/colorProfiles'
 import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
@@ -265,6 +283,8 @@ export default function App() {
     | 'canvas-size'
     | 'repair'
     | 'psd-report'
+    | 'import-report'
+    | 'document-profile'
     | 'export-lut'
     | 'correction'
     | 'color-range'
@@ -289,7 +309,15 @@ export default function App() {
     filename: string
     report: PsdExportReport
   } | null>(null)
-  const [compatibility, setCompatibility] = useState<CompatibilityReport | null>(null)
+  const [pendingColorImport, setPendingColorImport] = useState<{
+    fileName: string
+    report: CompatibilityReport
+  } | null>(null)
+  const [lastImportReport, setLastImportReport] = useState<{
+    documentId: string
+    report: CompatibilityReport
+  } | null>(null)
+  const [colorProfileBusy, setColorProfileBusy] = useState(false)
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
   const [ready, setReady] = useState(false)
@@ -424,13 +452,155 @@ export default function App() {
       '777 · Секретная палитра найдена. Твои пиксели не изменились. Обычную тему можно вернуть в настройках.',
     )
   })
-  const openDocument = (next: EditorDocument) => {
+  const openDocument = (next: EditorDocument, importReport?: CompatibilityReport) => {
     // Imported IDs are data, not permission to reuse a former tab's native save path.
     // Recovery uses workspace.openRecent instead and intentionally keeps its session ID.
-    if (workspace.open({ ...next, id: uid() })) {
+    const opened = { ...next, id: uid() }
+    if (workspace.open(opened)) {
+      if (importReport) setLastImportReport({ documentId: opened.id, report: importReport })
       setModal(null)
       setPendingDocument(null)
-      setCompatibility(null)
+      setPendingColorImport(null)
+      return true
+    }
+    return false
+  }
+
+  const openImportedPsd = async (
+    next: EditorDocument,
+    report: CompatibilityReport,
+    summary: string,
+  ) => {
+    await prepareDocument(next)
+    if (openDocument(next, report))
+      toastMessage(
+        `PSD открыт: ${next.layers.length} слоёв · ${summary}. Подробности — кнопка «Отчёт импорта» внизу.`,
+      )
+  }
+
+  const automaticPsdColorDecision = async (
+    next: EditorDocument,
+    report: CompatibilityReport,
+  ): Promise<{ document: EditorDocument; summary: string } | null> => {
+    const color = report.color
+    if (color.status === 'own') return { document: next, summary: documentColorProfileLabel(next) }
+    if (color.status === 'matching')
+      return { document: next, summary: color.embeddedName || 'sRGB IEC61966-2.1' }
+    const { applyDocumentColorDecision } = await import('./engine/documentColor')
+    const conversion = {
+      intent: preferences.colorIntent,
+      blackPointCompensation: preferences.colorBlackPoint,
+      dither: preferences.colorDither,
+    }
+    if (color.status === 'missing') {
+      if (preferences.colorMissingPolicy === 'ask') return null
+      if (preferences.colorMissingPolicy === 'leave')
+        return { document: next, summary: 'без профиля' }
+      if (color.mode === 'grayscale') {
+        const assigned = builtinColorProfile(preferences.colorGrayProfile) as ColorProfileModel
+        return {
+          document: await applyDocumentColorDecision(next, {
+            action: 'assign-and-convert',
+            assigned,
+            ...conversion,
+          }),
+          summary: `${assigned.name} → sRGB`,
+        }
+      }
+      return {
+        document: await applyDocumentColorDecision(next, { action: 'assign-working' }),
+        summary: 'назначен sRGB IEC61966-2.1',
+      }
+    }
+
+    if (preferences.colorMismatchPolicy === 'ask') return null
+    if (preferences.colorMismatchPolicy === 'assign-working')
+      return {
+        document: await applyDocumentColorDecision(next, {
+          action: 'assign-working',
+          sourceLabel: color.embeddedName,
+        }),
+        summary: 'назначен sRGB без преобразования',
+      }
+    if (
+      preferences.colorMismatchPolicy === 'convert' &&
+      color.status === 'mismatch' &&
+      color.sourceModel
+    )
+      return {
+        document: await applyDocumentColorDecision(next, {
+          action: 'convert',
+          source: color.sourceModel,
+          ...conversion,
+        }),
+        summary: `${color.embeddedName || 'ICC'} → sRGB`,
+      }
+    return {
+      document: await applyDocumentColorDecision(next, {
+        action: 'discard',
+        sourceLabel: color.embeddedName,
+      }),
+      summary:
+        color.status === 'mismatch'
+          ? 'встроенный профиль отброшен'
+          : 'неподдерживаемый профиль отброшен',
+    }
+  }
+
+  const finishPendingColorImport = async (choice: PsdColorProfileChoice) => {
+    if (!pendingDocument || !pendingColorImport || colorProfileBusy) return
+    setColorProfileBusy(true)
+    setBusy('Применяем цветовой профиль PSD…')
+    try {
+      if (choice.rememberMismatch || choice.rememberMissing)
+        setPreferences((current) => ({
+          ...current,
+          ...(choice.rememberMismatch ? { colorMismatchPolicy: choice.rememberMismatch } : {}),
+          ...(choice.rememberMissing ? { colorMissingPolicy: choice.rememberMissing } : {}),
+        }))
+      const { applyDocumentColorDecision } = await import('./engine/documentColor')
+      const next = await applyDocumentColorDecision(pendingDocument, choice.decision)
+      const label =
+        choice.decision.action === 'convert' || choice.decision.action === 'assign-and-convert'
+          ? `${choice.decision.source?.name || choice.decision.assigned?.name || 'ICC'} → sRGB`
+          : choice.decision.action === 'assign-working'
+            ? 'назначен sRGB IEC61966-2.1'
+            : 'без профиля'
+      await openImportedPsd(next, pendingColorImport.report, label)
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Не удалось применить цветовой профиль')
+    } finally {
+      setColorProfileBusy(false)
+      setBusy(null)
+    }
+  }
+
+  const applyCurrentDocumentProfile = async (decision: DocumentColorDecision) => {
+    if (colorProfileBusy) return
+    const current = editor.documentRef.current
+    setColorProfileBusy(true)
+    setBusy('Применяем цветовой профиль документа…')
+    try {
+      const { applyDocumentColorDecision } = await import('./engine/documentColor')
+      const next = await applyDocumentColorDecision(current, decision)
+      if (editor.documentRef.current.id !== current.id)
+        throw new Error('Документ изменился. Открой профиль заново.')
+      await prepareDocument(next)
+      editor.change(
+        () => next,
+        decision.action === 'assign-and-convert'
+          ? `Назначение и преобразование профиля: ${decision.assigned?.name || ''}`
+          : decision.action === 'assign-working'
+            ? 'Назначение рабочего профиля'
+            : 'Удаление профиля документа',
+      )
+      setModal(null)
+      toastMessage(`Профиль документа: ${documentColorProfileLabel(next)}`)
+    } catch (error) {
+      toastMessage(error instanceof Error ? error.message : 'Не удалось изменить цветовой профиль')
+    } finally {
+      setColorProfileBusy(false)
+      setBusy(null)
     }
   }
 
@@ -792,6 +962,8 @@ export default function App() {
           fontSize: l.fontSize && scale ? l.fontSize * sy : l.fontSize,
           textScaleX: scale && l.kind === 'text' ? ((l.textScaleX || 1) * sx) / sy : l.textScaleX,
           letterSpacing: l.letterSpacing && scale ? l.letterSpacing * sy : l.letterSpacing,
+          textBaselineShift:
+            l.textBaselineShift && scale ? l.textBaselineShift * sy : l.textBaselineShift,
           mask: l.mask
             ? {
                 ...l.mask,
@@ -1043,9 +1215,15 @@ export default function App() {
         setBusy('Читаем слои PSD/PSB…')
         const { importPsd } = await import('./engine/psd')
         const result = await importPsd(await layered.arrayBuffer(), layered.name)
-        await prepareDocument(result.document)
-        setPendingDocument(result.document)
-        setCompatibility(result.report)
+        const automatic = await automaticPsdColorDecision(result.document, result.report)
+        if (!automatic) {
+          // Only the colour decision may pause opening. Layer/compatibility
+          // details are now a post-open report, never a gate in front of work.
+          setPendingDocument(result.document)
+          setPendingColorImport({ fileName: layered.name, report: result.report })
+          return
+        }
+        await openImportedPsd(automatic.document, result.report, automatic.summary)
         return
       }
       const project = files.find((f) => /\.(777|fsh777)$/i.test(f.name))
@@ -1666,6 +1844,12 @@ export default function App() {
       disabled: lastExport?.documentId !== doc.id,
       action: () => setModal('psd-report'),
     },
+    {
+      label: 'Отчёт импорта PSD',
+      icon: Palette,
+      disabled: lastImportReport?.documentId !== doc.id,
+      action: () => setModal('import-report'),
+    },
     { label: 'Резервная копия (старый .777)', icon: Save, action: () => void saveBackup() },
     {
       label: 'Экспорт изображения…',
@@ -1691,6 +1875,12 @@ export default function App() {
       icon: SlidersHorizontal,
       shortcut: 'Ctrl ,',
       action: () => setModal('settings'),
+    },
+    {
+      label: 'Цветовой профиль документа…',
+      icon: Palette,
+      action: () => setModal('document-profile'),
+      divider: true,
     },
     {
       label: 'Отменить',
@@ -2726,10 +2916,22 @@ export default function App() {
             <footer className="workspace-status">
               <span className="status-left">
                 <span className="status-dot" />
-                {doc.width} × {doc.height} px · {doc.layers.length} слоёв · RGB/8
+                {doc.width} × {doc.height} px · {doc.layers.length} слоёв · RGB/8 ·{' '}
+                <button
+                  className="status-profile-button"
+                  onClick={() => setModal('document-profile')}
+                  title="Цветовой профиль документа"
+                >
+                  {documentColorProfileLabel(doc)}
+                </button>
                 <span className="status-divider" />
                 {selected ? selected.name : 'Холст'}
               </span>
+              {lastImportReport?.documentId === doc.id && (
+                <button className="psd-report-button" onClick={() => setModal('import-report')}>
+                  Отчёт импорта
+                </button>
+              )}
               {lastExport?.documentId === doc.id && (
                 <button className="psd-report-button" onClick={() => setModal('psd-report')}>
                   Отчёт PSD
@@ -3018,8 +3220,8 @@ export default function App() {
           <LayerStyleDialog
             layer={selected}
             onClose={closeModal}
-            onApply={(styles) => {
-              editor.patchLayer(selected.id, { styles }, 'Стиль слоя')
+            onApply={(styles, blendIf) => {
+              editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
               closeModal()
             }}
           />
@@ -3038,18 +3240,33 @@ export default function App() {
             onClose={closeModal}
           />
         )}
-        {pendingDocument && compatibility && (
-          <CompatibilityDialog
-            report={compatibility}
-            onClose={() => {
-              setPendingDocument(null)
-              setCompatibility(null)
-            }}
-            onSave={() => void saveProject()}
-            onConfirm={() => openDocument(pendingDocument)}
+        {modal === 'import-report' && lastImportReport?.documentId === doc.id && (
+          <ImportReportDialog report={lastImportReport.report} onClose={closeModal} />
+        )}
+        {modal === 'document-profile' && (
+          <DocumentProfileDialog
+            doc={doc}
+            preferences={preferences}
+            busy={colorProfileBusy}
+            onClose={closeModal}
+            onApply={(decision) => void applyCurrentDocumentProfile(decision)}
           />
         )}
-        {pendingDocument && !compatibility && (
+        {pendingDocument && pendingColorImport && (
+          <PsdColorProfileDialog
+            fileName={pendingColorImport.fileName}
+            report={pendingColorImport.report.color}
+            preferences={preferences}
+            busy={colorProfileBusy}
+            onCancel={() => {
+              setPendingDocument(null)
+              setPendingColorImport(null)
+              toastMessage('PSD не открыт: выбор цветового профиля отменён')
+            }}
+            onApply={(choice) => void finishPendingColorImport(choice)}
+          />
+        )}
+        {pendingDocument && !pendingColorImport && (
           <ReplaceDialog
             name={pendingDocument.name}
             onClose={closeReplace}

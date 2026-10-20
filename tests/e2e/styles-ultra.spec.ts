@@ -95,6 +95,539 @@ test('three ordered strokes survive Fill 0 and export as native PSD effects', as
   expect(stripped?.effects?.stroke).toHaveLength(3)
 })
 
+test('Blend If hides a layer by underlying and own luminance and exports native PSD ranges', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  // Backdrop: black left half + white right half on two layers.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [2, 2], [148, 198])
+  await page.getByLabel('Цвет фигуры').fill('#000000')
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [152, 2], [298, 198])
+  await page.getByLabel('Цвет фигуры').fill('#ffffff')
+  // Top: red over everything.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [2, 2], [298, 198])
+  await page.getByLabel('Цвет фигуры').fill('#ff0000')
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([255, 0, 0, 255])
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Параметры наложения', exact: false }).click()
+  await expect(page.getByTestId('blend-if-controls')).toBeVisible()
+  // Underlying gray: hide where the backdrop is darker than 128.
+  await page.getByRole('slider', { name: 'Нижний слой — Тени: скрывать ниже' }).fill('128')
+  await page.getByRole('slider', { name: 'Нижний слой — Тени: переход до' }).fill('128')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 225, 100)).toEqual([255, 0, 0, 255])
+
+  // This layer: red luminance is 77, so hiding above 50 removes it everywhere.
+  // (The layer now also has an fx mark button, so target the explicit open button.)
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Параметры наложения', exact: false }).click()
+  await page.getByRole('button', { name: 'Сбросить всё', exact: true }).click()
+  await page.getByRole('slider', { name: 'Этот слой — Света: переход от' }).fill('50')
+  await page.getByRole('slider', { name: 'Этот слой — Света: скрывать выше' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 225, 100)).toEqual([255, 255, 255, 255])
+  await expect.poll(async () => await pixel(page, 75, 100)).toEqual([0, 0, 0, 255])
+
+  // The ranges travel natively in the PSD layer record, not in our sidecar.
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.blendingRanges)
+  expect(layer?.blendingRanges?.compositeGrayBlendSource).toEqual([0, 0, 50, 50])
+  expect(layer?.blendingRanges?.ranges).toHaveLength(3)
+})
+
+test('gradient-filled stroke and radial gradient overlay render real shapes', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  // Stroke filled with the default ULTRA gradient (violet -> orange, top -> bottom).
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('16')
+  await page.getByLabel('Тип заливки обводки').selectOption('gradient')
+  await page.getByRole('checkbox', { name: 'Дизеринг градиента обводки' }).check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 41)
+      return p[3] === 255 && p[2] > p[0]
+    })
+    .toBe(true) // violet near the top
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 159)
+      return p[3] === 255 && p[0] > p[2]
+    })
+    .toBe(true) // orange near the bottom
+
+  // Radial overlay: gradient start in the middle, end towards the corners.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Стиль градиента наложения').selectOption('radial')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 100)
+      return p[3] === 255 && p[2] > p[0]
+    })
+    .toBe(true)
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 66, 56)
+      return p[3] === 255 && p[0] > p[2]
+    })
+    .toBe(true)
+
+  // Screen blends the violet radial centre with the #808080 shape instead of
+  // replacing it: (182,163,255) over (128,128,128) becomes (219,209,255).
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByLabel('Режим наложения градиента').selectOption('screen')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([219, 209, 255, 255])
+
+  // Color Overlay is above Gradient Overlay. Difference with white therefore
+  // inverts the already-screened centre to (36,46,0), rather than being
+  // screened away by a gradient incorrectly painted after it.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Наложение цвета', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Цвет наложения').fill('#ffffff')
+  await page.getByLabel('Режим наложения цвета').selectOption('difference')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([36, 46, 0, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.stroke?.[0].gradient?.dither).toBe(true)
+  expect(layer?.effects?.gradientOverlay?.[0].blendMode).toBe('screen')
+  expect(layer?.effects?.solidFill?.[0].blendMode).toBe('difference')
+})
+
+test('gradient overlay dither changes quantization locally and exports natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [40, 40], [260, 160])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Библиотека градиентов').selectOption('0') // Чёрный → белый
+  await page.getByLabel('Стиль градиента наложения').selectOption('linear')
+  await page.getByRole('slider', { name: 'Угол градиента' }).fill('0')
+  await page.getByRole('slider', { name: 'Масштаб градиента' }).fill('400')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // Wait for the actual 400% black-to-white ramp, not merely for the opaque
+  // gray rectangle that was already visible before the style was applied.
+  await expect
+    .poll(async () => {
+      const left = (await pixel(page, 60, 100))[0]
+      const right = (await pixel(page, 239, 100))[0]
+      return left < 110 && right > 145
+    })
+    .toBe(true)
+
+  const regionStats = () =>
+    page.locator('[data-testid=editor-canvas]').evaluate((c: HTMLCanvasElement) => {
+      const data = c.getContext('2d')!.getImageData(60, 60, 180, 80).data
+      const values: number[] = []
+      let sum = 0
+      for (let i = 0; i < data.length; i += 4) {
+        values.push(data[i])
+        sum += data[i]
+      }
+      return { values, mean: sum / values.length }
+    })
+  const before = await regionStats()
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page
+    .getByRole('checkbox', { name: 'Дизеринг градиента (меньше полос на плавных переходах)' })
+    .check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const after = await regionStats()
+      return after.values.some((value, index) => value !== before.values[index])
+    })
+    .toBe(true)
+
+  const after = await regionStats()
+  let changed = 0
+  let maxDifference = 0
+  for (let i = 0; i < before.values.length; i++) {
+    const difference = Math.abs(after.values[i] - before.values[i])
+    if (difference) changed++
+    maxDifference = Math.max(maxDifference, difference)
+  }
+  expect(changed).toBeGreaterThan(100)
+  expect(maxDifference).toBeLessThanOrEqual(2)
+  expect(Math.abs(after.mean - before.mean)).toBeLessThan(0.75)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.gradientOverlay?.[0].dither).toBe(true)
+})
+
+test('pattern overlay and pattern-filled stroke render tiles and export native Patt resources', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  const background = [36, 31, 56, 255] // #241f38
+  const foreground = [182, 163, 255, 255] // #b6a3ff
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Узор', exact: true }).click()
+  await expect(page.getByTestId('pattern-definition-editor')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Масштаб узора' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // The default 32 px checker at 50% has 8 px quadrants in layer space.
+  await expect.poll(async () => await pixel(page, 72, 54)).toEqual(foreground)
+  await expect.poll(async () => await pixel(page, 80, 54)).toEqual(background)
+
+  // A +8 px phase shifts the scaled tile by exactly one quadrant. Switching
+  // the same edit to Multiply proves the pattern now blends with the gray
+  // shape: foreground/background become (91,82,128) and (18,16,28).
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Узор', exact: true }).click()
+  await page.getByRole('spinbutton', { name: 'Фаза узора X' }).fill('8')
+  await page.getByRole('spinbutton', { name: 'Фаза узора X' }).press('Enter')
+  await page.getByLabel('Режим наложения узора').selectOption('multiply')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 72, 54)).toEqual([18, 16, 28, 255])
+  await expect.poll(async () => await pixel(page, 80, 54)).toEqual([91, 82, 128, 255])
+
+  // An inside stroke gets its own differently coloured checker tile.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Обводка', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('16')
+  await page.locator('.style-controls').getByLabel('Положение обводки').selectOption('inside')
+  await page.getByLabel('Тип заливки обводки').selectOption('pattern')
+  await expect(page.getByTestId('pattern-definition-editor')).toBeVisible()
+  await page.getByLabel('Узор обводки: основной цвет').fill('#00ff00')
+  await page.getByLabel('Узор обводки: цвет фона').fill('#0000ff')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 72, 58)).toEqual([0, 0, 255, 255])
+  await expect.poll(async () => await pixel(page, 84, 58)).toEqual([0, 255, 0, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.patternOverlay)
+  expect(layer?.effects?.patternOverlay?.blendMode).toBe('multiply')
+  expect(layer?.effects?.patternOverlay?.scale).toBeCloseTo(0.5, 2)
+  expect(layer?.effects?.patternOverlay?.phase).toEqual({ x: 8, y: 0 })
+  expect(layer?.effects?.stroke?.[0].fillType).toBe('pattern')
+  const overlayId = layer?.effects?.patternOverlay?.pattern?.id
+  const strokeId = layer?.effects?.stroke?.[0].pattern?.id
+  expect(overlayId).toBeTruthy()
+  expect(strokeId).toBeTruthy()
+  expect(strokeId).not.toBe(overlayId)
+  expect(parsed.patterns).toHaveLength(2)
+  const overlayTile = parsed.patterns?.find((p) => p.id === overlayId)
+  expect(overlayTile?.bounds).toMatchObject({ w: 32, h: 32 })
+  expect([...(overlayTile?.data.slice(16 * 4, 16 * 4 + 4) || [])]).toEqual(foreground)
+
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.patternOverlay)
+  expect(withoutXmp.patterns).toHaveLength(2)
+  expect(stripped?.effects?.stroke?.[0].pattern?.id).toBe(strokeId)
+})
+
+test('Bevel & Emboss lights the shape, reverses direction and exports natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер фаски' }).fill('16')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // Default PSD light 120°/30° comes from the top-left; the centre stays flat.
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 68, 100))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 232, 100))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Направление фаски').selectOption('down')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeGreaterThan(140)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Направление фаски').selectOption('up')
+  await page.getByLabel('Стиль фаски').selectOption('outer')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 42)
+      return p[3] === 255 && p[0] > 140
+    })
+    .toBe(true)
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 158)
+      return p[3] === 255 && p[0] < 110
+    })
+    .toBe(true)
+
+  // Stroke Emboss shades the actual 18 px inside stroke ring, not the fill.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Обводка', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('18')
+  await page.locator('.style-controls').getByLabel('Положение обводки').selectOption('inside')
+  await page.getByLabel('Цвет обводки слоя').fill('#808080')
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Стиль фаски').selectOption('stroke')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeLessThan(110)
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.bevel)
+  expect(layer?.effects?.bevel).toMatchObject({
+    enabled: true,
+    style: 'stroke emboss',
+    technique: 'smooth',
+    direction: 'up',
+    angle: 120,
+    altitude: 30,
+    highlightBlendMode: 'screen',
+    shadowBlendMode: 'multiply',
+    size: { value: 16, units: 'Pixels' },
+  })
+  expect(layer?.effects?.bevel?.strength).toBeCloseTo(1, 2)
+  expect(layer?.effects?.bevel?.contour).toMatchObject({
+    name: 'Linear',
+    curve: [
+      { x: 0, y: 0 },
+      { x: 255, y: 255 },
+    ],
+  })
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.bevel)
+  expect(stripped?.effects?.bevel?.style).toBe('stroke emboss')
+})
+
+test('Satin shades opposite interior edges, inverts and exports natively', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Непрозрачность атласа' }).fill('100')
+  await page.getByRole('slider', { name: 'Угол атласа' }).fill('90')
+  await page.getByRole('slider', { name: 'Дистанция атласа' }).fill('20')
+  await page.getByRole('slider', { name: 'Размер атласа' }).fill('0')
+  await page.getByRole('checkbox', { name: 'Инвертировать атлас' }).uncheck()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // A vertical 20 px two-copy mask touches the top/bottom interior bands only.
+  await expect.poll(async () => await pixel(page, 150, 58)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 142)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => await pixel(page, 68, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Инвертировать атлас' }).check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 58)).toEqual([128, 128, 128, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.satin)
+  expect(layer?.effects?.satin).toMatchObject({
+    enabled: true,
+    blendMode: 'multiply',
+    angle: 90,
+    distance: { value: 20, units: 'Pixels' },
+    size: { value: 0, units: 'Pixels' },
+    invert: true,
+    antialiased: false,
+    contour: {
+      name: 'Linear',
+      curve: [
+        { x: 0, y: 0 },
+        { x: 255, y: 255 },
+      ],
+    },
+  })
+  expect(layer?.effects?.satin?.opacity).toBeCloseTo(1, 2)
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.satin)
+  expect(stripped?.effects?.satin?.distance?.value).toBe(20)
+})
+
+test('contours reshape shadow falloff and bevel gloss, then export every contour natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [80, 50], [220, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  const controls = page.locator('.style-controls')
+  await page.getByRole('button', { name: 'Тень', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('20')
+  await controls.getByLabel('Сдвиг X', { exact: true }).fill('50')
+  await controls.getByLabel('Сдвиг Y', { exact: true }).fill('0')
+  await controls.getByRole('slider', { name: 'Непрозрачность тени' }).fill('100')
+  await controls.getByLabel('Контур тени').selectOption('Конус')
+  await page.getByRole('button', { name: 'Редактировать точки', exact: true }).click()
+  await expect(page.getByTestId('contour-point-editor')).toBeVisible()
+  await controls.getByLabel('Точка контура').selectOption('1')
+  await controls.getByLabel('Выход точки').fill('90')
+  await expect(controls.getByLabel('Контур тени')).toHaveValue('__custom__')
+  await page.getByRole('button', { name: 'Добавить точку', exact: true }).click()
+  await expect(controls.locator('.contour-editor-point')).toHaveCount(4)
+  await page.getByRole('button', { name: 'Скрыть редактор точек', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размер фаски' }).fill('16')
+  await controls.getByLabel('Контур глянца фаски').selectOption('Нисходящий')
+  await page.getByRole('checkbox', { name: 'Сглаживание контура глянца' }).check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // The descending gloss curve exchanges the normally lit top slope and the
+  // normally shaded bottom slope; the flat centre remains the source grey.
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+
+  // In the displaced drop shadow, the cone maps its opaque core back to
+  // transparent and peaks in the blurred falloff: a real halo/ring, not a
+  // simple opacity multiplier.
+  await expect.poll(async () => (await pixel(page, 230, 100))[3]).toBeLessThan(60)
+  await expect.poll(async () => (await pixel(page, 275, 100))[3]).toBeGreaterThan(120)
+  await expect.poll(async () => (await pixel(page, 292, 100))[3]).toBeLessThan(40)
+
+  let bytes = await exportPsd(page)
+  let parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  let layer = (parsed.children || []).find((l) => l.effects?.dropShadow?.length)
+  expect(layer?.effects?.dropShadow?.[0].contour).toEqual({
+    name: 'Пользовательский',
+    curve: [
+      { x: 0, y: 0 },
+      { x: 128, y: 230 },
+      { x: 192, y: 114 },
+      { x: 255, y: 0 },
+    ],
+  })
+  expect(layer?.effects?.bevel?.antialiasGloss).toBe(true)
+  expect(layer?.effects?.bevel?.contour?.name).toBe('Нисходящий')
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.dropShadow?.length)
+  expect(stripped?.effects?.dropShadow?.[0].contour?.name).toBe('Пользовательский')
+  expect(stripped?.effects?.bevel?.contour?.name).toBe('Нисходящий')
+
+  // Add the remaining contour-bearing effects through the same UI and prove
+  // their curves/ranges also live in native descriptors rather than XMP.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Внутренняя тень', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('7')
+  await controls.getByLabel('Контур тени').selectOption('Полукруг')
+
+  await page.getByRole('button', { name: 'Внешнее свечение', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Радиус свечения' }).fill('12')
+  await controls.getByLabel('Контур свечения').selectOption('Ступени')
+  await page.getByRole('button', { name: 'Редактировать точки', exact: true }).click()
+  await controls.getByLabel('Точка контура').selectOption('3')
+  const draggedPoint = controls.locator('.contour-editor-point').nth(3)
+  const pointBox = (await draggedPoint.boundingBox())!
+  await page.mouse.move(pointBox.x + pointBox.width / 2, pointBox.y + pointBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(pointBox.x + pointBox.width / 2, pointBox.y + pointBox.height / 2 + 24, {
+    steps: 6,
+  })
+  await page.mouse.up()
+  await expect(controls.getByLabel('Контур свечения')).toHaveValue('__custom__')
+  // Normalize the dragged point through the numeric field so the native PSD
+  // assertion below is exact rather than dependent on browser pointer pixels.
+  await controls.getByLabel('Выход точки').fill('25')
+  await page.getByRole('button', { name: 'Скрыть редактор точек', exact: true }).click()
+  await controls.getByRole('slider', { name: 'Диапазон контура свечения' }).fill('25')
+  await page.getByRole('checkbox', { name: 'Сглаживание контура свечения' }).check()
+
+  await page.getByRole('button', { name: 'Внутреннее свечение', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Радиус свечения' }).fill('8')
+  await controls.getByLabel('Контур свечения').selectOption('S-кривая')
+  await controls.getByRole('slider', { name: 'Диапазон контура свечения' }).fill('80')
+
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await controls.getByRole('slider', { name: 'Размер атласа' }).fill('10')
+  await controls.getByLabel('Контур атласа').selectOption('Двойное кольцо')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  bytes = await exportPsd(page)
+  parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  layer = (parsed.children || []).find((l) => l.effects?.satin)
+  expect(layer?.effects?.innerShadow?.[0].contour?.name).toBe('Полукруг')
+  expect(layer?.effects?.outerGlow?.contour?.name).toBe('Пользовательский')
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].y).toBe(64)
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].x).toBeGreaterThanOrEqual(124)
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].x).toBeLessThanOrEqual(128)
+  expect(layer?.effects?.outerGlow?.antialiased).toBe(true)
+  expect(layer?.effects?.outerGlow?.range).toBeCloseTo(0.25, 2)
+  expect(layer?.effects?.innerGlow?.contour?.name).toBe('S-кривая')
+  expect(layer?.effects?.innerGlow?.range).toBeCloseTo(0.8, 2)
+  expect(layer?.effects?.satin?.contour?.name).toBe('Двойное кольцо')
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

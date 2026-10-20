@@ -1,5 +1,6 @@
 import type { Layer, Rect } from '../types'
 import { getTextLayout, textFont, type TextLine } from './textLayout'
+import { textDecorationMetrics } from './textDecorations'
 export interface InkMetrics {
   width: number
   actualBoundingBoxLeft: number
@@ -24,6 +25,11 @@ export type InkMeasure = (
 const cache = new Map<string, TextGeometry>()
 let context: CanvasRenderingContext2D | undefined
 export const clearTextGeometryCache = () => cache.clear()
+/** Positive values raise glyphs above their line baseline, matching PSD's sign. */
+export const textBaselineShiftPx = (layer: Layer): number =>
+  typeof layer.textBaselineShift === 'number' && Number.isFinite(layer.textBaselineShift)
+    ? Math.max(-1000, Math.min(1000, layer.textBaselineShift))
+    : 0
 /** Pure geometry from actual glyph ink, not a guessed string-length rectangle. */
 export function measureTextGeometry(
   layer: Layer,
@@ -37,6 +43,7 @@ export function measureTextGeometry(
   const sample = measure('MgЙд', size, baseline, 'left'),
     alphabetic = measure('MgЙд', size, 'alphabetic', 'left')
   const baselineOffset = alphabetic.actualBoundingBoxAscent - sample.actualBoundingBoxAscent
+  const baselineDy = -textBaselineShiftPx(layer)
   const anchor = align === 'center' ? layer.width / 2 : align === 'right' ? layer.width : 0
   const lines =
     framed?.lines ||
@@ -66,8 +73,21 @@ export function measureTextGeometry(
     const x2 = empty
       ? line.x - offset + Math.max(width, size * 0.2)
       : line.x + m.actualBoundingBoxRight * scale
-    const y1 = line.y - (empty ? sample.actualBoundingBoxAscent : m.actualBoundingBoxAscent)
-    const y2 = line.y + (empty ? sample.actualBoundingBoxDescent : m.actualBoundingBoxDescent)
+    let y1 =
+      line.y + baselineDy - (empty ? sample.actualBoundingBoxAscent : m.actualBoundingBoxAscent)
+    let y2 =
+      line.y + baselineDy + (empty ? sample.actualBoundingBoxDescent : m.actualBoundingBoxDescent)
+    if (!empty && (layer.textUnderline || layer.textStrikethrough)) {
+      const decoration = textDecorationMetrics(size)
+      const alphabeticY =
+        (baseline === 'alphabetic' ? line.y : line.y + baselineOffset) + baselineDy
+      if (layer.textUnderline)
+        y2 = Math.max(y2, alphabeticY + decoration.underlineTopOffset + decoration.thickness)
+      if (layer.textStrikethrough) {
+        y1 = Math.min(y1, alphabeticY + decoration.strikethroughTopOffset)
+        y2 = Math.max(y2, alphabeticY + decoration.strikethroughTopOffset + decoration.thickness)
+      }
+    }
     left = Math.min(left, x1)
     top = Math.min(top, y1)
     right = Math.max(right, x2)
@@ -102,6 +122,9 @@ export function getTextGeometry(layer: Layer): TextGeometry {
     layer.fontSize,
     layer.fontWeight,
     layer.italic,
+    layer.textUnderline,
+    layer.textStrikethrough,
+    layer.textBaselineShift,
     layer.textScaleX,
     layer.textAlign,
     layer.lineHeight,

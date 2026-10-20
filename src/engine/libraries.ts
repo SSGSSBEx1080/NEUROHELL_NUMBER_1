@@ -1,6 +1,7 @@
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import { normalizeStyles } from './styles'
-import type { LayerStyles } from '../types'
+import { parseBlendIf } from './blendIf'
+import type { BlendIfRanges, LayerStyles } from '../types'
 
 export const GRADIENT_LIBRARY_KEY = 'fsh777-gradient-library'
 export const STYLE_LIBRARY_KEY = 'fsh777-style-library'
@@ -106,15 +107,33 @@ export const serializeStyleLibrary = (items: StylePreset[]) =>
   JSON.stringify({ kind: 'fsh777-styles', version: 1, styles: items }, null, 2)
 
 let clipboard: LayerStyles | undefined
-export function copyStyleToClipboard(styles: LayerStyles) {
+let clipboardBlendIf: BlendIfRanges | undefined
+let clipboardLoaded = false
+export function copyStyleToClipboard(styles: LayerStyles, blendIf?: BlendIfRanges) {
   clipboard = structuredClone(styles)
-  write(STYLE_CLIPBOARD_KEY, clipboard)
+  clipboardBlendIf = blendIf ? structuredClone(blendIf) : undefined
+  clipboardLoaded = true
+  write(STYLE_CLIPBOARD_KEY, { styles: clipboard, blendIf: clipboardBlendIf })
+}
+function loadStyleClipboard() {
+  if (clipboardLoaded) return
+  clipboardLoaded = true
+  const raw = read(STYLE_CLIPBOARD_KEY)
+  // Older payloads stored the bare LayerStyles object; new ones wrap it with Blend If.
+  const wrapped =
+    raw && typeof raw === 'object' && !Array.isArray(raw) && 'styles' in raw
+      ? (raw as { styles?: unknown; blendIf?: unknown })
+      : undefined
+  clipboard = normalizeStyles(wrapped ? wrapped.styles : raw)
+  clipboardBlendIf = wrapped ? parseBlendIf(wrapped.blendIf) : undefined
 }
 export function readStyleClipboard(): LayerStyles | undefined {
-  if (clipboard) return structuredClone(clipboard)
-  const stored = normalizeStyles(read(STYLE_CLIPBOARD_KEY))
-  if (stored) clipboard = stored
-  return stored ? structuredClone(stored) : undefined
+  loadStyleClipboard()
+  return clipboard ? structuredClone(clipboard) : undefined
+}
+export function readStyleClipboardBlendIf(): BlendIfRanges | undefined {
+  loadStyleClipboard()
+  return clipboardBlendIf ? structuredClone(clipboardBlendIf) : undefined
 }
 
 /** Built-in presets; every parameter below is rendered and exported to PSD. */

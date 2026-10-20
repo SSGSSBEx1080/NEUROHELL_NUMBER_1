@@ -35,7 +35,9 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
+  Strikethrough,
   Type,
+  Underline,
   Unlink2,
   Upload,
 } from 'lucide-react'
@@ -654,6 +656,25 @@ export function PropertiesPanel({
                           active={layer.italic}
                           onClick={() => patch({ italic: !layer.italic }, 'Начертание')}
                         />
+                        <IconButton
+                          icon={Underline}
+                          label="Подчёркивание текста"
+                          active={layer.textUnderline === true}
+                          onClick={() =>
+                            patch({ textUnderline: !layer.textUnderline }, 'Подчёркивание текста')
+                          }
+                        />
+                        <IconButton
+                          icon={Strikethrough}
+                          label="Зачёркивание текста"
+                          active={layer.textStrikethrough === true}
+                          onClick={() =>
+                            patch(
+                              { textStrikethrough: !layer.textStrikethrough },
+                              'Зачёркивание текста',
+                            )
+                          }
+                        />
                       </div>
                       <div className="text-style-row">
                         <div className="segmented-control">
@@ -691,6 +712,47 @@ export function PropertiesPanel({
                         onChange={(lineHeight) => patch({ lineHeight }, '', true)}
                         onCommit={finish}
                       />
+                      <Field
+                        label="Сдвиг базовой линии"
+                        value={layer.textBaselineShift || 0}
+                        min={-1000}
+                        max={1000}
+                        step={1}
+                        suffix="px"
+                        onChange={(textBaselineShift) =>
+                          patch({ textBaselineShift: textBaselineShift || undefined }, '', true)
+                        }
+                        onCommit={finish}
+                      />
+                      {!!layer.textBaselineShift && (
+                        <p className="panel-note">
+                          Положительное значение поднимает весь текст слоя, отрицательное опускает.
+                          Сдвиг отдельных фрагментов внутри строки пока не поддерживается.
+                        </p>
+                      )}
+                      <Select
+                        aria-label="Сглаживание текста"
+                        value={layer.textAntiAlias || 'smooth'}
+                        onChange={(e) =>
+                          patch(
+                            { textAntiAlias: e.target.value as Layer['textAntiAlias'] },
+                            'Сглаживание текста',
+                          )
+                        }
+                      >
+                        <option value="none">Сглаживание: нет (жёсткий край)</option>
+                        <option value="sharp">Сглаживание: резкое (Sharp)</option>
+                        <option value="crisp">Сглаживание: чёткое (Crisp)</option>
+                        <option value="strong">Сглаживание: насыщенное (Strong)</option>
+                        <option value="smooth">Сглаживание: гладкое (Smooth)</option>
+                      </Select>
+                      {(layer.textAntiAlias || 'smooth') !== 'smooth' && (
+                        <p className="panel-note">
+                          Края формирует собственная alpha-модель поверх Canvas: «Нет» даёт только
+                          0/255, Sharp/Crisp сужают переход, Strong утяжеляет штрих. Хинтинг Adobe и
+                          LCD-субпиксели не воспроизводятся.
+                        </p>
+                      )}
                       <Suspense fallback={null}>
                         <TextFrameSettings layer={layer} patch={patch} finish={finish} />
                       </Suspense>

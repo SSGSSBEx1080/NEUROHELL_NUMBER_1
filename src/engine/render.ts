@@ -1,5 +1,5 @@
 import { renderCorrection, clearAdjustmentCaches } from './adjustmentRenderer'
-import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
+import { getTextGeometry, clearTextGeometryCache, textBaselineShiftPx } from './textGeometry'
 import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { homography, project, validQuad } from './projection'
@@ -9,7 +9,21 @@ import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from 
 import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions, bundledImageSource } from './imageSafety'
 import { clearStyleCache, hasStyles, renderStyled } from './styles'
-import { DEFAULT_ADJUSTMENTS, type EditorDocument, type Layer } from '../types'
+import {
+  collectPatternDefinitions,
+  documentPatternsReady,
+  prepareDocumentPatterns,
+} from './patterns'
+import { applyBlendIf, isBlendIfActive } from './blendIf'
+import { applyTextAntiAliasToPixels, textAntiAliasMode } from './textAntiAlias'
+import { textDecorationMetrics } from './textDecorations'
+import {
+  DEFAULT_ADJUSTMENTS,
+  type EditorDocument,
+  type Layer,
+  type Rect,
+  type TextAntiAliasMode,
+} from '../types'
 
 const images = new Map<string, HTMLImageElement | HTMLCanvasElement>()
 const loading = new Map<string, Promise<HTMLImageElement>>()
@@ -74,6 +88,17 @@ export function validateRasterBudget(doc: EditorDocument) {
         'Слишком много растров в одном проекте: до 48 мегапикселей суммарно. Уменьши изображения или объедини слои.',
       )
   }
+  const patternPixels = new Map<string, number>()
+  for (const definition of collectPatternDefinitions(doc))
+    if (definition.kind === 'image' && definition.src)
+      patternPixels.set(definition.src, (definition.width || 0) * (definition.height || 0))
+  for (const count of patternPixels.values()) {
+    pixels += count
+    if (pixels > 48_000_000)
+      throw new Error(
+        'Слишком много растров в одном проекте: до 48 мегапикселей суммарно. Уменьши изображения или объедини слои.',
+      )
+  }
   return sources
 }
 const documentFonts = (doc: EditorDocument) =>
@@ -92,6 +117,8 @@ export async function prepareDocument(doc: EditorDocument) {
     ...sources.map(loadImage),
     ...needed.map(({ font, sample }) => document.fonts.load(font, sample)),
   ])
+  const patternsLoaded = await prepareDocumentPatterns(doc)
+  if (patternsLoaded) clearStyleCache()
   await document.fonts.ready
   if (needed.length) {
     clearRenderCaches()
@@ -110,6 +137,118 @@ export function pruneImageCache(documents: EditorDocument[]) {
 export function filterString(layer: Layer) {
   const a = layer.adjustments || DEFAULT_ADJUSTMENTS
   return `brightness(${100 + a.brightness}%) contrast(${100 + a.contrast}%) saturate(${100 + a.saturation}%) blur(${a.blur}px) hue-rotate(${a.hue}deg) grayscale(${a.grayscale}%) sepia(${a.sepia}%) invert(${a.invert || 0}%)`
+}
+function paintText(ctx: CanvasRenderingContext2D, layer: Layer) {
+  if (ctx.canvas.style.fontSynthesis !== 'weight style')
+    ctx.canvas.style.fontSynthesis = 'weight style'
+  const textScale = layer.textScaleX || 1
+  const geometry = getTextGeometry(layer)
+  if (layer.textFrame) {
+    const p = layer.textFrame.padding,
+      w = layer.width - p * 2,
+      h = layer.height - p * 2
+    ctx.beginPath()
+    if (layer.textFrame.shape === 'ellipse' && w > 0 && h > 0)
+      ctx.ellipse(layer.width / 2, layer.height / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
+    else ctx.rect(p, p, Math.max(0, w), Math.max(0, h))
+    ctx.clip()
+  }
+  ctx.scale(textScale, 1)
+  const size = geometry.fontSize
+  ctx.font = textFont(layer, size)
+  ctx.fillStyle = layer.color
+  ctx.textBaseline = layer.textBaseline || 'top'
+  ctx.textAlign = layer.textAlign || 'left'
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
+  const decoration = textDecorationMetrics(size)
+  const baselineDy = -textBaselineShiftPx(layer)
+  for (const line of geometry.lines) {
+    const anchorX = line.x / textScale
+    ctx.fillText(line.text, anchorX, line.y + baselineDy)
+    if ((!layer.textUnderline && !layer.textStrikethrough) || !line.text.trim()) continue
+    const measured = ctx.measureText(line.text)
+    const left = anchorX - (measured.actualBoundingBoxLeft || 0)
+    const right = anchorX + (measured.actualBoundingBoxRight || 0)
+    if (!(right > left)) continue
+    const baselineY =
+      ((layer.textBaseline || 'top') === 'alphabetic' ? line.y : line.y + geometry.baselineOffset) +
+      baselineDy
+    if (layer.textUnderline)
+      ctx.fillRect(
+        left,
+        baselineY + decoration.underlineTopOffset,
+        right - left,
+        decoration.thickness,
+      )
+    if (layer.textStrikethrough)
+      ctx.fillRect(
+        left,
+        baselineY + decoration.strikethroughTopOffset,
+        right - left,
+        decoration.thickness,
+      )
+  }
+}
+const textAntiAliasCache = new Map<string, { key: Layer; image: HTMLCanvasElement; bounds: Rect }>()
+function shapedTextSurface(layer: Layer, mode: Exclude<TextAntiAliasMode, 'smooth'>) {
+  // Only local glyph rasterisation belongs in the cache. Position, flips,
+  // opacity/blending, masks, styles and colour filters are applied by the
+  // caller when this surface is drawn, exactly as for the direct Smooth path.
+  const key: Layer = {
+    ...layer,
+    x: 0,
+    y: 0,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    warp: undefined,
+    src: undefined,
+    sourceText: undefined,
+    styles: undefined,
+    mask: undefined,
+    blendIf: undefined,
+    parentId: undefined,
+    clipping: false,
+    visible: true,
+    opacity: 1,
+    blendMode: 'source-over',
+    adjustments: { ...DEFAULT_ADJUSTMENTS, blur: layer.adjustments.blur || 0 },
+  }
+  let cached = textAntiAliasCache.get(layer.id)
+  if (!cached || !sameVisual(key, cached.key)) {
+    const bounds = pixelBounds(rasterBounds(key)),
+      scale = Math.min(
+        1,
+        4096 / bounds.width,
+        4096 / bounds.height,
+        Math.sqrt(16_777_216 / (bounds.width * bounds.height)),
+      )
+    const image = document.createElement('canvas')
+    image.width = Math.max(1, Math.ceil(bounds.width * scale))
+    image.height = Math.max(1, Math.ceil(bounds.height * scale))
+    const x = image.getContext('2d', { willReadFrequently: true })!
+    x.scale(image.width / bounds.width, image.height / bounds.height)
+    x.translate(-bounds.x, -bounds.y)
+    paintText(x, key)
+    const pixels = x.getImageData(0, 0, image.width, image.height)
+    applyTextAntiAliasToPixels(pixels.data, mode)
+    x.putImageData(pixels, 0, 0)
+    cached = { key, image, bounds }
+    textAntiAliasCache.delete(layer.id)
+    textAntiAliasCache.set(layer.id, cached)
+    let bytes = [...textAntiAliasCache.values()].reduce(
+      (sum, entry) => sum + entry.image.width * entry.image.height * 4,
+      0,
+    )
+    for (const [id, entry] of textAntiAliasCache) {
+      if (bytes <= 64 * 1024 * 1024) break
+      if (id !== layer.id) {
+        bytes -= entry.image.width * entry.image.height * 4
+        textAntiAliasCache.delete(id)
+      }
+    }
+  }
+  return cached
 }
 export function renderLayer(
   ctx: CanvasRenderingContext2D,
@@ -177,28 +316,23 @@ export function renderLayer(
   } else if (layer.kind === 'shape') {
     renderShape(ctx, layer)
   } else if (layer.kind === 'text') {
-    if (ctx.canvas.style.fontSynthesis !== 'weight style')
-      ctx.canvas.style.fontSynthesis = 'weight style'
-    const textScale = layer.textScaleX || 1
-    const geometry = getTextGeometry(layer)
-    if (layer.textFrame) {
-      const p = layer.textFrame.padding,
-        w = layer.width - p * 2,
-        h = layer.height - p * 2
-      ctx.beginPath()
-      if (layer.textFrame.shape === 'ellipse' && w > 0 && h > 0)
-        ctx.ellipse(layer.width / 2, layer.height / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
-      else ctx.rect(p, p, Math.max(0, w), Math.max(0, h))
-      ctx.clip()
+    const mode = textAntiAliasMode(layer.textAntiAlias)
+    if (mode === 'smooth') paintText(ctx, layer)
+    else {
+      const surface = shapedTextSurface(layer, mode)
+      ctx.save()
+      // None is a document-pixel decision; do not let preview scaling soften
+      // its deliberately hard alpha back into intermediate values.
+      if (mode === 'none') ctx.imageSmoothingEnabled = false
+      ctx.drawImage(
+        surface.image,
+        surface.bounds.x,
+        surface.bounds.y,
+        surface.bounds.width,
+        surface.bounds.height,
+      )
+      ctx.restore()
     }
-    ctx.scale(textScale, 1)
-    const size = geometry.fontSize
-    ctx.font = textFont(layer, size)
-    ctx.fillStyle = layer.color
-    ctx.textBaseline = layer.textBaseline || 'top'
-    ctx.textAlign = layer.textAlign || 'left'
-    if ('letterSpacing' in ctx) ctx.letterSpacing = `${layer.letterSpacing || 0}px`
-    for (const line of geometry.lines) ctx.fillText(line.text, line.x / textScale, line.y)
   }
   ctx.restore()
 }
@@ -207,6 +341,7 @@ export function isPrepared(doc: EditorDocument) {
     document.fonts.status === 'loaded' &&
     documentFonts(doc).every(({ font, sample }) => document.fonts.check(font, sample)) &&
     (!doc.sourceId || !!originalSource(doc)) &&
+    documentPatternsReady(doc) &&
     doc.layers.every((l) => (!l.src || images.has(l.src)) && (!l.mask || images.has(l.mask.src)))
   )
 }
@@ -297,6 +432,45 @@ export function renderDocument(
         )
       }
     }
+    // Blend If: paint the layer flat into a surface, modulate its alpha by its
+    // own resulting pixels and by a snapshot of the composite underneath, then
+    // blend the surface with the layer's real opacity/mode. All surfaces share
+    // the document pixel grid, so the snapshot aligns 1:1.
+    const applyRanges = (
+      layerCanvas: HTMLCanvasElement,
+      target: CanvasRenderingContext2D,
+      ranges: NonNullable<Layer['blendIf']>,
+    ) => {
+      const back = surface()
+      try {
+        const bx = back.getContext('2d', { willReadFrequently: true })!
+        bx.drawImage(target.canvas, 0, 0, doc.width, doc.height)
+        const sx = layerCanvas.getContext('2d', { willReadFrequently: true })!,
+          image = sx.getImageData(0, 0, width, height),
+          under = bx.getImageData(0, 0, width, height)
+        applyBlendIf(image.data, under.data, ranges)
+        sx.putImageData(image, 0, 0)
+      } finally {
+        release(back)
+      }
+    }
+    const paintBlendIf = (layer: Layer, target: CanvasRenderingContext2D) => {
+      const surf = surface()
+      try {
+        paint(
+          { ...layer, opacity: 1, blendMode: 'source-over', blendIf: undefined },
+          surf.getContext('2d')!,
+        )
+        applyRanges(surf, target, layer.blendIf!)
+        target.save()
+        target.globalAlpha = layer.opacity
+        target.globalCompositeOperation = layer.blendMode
+        target.drawImage(surf, 0, 0, doc.width, doc.height)
+        target.restore()
+      } finally {
+        release(surf)
+      }
+    }
     for (let i = 0; i < siblings.length; i++) {
       const layer = siblings[i]
       if (layer.clipping) continue // Orphan clipping layers have no visible base.
@@ -314,7 +488,8 @@ export function renderDocument(
         continue
       }
       if (end === i + 1) {
-        paint(layer, target)
+        if (isBlendIfActive(layer.blendIf)) paintBlendIf(layer, target)
+        else paint(layer, target)
         continue
       }
       // A clipping stack shares the base alpha and base opacity. Normalizing before
@@ -333,6 +508,7 @@ export function renderDocument(
           if (siblings[j].visible && siblings[j].id !== hideId) paint(siblings[j], x)
         x.globalCompositeOperation = 'destination-in'
         x.drawImage(base, 0, 0, doc.width, doc.height)
+        if (isBlendIfActive(layer.blendIf)) applyRanges(group, target, layer.blendIf!)
         target.save()
         target.globalAlpha = layer.opacity
         target.globalCompositeOperation = layer.blendMode
@@ -597,6 +773,7 @@ export async function encodeBitmap(layer: Layer, canvas: HTMLCanvasElement): Pro
 export function clearRenderCaches() {
   clearAdjustmentCaches()
   maskCache.clear()
+  textAntiAliasCache.clear()
   clearStyleCache()
   clearWarpCache()
   clearTextLayoutCache()

@@ -2,7 +2,9 @@ import { parseShapePaths } from './shapeGeometry'
 import { parseCorrection } from './adjustmentTypes'
 import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
+import { parseBlendIf } from './blendIf'
 import { parseTextFrame } from './textLayout'
+import { TEXT_ANTI_ALIAS_MODES } from './textAntiAlias'
 export type ActionProperties = Partial<
   Pick<
     Layer,
@@ -17,9 +19,13 @@ export type ActionProperties = Partial<
     | 'fontSize'
     | 'fontWeight'
     | 'italic'
+    | 'textUnderline'
+    | 'textStrikethrough'
+    | 'textBaselineShift'
     | 'textAlign'
     | 'lineHeight'
     | 'letterSpacing'
+    | 'textAntiAlias'
     | 'textScaleX'
     | 'shape'
     | 'shapeFill'
@@ -39,7 +45,11 @@ export type ActionProperties = Partial<
     | 'flipX'
     | 'flipY'
   >
-> & { styles?: LayerStyles | null; textFrame?: TextFrame | null }
+> & {
+  styles?: LayerStyles | null
+  textFrame?: TextFrame | null
+  blendIf?: import('../types').BlendIfRanges | null
+}
 export type ActionCommand =
   | { type: 'adjust'; values: Partial<Adjustments> }
   | { type: 'invert' | 'flipX' | 'flipY' | 'reset' | 'delete' }
@@ -64,6 +74,7 @@ const numeric: Record<string, [number, number]> = {
   fontWeight: [100, 900],
   lineHeight: [0.5, 4],
   letterSpacing: [-30, 100],
+  textBaselineShift: [-1000, 1000],
   textScaleX: [0.01, 100],
   sides: [3, 64],
   starRatio: [0.02, 0.98],
@@ -78,6 +89,7 @@ const enums: Record<string, readonly string[]> = {
   strokeCap: ['butt', 'round', 'square'],
   strokeJoin: ['miter', 'round', 'bevel'],
   textAlign: ['left', 'center', 'right'],
+  textAntiAlias: TEXT_ANTI_ALIAS_MODES,
   blendMode: [
     'source-over',
     'multiply',
@@ -115,7 +127,15 @@ export function parseActionProperties(input: unknown): ActionProperties {
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
     else if (
-      ['visible', 'italic', 'flipX', 'flipY', 'shapeFill'].includes(key) &&
+      [
+        'visible',
+        'italic',
+        'textUnderline',
+        'textStrikethrough',
+        'flipX',
+        'flipY',
+        'shapeFill',
+      ].includes(key) &&
       typeof value === 'boolean'
     )
       out[key] = value
@@ -147,7 +167,9 @@ export function parseActionProperties(input: unknown): ActionProperties {
       if (value && JSON.stringify(value).length > 24000)
         throw new Error('Слишком большой стиль операции')
       out[key] = value === null ? null : normalizeStyles(value)
-    } else if (key === 'textFrame' && (value === null || object(value)))
+    } else if (key === 'blendIf' && (value === null || object(value)))
+      out[key] = value === null ? null : parseBlendIf(value)
+    else if (key === 'textFrame' && (value === null || object(value)))
       out[key] = value === null ? null : parseTextFrame(value)
     else throw new Error(`Неподдерживаемое свойство операции: ${key.slice(0, 60)}`)
   }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   Check,
   ChevronDown,
@@ -16,9 +16,26 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import { MAX_STYLE_INSTANCES, type Layer, type LayerStyles } from '../types'
+import {
+  MAX_STYLE_INSTANCES,
+  type BlendIfChannelKey,
+  type BlendIfQuad,
+  type BlendIfRanges,
+  type BlendMode,
+  type EffectContourDefinition,
+  type Layer,
+  type LayerStyles,
+} from '../types'
+import {
+  BLEND_IF_CHANNELS,
+  blendIfChannelNames,
+  defaultBlendIf,
+  isBlendIfActive,
+  parseBlendIf,
+} from '../engine/blendIf'
 import {
   STYLE_LIMITS,
+  defaultGradientOverlayGradient,
   defaultGradientOverlayStyle,
   defaultInnerShadowStyle,
   defaultOverlayStyle,
@@ -30,21 +47,56 @@ import {
 } from '../engine/styles'
 import { gradientCss } from '../engine/gradientRamp'
 import {
+  CUSTOM_EFFECT_CONTOUR_NAME,
+  MAX_EFFECT_CONTOUR_POINTS,
+  addEffectContourPoint,
+  contourWithEditorEndpoints,
+  effectContourPreset,
+  effectContourPresets,
+  matchingContourPreset,
+  moveEffectContourPoint,
+  parseEffectContour,
+  removeEffectContourPoint,
+  sampleEffectContour,
+} from '../engine/contours'
+import { defaultPatternDefinition, prepareStylePatterns } from '../engine/patterns'
+import {
   builtinStylePresets,
   copyStyleToClipboard,
   loadStyleLibrary,
   parseStyleLibraryFile,
   readStyleClipboard,
+  readStyleClipboardBlendIf,
   saveStyleLibrary,
   serializeStyleLibrary,
   type StylePreset,
 } from '../engine/libraries'
 import { downloadBlob, loadImage, renderLayer } from '../engine/render'
 import { GradientDefinitionEditor } from './GradientDefinitionEditor'
+import { PatternDefinitionEditor } from './PatternDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
-type Tab = ListKey | 'glow' | 'innerGlow' | 'library'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'satin' | 'pattern' | 'bevel' | 'blendIf' | 'library'
+const BEVEL_BLEND_MODES: [BlendMode, string][] = [
+  ['source-over', 'Обычный'],
+  ['multiply', 'Умножение'],
+  ['screen', 'Экран'],
+  ['overlay', 'Перекрытие'],
+  ['darken', 'Темнее'],
+  ['lighten', 'Светлее'],
+  ['color-dodge', 'Осветление основы'],
+  ['lighter', 'Линейное осветление (сложение)'],
+  ['color-burn', 'Затемнение основы'],
+  ['hard-light', 'Жёсткий свет'],
+  ['soft-light', 'Мягкий свет'],
+  ['difference', 'Разница'],
+  ['exclusion', 'Исключение'],
+  ['hue', 'Цветовой тон'],
+  ['saturation', 'Насыщенность'],
+  ['color', 'Цветность'],
+  ['luminosity', 'Яркость'],
+]
 const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'strokes',
@@ -56,14 +108,34 @@ const sections: { id: Tab; name: string; note: string }[] = [
   { id: 'glow', name: 'Внешнее свечение', note: 'Свет вокруг формы.' },
   { id: 'innerGlow', name: 'Внутреннее свечение', note: 'Свет от края внутрь.' },
   {
+    id: 'satin',
+    name: 'Атлас (Satin)',
+    note: 'Внутренняя атласная вуаль из двух смещённых и размытых копий альфы. Собственный алгоритм; контур формирует спад вуали, инверсия переворачивает результат контура.',
+  },
+  {
     id: 'overlays',
     name: 'Наложение цвета',
-    note: 'Цвет поверх содержимого, без изменения пикселей.',
+    note: 'Верхнее наложение внутри альфы слоя: собственный цвет, режим смешивания и непрозрачность. Исходные пиксели слоя не переписываются.',
   },
   {
     id: 'gradients',
     name: 'Градиент',
-    note: 'Полные градиенты: цвет, прозрачность, середины и шум.',
+    note: 'Среднее наложение: полные градиенты с цветом, прозрачностью, серединами, шумом и режимом смешивания.',
+  },
+  {
+    id: 'pattern',
+    name: 'Узор',
+    note: 'Нижнее наложение: повторяющаяся плитка под градиентами и цветом, с режимом смешивания, масштабом, фазой и связью со слоем.',
+  },
+  {
+    id: 'bevel',
+    name: 'Фаска и тиснение',
+    note: 'Собственное поле высоты по расстоянию до альфа-края: пять стилей, техника, глубина, смягчение, свет и контур глянца. Текстура фаски и отдельный элемент Contour (сечение фаски) пока не воспроизводятся.',
+  },
+  {
+    id: 'blendIf',
+    name: 'Параметры наложения',
+    note: 'Blend If: показывать пиксели по яркости/каналам этого и нижнего слоя. Разделённые пороги дают плавный переход.',
   },
   {
     id: 'library',
@@ -71,11 +143,306 @@ const sections: { id: Tab; name: string; note: string }[] = [
     note: 'Пресеты, копирование между слоями и масштаб эффектов.',
   },
 ]
-const enabledOf = (styles: LayerStyles, tab: Tab): number => {
+const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): number => {
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
+  if (tab === 'satin') return styles.satin.enabled ? 1 : 0
+  if (tab === 'pattern') return styles.pattern.enabled ? 1 : 0
+  if (tab === 'bevel') return styles.bevel.enabled ? 1 : 0
   if (tab === 'library') return 0
+  if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
+}
+
+function EffectBlendModeSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value?: BlendMode
+  onChange: (value: BlendMode) => void
+}) {
+  return (
+    <Select
+      aria-label={label}
+      value={value || 'source-over'}
+      onChange={(e) => onChange(e.target.value as BlendMode)}
+    >
+      {BEVEL_BLEND_MODES.map(([mode, text]) => (
+        <option key={mode} value={mode}>
+          {text}
+        </option>
+      ))}
+    </Select>
+  )
+}
+
+function ContourControls({
+  title,
+  selectLabel,
+  value,
+  antialiased,
+  antialiasLabel,
+  range,
+  rangeLabel,
+  onContour,
+  onAntialiased,
+  onRange,
+}: {
+  title: string
+  selectLabel: string
+  value?: EffectContourDefinition
+  antialiased?: boolean
+  antialiasLabel?: string
+  range?: number
+  rangeLabel?: string
+  onContour: (contour: EffectContourDefinition) => void
+  onAntialiased?: (value: boolean) => void
+  onRange?: (value: number) => void
+}) {
+  const current = parseEffectContour(value)
+  const preset = matchingContourPreset(current)
+  const selectedName = preset?.name || '__custom__'
+  const previewPoints = contourWithEditorEndpoints(current)
+    .points.map((point) => `${(point.x / 255) * 100},${54 - (point.y / 255) * 52}`)
+    .join(' ')
+  const [editing, setEditing] = useState(false)
+  const [selectedPointIndex, setSelectedPointIndex] = useState(0)
+  const dragPointIndex = useRef<number | null>(null)
+  const editorPoints = contourWithEditorEndpoints(current).points
+  const selectedIndex = Math.max(0, Math.min(selectedPointIndex, editorPoints.length - 1))
+  const selectedPoint = editorPoints[selectedIndex]
+  const percent = (value: number) => Math.round((value / 255) * 100)
+  const editorY = (value: number) => 156 - (value / 255) * 152
+  const editorLine = editorPoints.map((point) => `${point.x},${editorY(point.y)}`).join(' ')
+  const updatePoint = (index: number, point: { x: number; y: number }) =>
+    onContour(moveEffectContourPoint(current, index, point))
+  const graphPoint = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)))
+    const svgY =
+      Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))) * 160
+    return {
+      x: Math.round(x * 255),
+      y: Math.max(0, Math.min(255, Math.round(((156 - svgY) / 152) * 255))),
+    }
+  }
+  const deletePoint = (index: number) => {
+    onContour(removeEffectContourPoint(current, index))
+    setSelectedPointIndex(Math.max(0, index - 1))
+  }
+  const handleGraphPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const point = graphPoint(event)
+    const rawIndex = (event.target as Element).getAttribute?.('data-point-index')
+    if (rawIndex !== null && rawIndex !== undefined) {
+      const index = Number(rawIndex)
+      setSelectedPointIndex(index)
+      if (event.altKey && index > 0 && index < editorPoints.length - 1) {
+        deletePoint(index)
+        return
+      }
+      dragPointIndex.current = index
+      event.currentTarget.setPointerCapture(event.pointerId)
+      updatePoint(index, point)
+      return
+    }
+    if (editorPoints.length >= MAX_EFFECT_CONTOUR_POINTS) return
+    const added = addEffectContourPoint(current, point)
+    onContour(added.contour)
+    setSelectedPointIndex(added.index)
+    dragPointIndex.current = added.index
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const handleGraphPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (dragPointIndex.current === null) return
+    updatePoint(dragPointIndex.current, graphPoint(event))
+  }
+  const stopGraphDrag = () => {
+    dragPointIndex.current = null
+  }
+  const addPointInSelectedSegment = () => {
+    const first = editorPoints[selectedIndex]
+    const second = editorPoints[selectedIndex + 1] || editorPoints[selectedIndex - 1]
+    if (!first || !second) return
+    const x = Math.round((first.x + second.x) / 2)
+    if (x === first.x || x === second.x) return
+    const added = addEffectContourPoint(current, {
+      x,
+      y: Math.round(sampleEffectContour(current, x / 255) * 255),
+    })
+    onContour(added.contour)
+    setSelectedPointIndex(added.index)
+  }
+  return (
+    <div className="contour-controls">
+      <span className="panel-subtitle">{title}</span>
+      <div className="contour-picker-row">
+        <svg
+          className="contour-preview"
+          viewBox="0 0 100 56"
+          role="img"
+          aria-label={`Кривая контура: ${current.name}`}
+        >
+          <line x1="0" y1="28" x2="100" y2="28" />
+          <line x1="50" y1="0" x2="50" y2="56" />
+          <polyline points={previewPoints} />
+        </svg>
+        <Select
+          aria-label={selectLabel}
+          value={selectedName}
+          onChange={(e) => {
+            if (e.target.value !== '__custom__') {
+              setSelectedPointIndex(0)
+              onContour(effectContourPreset(e.target.value))
+            }
+          }}
+        >
+          {!preset && (
+            <option value="__custom__" disabled>
+              {current.name === CUSTOM_EFFECT_CONTOUR_NAME
+                ? 'Пользовательский контур'
+                : `Из PSD: ${current.name}`}
+            </option>
+          )}
+          {effectContourPresets.map((item) => (
+            <option key={item.name} value={item.name}>
+              {item.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <button
+        type="button"
+        className="compact-button contour-edit-toggle"
+        aria-expanded={editing}
+        onClick={() => setEditing((value) => !value)}
+      >
+        {editing ? 'Скрыть редактор точек' : 'Редактировать точки'}
+      </button>
+      {editing && (
+        <div className="contour-editor" data-testid="contour-point-editor">
+          <svg
+            className="contour-editor-graph"
+            viewBox="0 0 255 160"
+            role="img"
+            aria-label={`Редактор кривой контура: ${current.name}`}
+            onPointerDown={handleGraphPointerDown}
+            onPointerMove={handleGraphPointerMove}
+            onPointerUp={stopGraphDrag}
+            onPointerCancel={stopGraphDrag}
+          >
+            {[0, 64, 128, 191, 255].map((value) => (
+              <line key={`x${value}`} x1={value} y1="0" x2={value} y2="160" />
+            ))}
+            {[0, 64, 128, 191, 255].map((value) => (
+              <line key={`y${value}`} x1="0" y1={editorY(value)} x2="255" y2={editorY(value)} />
+            ))}
+            <polyline points={editorLine} />
+            {editorPoints.map((point, index) => (
+              <circle
+                key={`${index}-${point.x}`}
+                className={`contour-editor-point${index === selectedIndex ? ' selected' : ''}`}
+                data-point-index={index}
+                cx={point.x}
+                cy={editorY(point.y)}
+                r="6"
+              >
+                <title>{`Точка ${index + 1}: вход ${percent(point.x)}%, выход ${percent(point.y)}%`}</title>
+              </circle>
+            ))}
+          </svg>
+          <div className="contour-point-tools">
+            <Select
+              aria-label="Точка контура"
+              value={String(selectedIndex)}
+              onChange={(e) => setSelectedPointIndex(Number(e.target.value))}
+            >
+              {editorPoints.map((point, index) => (
+                <option key={`${index}-${point.x}`} value={index}>
+                  Точка {index + 1}: {percent(point.x)}% → {percent(point.y)}%
+                </option>
+              ))}
+            </Select>
+            <Field
+              label="Вход точки"
+              value={percent(selectedPoint.x)}
+              min={0}
+              max={100}
+              suffix="%"
+              disabled={selectedIndex === 0 || selectedIndex === editorPoints.length - 1}
+              onChange={(value) =>
+                updatePoint(selectedIndex, {
+                  x: (value / 100) * 255,
+                  y: selectedPoint.y,
+                })
+              }
+            />
+            <Field
+              label="Выход точки"
+              value={percent(selectedPoint.y)}
+              min={0}
+              max={100}
+              suffix="%"
+              onChange={(value) =>
+                updatePoint(selectedIndex, {
+                  x: selectedPoint.x,
+                  y: (value / 100) * 255,
+                })
+              }
+            />
+          </div>
+          <div className="contour-point-actions">
+            <button
+              type="button"
+              className="compact-button"
+              disabled={editorPoints.length >= MAX_EFFECT_CONTOUR_POINTS}
+              onClick={addPointInSelectedSegment}
+            >
+              <Plus size={13} /> Добавить точку
+            </button>
+            <button
+              type="button"
+              className="compact-button"
+              disabled={
+                editorPoints.length <= 2 ||
+                selectedIndex === 0 ||
+                selectedIndex === editorPoints.length - 1
+              }
+              onClick={() => deletePoint(selectedIndex)}
+            >
+              <Trash2 size={13} /> Удалить точку
+            </button>
+          </div>
+          <p className="panel-note">
+            Перетаскивай точку; клик по графику добавляет точку, Alt+клик удаляет внутреннюю.
+            Крайние входы закреплены на 0% и 100%. После ручной правки контур называется
+            пользовательским, пока снова точно не совпадёт с пресетом.
+          </p>
+        </div>
+      )}
+      {antialiasLabel && onAntialiased && (
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={antialiased === true}
+            onChange={(e) => onAntialiased(e.target.checked)}
+          />
+          {antialiasLabel}
+        </label>
+      )}
+      {rangeLabel && onRange && (
+        <Slider
+          label={rangeLabel}
+          value={Math.round((range ?? 0.5) * 100)}
+          min={1}
+          max={100}
+          suffix="%"
+          onChange={(v) => onRange(v / 100)}
+        />
+      )}
+    </div>
+  )
 }
 
 export function LayerStyleDialog({
@@ -85,11 +452,26 @@ export function LayerStyleDialog({
 }: {
   layer: Layer
   onClose: () => void
-  onApply: (styles: LayerStyles) => void
+  onApply: (styles: LayerStyles, blendIf: BlendIfRanges | undefined) => void
 }) {
   const [styles, setStyles] = useState<LayerStyles>(() =>
     structuredClone(normalizeStyles(layer.styles) || defaultStyles()),
   )
+  const [blendIf, setBlendIf] = useState<BlendIfRanges>(
+    () => parseBlendIf(layer.blendIf) || defaultBlendIf(),
+  )
+  const [blendChannel, setBlendChannel] = useState<BlendIfChannelKey>('gray')
+  const patchQuad = (side: 'source' | 'under', index: number, value: number) =>
+    setBlendIf((current) => {
+      const quad = [...current[blendChannel][side]] as BlendIfQuad
+      quad[index] = Math.min(255, Math.max(0, Math.round(value)))
+      // Keep each split pair ordered, like dragging a split slider triangle.
+      if (index === 0 && quad[1] < quad[0]) quad[1] = quad[0]
+      if (index === 1 && quad[0] > quad[1]) quad[0] = quad[1]
+      if (index === 2 && quad[3] < quad[2]) quad[3] = quad[2]
+      if (index === 3 && quad[2] > quad[3]) quad[2] = quad[3]
+      return { ...current, [blendChannel]: { ...current[blendChannel], [side]: quad } }
+    })
   const [tab, setTab] = useState<Tab>('strokes')
   const [selected, setSelected] = useState(0)
   const [presetName, setPresetName] = useState('')
@@ -103,6 +485,7 @@ export function LayerStyleDialog({
     let cancelled = false
     const draw = async () => {
       if (layer.src) await loadImage(layer.src)
+      await prepareStylePatterns(styles).catch(() => false)
       if (cancelled || !preview.current) return
       const canvas = preview.current,
         ctx = canvas.getContext('2d')!
@@ -136,7 +519,15 @@ export function LayerStyleDialog({
     setMessage('')
   }
   const listKey: ListKey | undefined =
-    tab !== 'glow' && tab !== 'innerGlow' && tab !== 'library' ? tab : undefined
+    tab !== 'glow' &&
+    tab !== 'innerGlow' &&
+    tab !== 'satin' &&
+    tab !== 'pattern' &&
+    tab !== 'bevel' &&
+    tab !== 'library' &&
+    tab !== 'blendIf'
+      ? tab
+      : undefined
   const items = listKey ? styles[listKey] : []
   const index = Math.min(selected, Math.max(0, items.length - 1))
   const patchItem = (patch: object) => {
@@ -146,7 +537,7 @@ export function LayerStyleDialog({
       [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, ...patch } : item)),
     }))
   }
-  const patchSingle = (key: 'glow' | 'innerGlow', patch: object) =>
+  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern' | 'bevel' | 'satin', patch: object) =>
     setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
   const factories = {
     strokes: defaultStrokeStyle,
@@ -193,7 +584,13 @@ export function LayerStyleDialog({
   const itemLabel = (i: number): string => {
     if (listKey === 'strokes') {
       const e = styles.strokes[i]
-      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${e.color}`
+      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${
+        e.fill === 'gradient'
+          ? e.gradient?.name || 'Градиент'
+          : e.fill === 'pattern'
+            ? e.pattern?.name || 'Узор'
+            : e.color
+      }`
     }
     if (listKey === 'shadows' || listKey === 'innerShadows') {
       const e = styles[listKey][i]
@@ -208,11 +605,24 @@ export function LayerStyleDialog({
       ? styles.glow.enabled
       : tab === 'innerGlow'
         ? styles.innerGlow.enabled
-        : listKey
-          ? !!items[index]?.enabled
-          : false
+        : tab === 'satin'
+          ? styles.satin.enabled
+          : tab === 'pattern'
+            ? styles.pattern.enabled
+            : tab === 'bevel'
+              ? styles.bevel.enabled
+              : listKey
+                ? !!items[index]?.enabled
+                : false
   const setActiveEnabled = (enabled: boolean) => {
-    if (tab === 'glow' || tab === 'innerGlow') patchSingle(tab, { enabled })
+    if (
+      tab === 'glow' ||
+      tab === 'innerGlow' ||
+      tab === 'pattern' ||
+      tab === 'bevel' ||
+      tab === 'satin'
+    )
+      patchSingle(tab, { enabled })
     else patchItem({ enabled })
   }
   const applyPreset = (preset: StylePreset) => {
@@ -237,7 +647,7 @@ export function LayerStyleDialog({
       <div className="style-layout">
         <nav className="style-navigation">
           {sections.map((s) => {
-            const count = enabledOf(styles, s.id)
+            const count = enabledOf(styles, s.id, blendIf)
             return (
               <button
                 key={s.id}
@@ -270,7 +680,7 @@ export function LayerStyleDialog({
               <Paintbrush size={16} />
               {sections.find((s) => s.id === tab)!.name}
             </span>
-            {tab !== 'library' && (
+            {tab !== 'library' && tab !== 'blendIf' && (
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -360,11 +770,97 @@ export function LayerStyleDialog({
                 <option value="center">По центру</option>
                 <option value="inside">Внутри</option>
               </Select>
-              <ColorField
-                label="Цвет обводки слоя"
-                value={stroke.color}
-                onChange={(color) => patchItem({ color, enabled: true })}
-              />
+              <Select
+                aria-label="Тип заливки обводки"
+                value={stroke.fill}
+                onChange={(e) =>
+                  patchItem({
+                    fill: e.target.value,
+                    enabled: true,
+                    ...(e.target.value === 'gradient' && !stroke.gradient
+                      ? { gradient: defaultGradientOverlayGradient() }
+                      : {}),
+                    ...(e.target.value === 'pattern' && !stroke.pattern
+                      ? { pattern: defaultPatternDefinition() }
+                      : {}),
+                  })
+                }
+              >
+                <option value="color">Цвет</option>
+                <option value="gradient">Градиент</option>
+                <option value="pattern">Узор</option>
+              </Select>
+              {stroke.fill === 'color' ? (
+                <ColorField
+                  label="Цвет обводки слоя"
+                  value={stroke.color}
+                  onChange={(color) => patchItem({ color, enabled: true })}
+                />
+              ) : stroke.fill === 'pattern' ? (
+                stroke.pattern && (
+                  <PatternDefinitionEditor
+                    definition={stroke.pattern}
+                    label="Узор обводки"
+                    onChange={(pattern) => patchItem({ pattern, enabled: true })}
+                  />
+                )
+              ) : (
+                <>
+                  {stroke.gradient && (
+                    <GradientDefinitionEditor
+                      definition={stroke.gradient}
+                      onChange={(gradient) => patchItem({ gradient, enabled: true })}
+                      onFinish={() => {}}
+                    />
+                  )}
+                  <Select
+                    aria-label="Стиль градиента обводки"
+                    value={stroke.gradientShape}
+                    onChange={(e) => patchItem({ gradientShape: e.target.value, enabled: true })}
+                  >
+                    <option value="linear">Линейный</option>
+                    <option value="radial">Радиальный</option>
+                    <option value="reflected">Отражённый</option>
+                    <option value="angle">Угловой</option>
+                    <option value="diamond">Ромб</option>
+                  </Select>
+                  <Slider
+                    label="Угол градиента обводки"
+                    value={stroke.gradientAngle}
+                    max={360}
+                    suffix="°"
+                    onChange={(gradientAngle) => patchItem({ gradientAngle, enabled: true })}
+                  />
+                  <Slider
+                    label="Масштаб градиента обводки"
+                    value={stroke.gradientScale * 100}
+                    min={10}
+                    max={400}
+                    suffix="%"
+                    onChange={(v) => patchItem({ gradientScale: v / 100, enabled: true })}
+                  />
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={stroke.gradientReverse}
+                      onChange={(e) =>
+                        patchItem({ gradientReverse: e.target.checked, enabled: true })
+                      }
+                    />
+                    Обратить градиент обводки
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={stroke.gradientDither === true}
+                      onChange={(e) =>
+                        patchItem({ gradientDither: e.target.checked, enabled: true })
+                      }
+                    />
+                    Дизеринг градиента обводки
+                  </label>
+                </>
+              )}
               <Slider
                 label="Непрозрачность обводки"
                 value={stroke.opacity * 100}
@@ -409,6 +905,15 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchItem({ opacity: v / 100 })}
               />
+              <ContourControls
+                title="Контур спада тени"
+                selectLabel="Контур тени"
+                value={shadow.contour}
+                antialiased={shadow.antialiased}
+                antialiasLabel="Сглаживание контура тени"
+                onContour={(contour) => patchItem({ contour, enabled: true })}
+                onAntialiased={(antialiased) => patchItem({ antialiased, enabled: true })}
+              />
             </>
           )}
           {(tab === 'glow' || tab === 'innerGlow') && (
@@ -431,6 +936,102 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchSingle(tab, { opacity: v / 100 })}
               />
+              <ContourControls
+                title="Контур спада свечения"
+                selectLabel="Контур свечения"
+                value={styles[tab].contour}
+                antialiased={styles[tab].antialiased}
+                antialiasLabel="Сглаживание контура свечения"
+                range={styles[tab].range}
+                rangeLabel="Диапазон контура свечения"
+                onContour={(contour) => patchSingle(tab, { contour, enabled: true })}
+                onAntialiased={(antialiased) => patchSingle(tab, { antialiased, enabled: true })}
+                onRange={(range) => patchSingle(tab, { range, enabled: true })}
+              />
+              <p className="panel-note">
+                Диапазон ниже 50% делает спад жёстче и шире, выше 50% — короче и мягче. 50% — вся
+                кривая на обычном спаде свечения.
+              </p>
+            </>
+          )}
+          {tab === 'satin' && (
+            <>
+              <ColorField
+                label="Цвет атласа"
+                value={styles.satin.color}
+                onChange={(color) => patchSingle('satin', { color, enabled: true })}
+              />
+              <Select
+                aria-label="Режим атласа"
+                value={styles.satin.blendMode}
+                onChange={(e) => patchSingle('satin', { blendMode: e.target.value, enabled: true })}
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность атласа"
+                value={styles.satin.opacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('satin', { opacity: v / 100 })}
+              />
+              <Slider
+                label="Угол атласа"
+                value={styles.satin.angle}
+                min={-180}
+                max={180}
+                suffix="°"
+                onChange={(angle) => patchSingle('satin', { angle, enabled: true })}
+              />
+              <Slider
+                label="Дистанция атласа"
+                value={styles.satin.distance}
+                max={STYLE_LIMITS.satinDistance}
+                suffix=" px"
+                onChange={(distance) => patchSingle('satin', { distance, enabled: true })}
+              />
+              <Slider
+                label="Размер атласа"
+                value={styles.satin.size}
+                max={STYLE_LIMITS.satinSize}
+                suffix=" px"
+                onChange={(size) => patchSingle('satin', { size, enabled: true })}
+              />
+              <ContourControls
+                title="Контур атласа"
+                selectLabel="Контур атласа"
+                value={styles.satin.contour}
+                onContour={(contour) => patchSingle('satin', { contour, enabled: true })}
+              />
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.satin.invert}
+                  onChange={(e) =>
+                    patchSingle('satin', { invert: e.target.checked, enabled: true })
+                  }
+                />
+                Инвертировать атлас
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.satin.antialiased}
+                  onChange={(e) =>
+                    patchSingle('satin', { antialiased: e.target.checked, enabled: true })
+                  }
+                />
+                Сглаживание атласа (выборка копий и контур)
+              </label>
+              <p className="panel-note">
+                Размер задаёт размытие альфы (радиус равен половине размера), дистанция — полный
+                разнос двух копий вдоль оси угла. Контур преобразует разность копий, а инверсия
+                переворачивает уже оконтуренный результат. Эффект остаётся внутри альфы слоя и не
+                ослабляется Fill.
+              </p>
             </>
           )}
           {tab === 'overlays' && (
@@ -439,6 +1040,11 @@ export function LayerStyleDialog({
                 label="Цвет наложения"
                 value={overlay.color}
                 onChange={(color) => patchItem({ color, enabled: true })}
+              />
+              <EffectBlendModeSelect
+                label="Режим наложения цвета"
+                value={overlay.blendMode}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
               />
               <Slider
                 label="Непрозрачность цвета"
@@ -458,6 +1064,30 @@ export function LayerStyleDialog({
                 definition={gradientItem.gradient}
                 onChange={(gradient) => patchItem({ gradient, enabled: true })}
                 onFinish={() => {}}
+              />
+              <Select
+                aria-label="Стиль градиента наложения"
+                value={gradientItem.shape}
+                onChange={(e) => patchItem({ shape: e.target.value, enabled: true })}
+              >
+                <option value="linear">Линейный</option>
+                <option value="radial">Радиальный</option>
+                <option value="reflected">Отражённый</option>
+                <option value="angle">Угловой</option>
+                <option value="diamond">Ромб</option>
+              </Select>
+              <EffectBlendModeSelect
+                label="Режим наложения градиента"
+                value={gradientItem.blendMode}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
+              />
+              <Slider
+                label="Масштаб градиента"
+                value={gradientItem.scale * 100}
+                min={10}
+                max={400}
+                suffix="%"
+                onChange={(v) => patchItem({ scale: v / 100, enabled: true })}
               />
               <Slider
                 label="Угол градиента"
@@ -480,7 +1110,294 @@ export function LayerStyleDialog({
                 />
                 Обратить градиент
               </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={gradientItem.dither === true}
+                  onChange={(e) => patchItem({ dither: e.target.checked, enabled: true })}
+                />
+                Дизеринг градиента (меньше полос на плавных переходах)
+              </label>
             </>
+          )}
+          {tab === 'pattern' && (
+            <>
+              <PatternDefinitionEditor
+                definition={styles.pattern.pattern}
+                label="Узор наложения"
+                onChange={(pattern) => patchSingle('pattern', { pattern, enabled: true })}
+              />
+              <EffectBlendModeSelect
+                label="Режим наложения узора"
+                value={styles.pattern.blendMode}
+                onChange={(blendMode) => patchSingle('pattern', { blendMode, enabled: true })}
+              />
+              <Slider
+                label="Масштаб узора"
+                value={styles.pattern.scale * 100}
+                min={5}
+                max={1000}
+                suffix="%"
+                onChange={(v) => patchSingle('pattern', { scale: v / 100, enabled: true })}
+              />
+              <Slider
+                label="Непрозрачность узора"
+                value={styles.pattern.opacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('pattern', { opacity: v / 100 })}
+              />
+              <div className="field-grid">
+                <Field
+                  label="Фаза узора X"
+                  value={styles.pattern.phaseX}
+                  min={-10000}
+                  max={10000}
+                  suffix=" px"
+                  onChange={(phaseX) => patchSingle('pattern', { phaseX, enabled: true })}
+                />
+                <Field
+                  label="Фаза узора Y"
+                  value={styles.pattern.phaseY}
+                  min={-10000}
+                  max={10000}
+                  suffix=" px"
+                  onChange={(phaseY) => patchSingle('pattern', { phaseY, enabled: true })}
+                />
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.pattern.align}
+                  onChange={(e) =>
+                    patchSingle('pattern', { align: e.target.checked, enabled: true })
+                  }
+                />
+                Связать со слоем
+              </label>
+              <p className="panel-note">
+                Со связью начало плитки движется вместе со слоем. Без связи фаза считается от начала
+                документа, поэтому узор не сдвигается при обычном перемещении слоя.
+              </p>
+            </>
+          )}
+          {tab === 'bevel' && (
+            <>
+              <Select
+                aria-label="Стиль фаски"
+                value={styles.bevel.style}
+                onChange={(e) => patchSingle('bevel', { style: e.target.value, enabled: true })}
+              >
+                <option value="outer">Внешний скос</option>
+                <option value="inner">Внутренний скос</option>
+                <option value="emboss">Тиснение</option>
+                <option value="pillow">Подушечное тиснение</option>
+                <option value="stroke">Тиснение обводки</option>
+              </Select>
+              <Select
+                aria-label="Метод фаски"
+                value={styles.bevel.technique}
+                onChange={(e) => patchSingle('bevel', { technique: e.target.value, enabled: true })}
+              >
+                <option value="smooth">Сглаживание</option>
+                <option value="chiselHard">Жёсткая огранка</option>
+                <option value="chiselSoft">Мягкая огранка</option>
+              </Select>
+              <Select
+                aria-label="Направление фаски"
+                value={styles.bevel.direction}
+                onChange={(e) => patchSingle('bevel', { direction: e.target.value, enabled: true })}
+              >
+                <option value="up">Вверх</option>
+                <option value="down">Вниз</option>
+              </Select>
+              <Slider
+                label="Глубина фаски"
+                value={styles.bevel.depth * 100}
+                min={1}
+                max={1000}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { depth: v / 100, enabled: true })}
+              />
+              <Slider
+                label="Размер фаски"
+                value={styles.bevel.size}
+                max={STYLE_LIMITS.bevelSize}
+                suffix=" px"
+                onChange={(size) => patchSingle('bevel', { size, enabled: true })}
+              />
+              <Slider
+                label="Смягчение фаски"
+                value={styles.bevel.soften}
+                max={STYLE_LIMITS.bevelSoften}
+                suffix=" px"
+                onChange={(soften) => patchSingle('bevel', { soften, enabled: true })}
+              />
+              <Slider
+                label="Угол света фаски"
+                value={styles.bevel.angle}
+                min={-180}
+                max={180}
+                suffix="°"
+                onChange={(angle) =>
+                  patchSingle('bevel', { angle, useGlobalLight: false, enabled: true })
+                }
+              />
+              <Slider
+                label="Высота света фаски"
+                value={styles.bevel.altitude}
+                min={0}
+                max={90}
+                suffix="°"
+                onChange={(altitude) => patchSingle('bevel', { altitude, enabled: true })}
+              />
+              <ContourControls
+                title="Контур глянца"
+                selectLabel="Контур глянца фаски"
+                value={styles.bevel.glossContour}
+                antialiased={styles.bevel.antialiasGloss}
+                antialiasLabel="Сглаживание контура глянца"
+                onContour={(glossContour) => patchSingle('bevel', { glossContour, enabled: true })}
+                onAntialiased={(antialiasGloss) =>
+                  patchSingle('bevel', { antialiasGloss, enabled: true })
+                }
+              />
+              <p className="panel-note">
+                Слева и снизу кривой глянца — тень фаски, справа и сверху — блик. Это не отдельный
+                PSD-элемент Contour, который задаёт само сечение фаски.
+              </p>
+              <span className="panel-subtitle">Блик</span>
+              <ColorField
+                label="Цвет блика фаски"
+                value={styles.bevel.highlightColor}
+                onChange={(highlightColor) =>
+                  patchSingle('bevel', { highlightColor, enabled: true })
+                }
+              />
+              <Select
+                aria-label="Режим блика фаски"
+                value={styles.bevel.highlightBlendMode}
+                onChange={(e) =>
+                  patchSingle('bevel', { highlightBlendMode: e.target.value, enabled: true })
+                }
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность блика фаски"
+                value={styles.bevel.highlightOpacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { highlightOpacity: v / 100 })}
+              />
+              <span className="panel-subtitle">Тень фаски</span>
+              <ColorField
+                label="Цвет тени фаски"
+                value={styles.bevel.shadowColor}
+                onChange={(shadowColor) => patchSingle('bevel', { shadowColor, enabled: true })}
+              />
+              <Select
+                aria-label="Режим тени фаски"
+                value={styles.bevel.shadowBlendMode}
+                onChange={(e) =>
+                  patchSingle('bevel', { shadowBlendMode: e.target.value, enabled: true })
+                }
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность тени фаски"
+                value={styles.bevel.shadowOpacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { shadowOpacity: v / 100 })}
+              />
+              {styles.bevel.style === 'stroke' && !styles.strokes.some((e) => e.enabled) && (
+                <p className="panel-note">
+                  Тиснение обводки работает только с включённой обводкой и освещает каждое её
+                  фактическое кольцо.
+                </p>
+              )}
+              <p className="panel-note">
+                {styles.bevel.useGlobalLight
+                  ? 'PSD-флаг глобального света сохраняется как есть. Общедокументной синхронизации углов пока нет; ручная правка угла выше отключит флаг для этого слоя.'
+                  : 'Угол и высота света заданы для этого слоя отдельно. 90° — свет сверху, 120° — сверху слева.'}
+              </p>
+            </>
+          )}
+          {tab === 'blendIf' && (
+            <div data-testid="blend-if-controls">
+              <Select
+                aria-label="Канал Blend If"
+                value={blendChannel}
+                onChange={(e) => setBlendChannel(e.target.value as BlendIfChannelKey)}
+              >
+                {BLEND_IF_CHANNELS.map((key) => (
+                  <option value={key} key={key}>
+                    {blendIfChannelNames[key]}
+                  </option>
+                ))}
+              </Select>
+              {(
+                [
+                  ['source', 'Этот слой'],
+                  ['under', 'Нижний слой'],
+                ] as const
+              ).map(([side, title]) => {
+                const quad = blendIf[blendChannel][side]
+                const labels = [
+                  'Тени: скрывать ниже',
+                  'Тени: переход до',
+                  'Света: переход от',
+                  'Света: скрывать выше',
+                ]
+                return (
+                  <div key={side}>
+                    <span className="panel-subtitle">{title}</span>
+                    {labels.map((label, i) => (
+                      <Slider
+                        key={label}
+                        label={`${title} — ${label}`}
+                        value={quad[i]}
+                        min={0}
+                        max={255}
+                        suffix=""
+                        onChange={(v) => patchQuad(side, i, v)}
+                      />
+                    ))}
+                  </div>
+                )
+              })}
+              <div className="effect-instance-tools">
+                <button
+                  className="compact-button"
+                  onClick={() =>
+                    setBlendIf((current) => ({
+                      ...current,
+                      [blendChannel]: {
+                        source: [0, 0, 255, 255] as BlendIfQuad,
+                        under: [0, 0, 255, 255] as BlendIfQuad,
+                      },
+                    }))
+                  }
+                >
+                  <RotateCcw size={13} /> Сбросить канал
+                </button>
+                <button className="compact-button" onClick={() => setBlendIf(defaultBlendIf())}>
+                  <RotateCcw size={13} /> Сбросить всё
+                </button>
+              </div>
+              <p className="panel-note">
+                {layer.kind === 'adjustment'
+                  ? 'У корректирующего слоя нет своих пикселей: работает только диапазон «Нижний слой» — как маска силы коррекции.'
+                  : 'Результат виден на холсте документа после «Применить стиль»: предпросмотр ниже показывает один слой без подложки.'}
+              </p>
+            </div>
           )}
           {tab === 'library' && (
             <div data-testid="style-library">
@@ -574,7 +1491,7 @@ export function LayerStyleDialog({
                 <button
                   className="compact-button"
                   onClick={() => {
-                    copyStyleToClipboard(styles)
+                    copyStyleToClipboard(styles, parseBlendIf(blendIf))
                     setMessage('Стиль скопирован. Открой стили другого слоя и вставь.')
                   }}
                 >
@@ -586,6 +1503,7 @@ export function LayerStyleDialog({
                     const pasted = readStyleClipboard()
                     if (pasted) {
                       setStyles(pasted)
+                      setBlendIf(readStyleClipboardBlendIf() || defaultBlendIf())
                       setSelected(0)
                       setMessage('Стиль вставлен в предпросмотр.')
                     } else setMessage('Буфер стилей пуст.')
@@ -656,7 +1574,7 @@ export function LayerStyleDialog({
         <button
           className="text-button"
           onClick={() => {
-            copyStyleToClipboard(styles)
+            copyStyleToClipboard(styles, parseBlendIf(blendIf))
             setMessage('Стиль скопирован.')
           }}
         >
@@ -665,7 +1583,7 @@ export function LayerStyleDialog({
         </button>
         <button
           className="primary-button"
-          onClick={() => onApply(normalizeStyles(styles) || styles)}
+          onClick={() => onApply(normalizeStyles(styles) || styles, parseBlendIf(blendIf))}
         >
           <Sparkles size={15} />
           Применить стиль

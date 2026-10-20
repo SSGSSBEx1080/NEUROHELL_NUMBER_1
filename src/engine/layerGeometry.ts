@@ -48,6 +48,10 @@ export function rasterBounds(layer: Layer, effects = false, flipped = false): Re
             e.enabled ? e.blur * 2 + Math.max(Math.abs(e.x), Math.abs(e.y)) : 0,
           ),
           s.glow.enabled ? s.glow.blur * 2 : 0,
+          s.bevel.enabled &&
+            (s.bevel.style === 'outer' || s.bevel.style === 'emboss' || s.bevel.style === 'pillow')
+            ? s.bevel.size + s.bevel.soften
+            : 0,
         )
       : 0) +
     2
@@ -100,6 +104,9 @@ export function resizePointText(
     fontSize: size,
     textScaleX: Math.max(0.01, Math.min(100, ((layer.textScaleX || 1) * sx) / actualY)),
     letterSpacing: Math.max(-30, Math.min(100, (layer.letterSpacing || 0) * actualY)),
+    textBaselineShift: layer.textBaselineShift
+      ? Math.max(-1000, Math.min(1000, layer.textBaselineShift * actualY))
+      : undefined,
   }
   // Canvas rounds some glyph ink metrics. Correct X using the actual newly measured result.
   const measured = localBounds(next, true)
@@ -119,6 +126,7 @@ export function resizePointText(
     fontSize: next.fontSize,
     textScaleX: next.textScaleX,
     letterSpacing: next.letterSpacing,
+    textBaselineShift: next.textBaselineShift,
     width: next.width,
     height: next.height,
     x: next.x + destination.x - origin.x,

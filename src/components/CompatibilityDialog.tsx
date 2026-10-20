@@ -1,63 +1,68 @@
-import { AlertTriangle, ArrowUpRight, Check, FileJson, Layers } from 'lucide-react'
+import { CheckCircle2, FileWarning, Layers3, Palette } from 'lucide-react'
 import type { CompatibilityReport } from '../engine/psd'
 import { Modal } from './ui'
-export function CompatibilityDialog({
+
+const colorStatusNames: Record<CompatibilityReport['color']['status'], string> = {
+  own: 'профиль документа ФШ777',
+  matching: 'профиль совпадает с рабочим',
+  missing: 'профиль отсутствует',
+  mismatch: 'профиль отличался от рабочего',
+  unsupported: 'профиль распознан, преобразование ограничено',
+  'mode-mismatch': 'профиль не соответствует режиму файла',
+}
+
+export function ImportReportDialog({
   report,
   onClose,
-  onConfirm,
-  onSave,
 }: {
   report: CompatibilityReport
   onClose: () => void
-  onConfirm: () => void
-  onSave: () => void
 }) {
   return (
     <Modal
-      title="Твоя работа — в новой студии"
-      subtitle={`${report.format} · ${report.title}`}
+      title="Сведения об импорте PSD"
+      subtitle="Документ уже открыт. Это необязательный отчёт, а не очередной барьер перед работой."
       onClose={onClose}
-      wide
     >
       <div className="compatibility-summary">
         <span>
-          <Layers size={18} />
-          <strong>{report.layerCount}</strong> слоёв
+          <FileWarning size={17} />
+          <strong>{report.format}</strong>
+          формат
         </span>
         <span>
-          <Check size={15} />
-          RGB / 8 бит
+          <Layers3 size={17} />
+          <strong>{report.layerCount}</strong>
+          слоёв и групп
         </span>
         <span>
-          <Check size={15} />
-          Обработка на устройстве
+          <Palette size={17} />
+          <strong>{report.color.embeddedName || 'sRGB / без ICC'}</strong>
+          {colorStatusNames[report.color.status]}
+        </span>
+        <span>
+          <CheckCircle2 size={17} />
+          <strong>Локально</strong>
+          исходный файл на диске не изменён
         </span>
       </div>
-      <div className="info-note">
-        <AlertTriangle size={19} />
-        <span>
-          Это импорт рабочей копии, а не полная совместимость с Photoshop. Исходный файл не
-          изменяется. Рабочая копия откроется в новой вкладке.
-        </span>
-      </div>
-      <h3 className="report-title">Что важно знать</h3>
-      <ul className="compatibility-list">
-        {report.warnings.length ? (
-          report.warnings.map((w, i) => <li key={i}>{w}</li>)
-        ) : (
-          <li>Поддерживаемые растровые слои прочитаны. Проверь документ после открытия.</li>
-        )}
-      </ul>
+      {report.warnings.length ? (
+        <ul className="compatibility-list">
+          {report.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="panel-note">Импорт не сообщил о потерях или ограничениях.</p>
+      )}
       <footer className="dialog-footer">
-        <button className="text-button" onClick={onSave}>
-          <FileJson size={14} />
-          Сохранить текущий PSD
-        </button>
-        <button className="primary-button" onClick={onConfirm}>
-          Открыть рабочую копию
-          <ArrowUpRight size={15} />
+        <span />
+        <button className="primary-button" onClick={onClose}>
+          Закрыть
         </button>
       </footer>
     </Modal>
   )
 }
+
+export const CompatibilityDialog = ImportReportDialog

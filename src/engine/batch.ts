@@ -2,6 +2,14 @@ import type { EditorDocument } from '../types'
 import { actionBlockers, runAction, type StudioAction } from './actions'
 import { isLayerLocked, makeLayer, newDocument, parseProject } from './document'
 import { downloadBlob, exportCanvas, loadImage, prepareDocument } from './render'
+import {
+  WORKING_RGB_PROFILE,
+  buildIccProfile,
+  builtinColorProfile,
+  type ColorProfileModel,
+} from './colorProfiles'
+import { embedJpegIccProfile, embedPngIccProfile } from './imageIcc'
+import { loadPreferences } from './preferences'
 
 export type BatchFormat = 'png' | 'jpeg' | 'webp' | 'psd'
 export interface BatchOptions {
@@ -89,8 +97,55 @@ async function documentFromImage(file: File): Promise<EditorDocument> {
 export async function documentFromBatchFile(file: File): Promise<EditorDocument> {
   if (/\.(psd|psb)$/i.test(file.name)) {
     if (file.size > 80 * 1024 * 1024) throw new Error('PSD/PSB: размер файла до 80 МБ')
-    const { importPsd } = await import('./psd')
-    return (await importPsd(await file.arrayBuffer(), file.name)).document
+    const [{ importPsd }, { applyDocumentColorDecision }] = await Promise.all([
+      import('./psd'),
+      import('./documentColor'),
+    ])
+    const result = await importPsd(await file.arrayBuffer(), file.name)
+    const color = result.report.color
+    const prefs = loadPreferences()
+    const options = {
+      intent: prefs.colorIntent,
+      blackPointCompensation: prefs.colorBlackPoint,
+      dither: prefs.colorDither,
+    }
+    // Batch cannot stop for a Photoshop-style question. The safe appearance-
+    // preserving default is conversion; explicit discard/assign policies win.
+    if (color.status === 'mismatch' && color.sourceModel) {
+      if (prefs.colorMismatchPolicy === 'discard')
+        return applyDocumentColorDecision(result.document, {
+          action: 'discard',
+          sourceLabel: color.embeddedName,
+        })
+      if (prefs.colorMismatchPolicy === 'assign-working')
+        return applyDocumentColorDecision(result.document, {
+          action: 'assign-working',
+          sourceLabel: color.embeddedName,
+        })
+      return applyDocumentColorDecision(result.document, {
+        action: 'convert',
+        source: color.sourceModel,
+        ...options,
+      })
+    }
+    if (color.status === 'unsupported' || color.status === 'mode-mismatch')
+      return applyDocumentColorDecision(result.document, {
+        action: 'discard',
+        sourceLabel: color.embeddedName,
+      })
+    if (color.status === 'missing') {
+      if (prefs.colorMissingPolicy === 'leave') return result.document
+      if (color.mode === 'grayscale') {
+        const assigned = builtinColorProfile(prefs.colorGrayProfile) as ColorProfileModel
+        return applyDocumentColorDecision(result.document, {
+          action: 'assign-and-convert',
+          assigned,
+          ...options,
+        })
+      }
+      return applyDocumentColorDecision(result.document, { action: 'assign-working' })
+    }
+    return result.document
   }
   if (/\.(777|fsh777)$/i.test(file.name)) {
     if (file.size > 50 * 1024 * 1024) throw new Error('Проект должен быть меньше 50 МБ')
@@ -123,7 +178,20 @@ export async function exportBatchDocument(
   const canvas =
     options.format === 'jpeg' ? await exportCanvas(doc, 1, '#ffffff') : await exportCanvas(doc, 1)
   const type = options.format === 'png' ? 'image/png' : `image/${options.format}`
-  return blobFromCanvas(canvas, type, Math.min(1, Math.max(0.1, options.quality)))
+  const blob = await blobFromCanvas(canvas, type, Math.min(1, Math.max(0.1, options.quality)))
+  if (
+    (options.format === 'png' || options.format === 'jpeg') &&
+    doc.colorProfile?.status !== 'untagged'
+  ) {
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const profile = buildIccProfile(WORKING_RGB_PROFILE)
+    const tagged =
+      options.format === 'png'
+        ? await embedPngIccProfile(bytes, WORKING_RGB_PROFILE.name, profile)
+        : embedJpegIccProfile(bytes, profile)
+    return new Blob([tagged.slice()], { type })
+  }
+  return blob
 }
 
 /**

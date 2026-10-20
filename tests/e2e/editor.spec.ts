@@ -244,8 +244,10 @@ for (const format of ['PSD', 'PSB'])
       buffer: file.bytes,
     })
     await expect(page.locator('.busy-overlay')).toBeHidden()
-    await expect(page.getByRole('dialog')).toContainText('импорт рабочей копии')
-    await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Отчёт импорта', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Отчёт импорта', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText('Восстановлены редактируемые данные ФШ777')
+    await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
     await expect(page.locator('.layer-row')).toHaveCount(1)
     await expect.poll(async () => await pixel(page, 150, 100)).toEqual([255, 0, 0, 255])
   })
@@ -389,7 +391,6 @@ test('Ctrl corner distortion changes real pixels and survives PSD export', async
     mimeType: 'application/octet-stream',
     buffer: file.bytes,
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию' }).click()
   await expect.poll(async () => (await pixel(page, 140, 60))[3]).toBe(0)
   await expect.poll(async () => (await pixel(page, 80, 100))[3]).toBe(255)
 })

@@ -15,12 +15,13 @@ async function open(page: Page, name: string, buffer: Buffer) {
     mimeType: name.endsWith('.777') ? 'application/json' : 'image/vnd.adobe.photoshop',
     buffer,
   })
-  await page
-    .getByRole('button', {
-      name: name.endsWith('.777') ? 'Открыть проект' : 'Открыть рабочую копию',
-      exact: true,
-    })
-    .click()
+  if (name.endsWith('.777'))
+    await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
+  else {
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    const profileOpen = page.getByRole('button', { name: 'Открыть', exact: true })
+    if (await profileOpen.isVisible()) await profileOpen.click()
+  }
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 async function save(page: Page) {

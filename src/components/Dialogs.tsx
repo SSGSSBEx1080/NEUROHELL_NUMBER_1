@@ -19,6 +19,15 @@ import {
 } from 'lucide-react'
 import type { EditorDocument } from '../types'
 import { canvasBlob, downloadBlob, exportCanvas } from '../engine/render'
+import {
+  WORKING_RGB_PROFILE,
+  buildIccProfile,
+  builtinColorProfiles,
+  createColorTransform,
+  documentColorProfileLabel,
+  profilesMatch,
+} from '../engine/colorProfiles'
+import { embedJpegIccProfile, embedPngIccProfile } from '../engine/imageIcc'
 import { BrandMark } from './Brand'
 import { Modal, Select, Slider } from './ui'
 
@@ -184,6 +193,8 @@ export function ExportDialog({
   const [scale, setScale] = useState(1)
   const [quality, setQuality] = useState(95)
   const [transparent, setTransparent] = useState(doc.background === 'transparent')
+  const [profileId, setProfileId] = useState(WORKING_RGB_PROFILE.id)
+  const [embedProfile, setEmbedProfile] = useState(true)
   const [preview, setPreview] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -235,7 +246,29 @@ export function ExportDialog({
         scale,
         format === 'jpeg' ? '#ffffff' : undefined,
       )
-      const blob = await canvasBlob(output, `image/${format}`, quality / 100)
+      const destination =
+        builtinColorProfiles().find((profile) => profile.id === profileId) || WORKING_RGB_PROFILE
+      if (!profilesMatch(destination, WORKING_RGB_PROFILE)) {
+        const ctx = output.getContext('2d')
+        if (!ctx) throw new Error('Не удалось подготовить холст для преобразования профиля')
+        const pixels = ctx.getImageData(0, 0, output.width, output.height)
+        createColorTransform(WORKING_RGB_PROFILE, destination, { dither: true }).transformPixels(
+          pixels.data,
+          output.width,
+          output.height,
+        )
+        ctx.putImageData(pixels, 0, 0)
+      }
+      let blob = await canvasBlob(output, `image/${format}`, quality / 100)
+      if (embedProfile && (format === 'png' || format === 'jpeg')) {
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        const profile = buildIccProfile(destination)
+        const tagged =
+          format === 'png'
+            ? await embedPngIccProfile(bytes, destination.name, profile)
+            : embedJpegIccProfile(bytes, profile)
+        blob = new Blob([tagged.slice()], { type: `image/${format}` })
+      }
       const filename = await downloadBlob(
         blob,
         `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.${format === 'jpeg' ? 'jpg' : format}`,
@@ -243,7 +276,7 @@ export function ExportDialog({
       onToast(
         window.fsh777?.saveFile
           ? `Файл сохранён: ${filename}`
-          : `Готово! ${format.toUpperCase()} · ${Math.round(doc.width * scale)} × ${Math.round(doc.height * scale)} · ${(blob.size / 1024 / 1024).toFixed(2)} МБ`,
+          : `Готово! ${format.toUpperCase()} · ${Math.round(doc.width * scale)} × ${Math.round(doc.height * scale)} · ${(blob.size / 1024 / 1024).toFixed(2)} МБ · ${destination.name}${embedProfile && format !== 'webp' ? ' ICC' : ''}`,
       )
       onClose()
     } catch (e) {
@@ -320,6 +353,35 @@ export function ExportDialog({
           />
           Прозрачный холст
         </label>
+        <label className="dialog-label">
+          Профиль назначения
+          <Select
+            aria-label="Профиль назначения экспорта"
+            value={format === 'webp' ? WORKING_RGB_PROFILE.id : profileId}
+            disabled={format === 'webp'}
+            onChange={(e) => setProfileId(e.target.value)}
+          >
+            {builtinColorProfiles().map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className={`checkbox-row ${format === 'webp' ? 'muted' : ''}`}>
+          <input
+            type="checkbox"
+            checked={embedProfile && format !== 'webp'}
+            disabled={format === 'webp'}
+            onChange={(e) => setEmbedProfile(e.target.checked)}
+          />
+          Встроить ICC в PNG/JPEG
+        </label>
+        <p className="panel-note">
+          {format === 'webp'
+            ? 'WebP в этой версии остаётся sRGB без встраивания ICC; для другого профиля выбери PNG или JPEG.'
+            : 'Плоская копия действительно пересчитывается из рабочего sRGB в выбранный профиль. Предпросмотр выше показывает ожидаемый внешний вид, а не сырые числа другого пространства.'}
+        </p>
       </div>
       {!layered && format !== 'png' && (
         <Slider
@@ -335,10 +397,12 @@ export function ExportDialog({
         <div className="info-note">
           <FileJson size={16} />
           <span>
-            RGB / 8 бит. Поддерживаемые текст, векторные фигуры, корректирующие слои, группы и маски
-            сохраняются настоящими структурами PSD. Сложные преобразования могут использовать
-            редактируемый вложенный PSD. Шрифты не встраиваются. Преобразования и ограничения
-            перечислены в «Отчёт PSD» после сохранения; XMP — дополнительные данные.
+            RGB / 8 бит · профиль документа: {documentColorProfileLabel(doc)}. Пересобранный PSD
+            встраивает sRGB ICC либо явно помечается без профиля. Поддерживаемые текст, векторные
+            фигуры, корректирующие слои, группы и маски сохраняются настоящими структурами PSD.
+            Сложные преобразования могут использовать редактируемый вложенный PSD. Шрифты не
+            встраиваются. Преобразования и ограничения перечислены в «Отчёт PSD» после сохранения;
+            XMP — дополнительные данные.
           </span>
         </div>
       )}
@@ -508,10 +572,11 @@ export function HelpDialog({
               <strong>Независимый редактор</strong>
               <p>
                 Собственные интерфейс, код и формат проекта. Не связан с Adobe. PSD/PSB
-                поддерживаются частично: RGB / 8 бит, до 4096 × 4096. Импорт показывает отчёт о
-                преобразованиях. Собственное смарт-содержимое редактируется в отдельной вкладке;
-                произвольные Adobe-фильтры, RAW, CMYK и плагины не поддерживаются. Лицензии
-                встроенных шрифтов и зависимостей включены в приложение.
+                поддерживаются частично: RGB / 8 бит, до 4096 × 4096. PSD открывается сразу; после
+                открытия доступен отчёт о преобразованиях, а отдельный вопрос задаётся только о
+                несовпадающем или отсутствующем цветовом профиле. Собственное смарт-содержимое
+                редактируется в отдельной вкладке; произвольные Adobe-фильтры, RAW, CMYK и плагины
+                не поддерживаются. Лицензии встроенных шрифтов и зависимостей включены в приложение.
               </p>
             </div>
           </div>

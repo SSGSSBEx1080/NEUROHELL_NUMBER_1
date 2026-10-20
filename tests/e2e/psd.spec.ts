@@ -24,7 +24,10 @@ for (const fixture of ['groups', 'masks', 'effects'])
     await page
       .getByLabel('Открыть изображение или проект')
       .setInputFiles(`tests/fixtures/psd/${fixture}.psd`)
-    await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+    // These fixtures carry matching sRGB ICC profiles: opening must be direct,
+    // with neither the old layer/compatibility gate nor a profile question.
+    await expect(page.getByRole('button', { name: 'Отчёт импорта', exact: true })).toBeVisible()
+    await expect(page.getByText('Несоответствие встроенного профиля')).toBeHidden()
     await expect(page.locator('.busy-overlay')).toBeHidden()
     const save = async () => {
       const promise = page.waitForEvent('download')

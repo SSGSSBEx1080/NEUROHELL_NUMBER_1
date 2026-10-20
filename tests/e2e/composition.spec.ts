@@ -152,7 +152,6 @@ test('area text wraps with editable native PSD type and roundtrips its frame', a
   await page
     .getByLabel('Открыть изображение или проект')
     .setInputFiles({ name: 'layout-text.psd', mimeType: 'image/vnd.adobe.photoshop', buffer: data })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await page.locator('.layer-row').filter({ hasText: 'Текстовая рамка' }).click()
   await expect(page.getByLabel('Режим текста')).toHaveValue('ellipse')
@@ -184,7 +183,6 @@ test('text collection is local, places linked type once, survives PSD and data e
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: data,
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await page.getByRole('tab', { name: 'Тексты', exact: true }).click()
   await expect(page.getByLabel('Содержимое текстового блока')).toHaveValue('Новое содержимое')

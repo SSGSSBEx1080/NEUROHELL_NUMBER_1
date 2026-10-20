@@ -20,12 +20,11 @@ async function open(page: Page, name: string, value: unknown) {
     mimeType: name.endsWith('.psd') ? 'image/vnd.adobe.photoshop' : 'application/json',
     buffer: Buffer.isBuffer(value) ? value : Buffer.from(JSON.stringify(value)),
   })
-  await page
-    .getByRole('button', {
-      name: name.endsWith('.psd') ? 'Открыть рабочую копию' : 'Открыть проект',
-      exact: true,
-    })
-    .click()
+  if (name.endsWith('.psd')) {
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    const profileOpen = page.getByRole('button', { name: 'Открыть', exact: true })
+    if (await profileOpen.isVisible()) await profileOpen.click()
+  } else await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 async function save(page: Page) {

@@ -150,10 +150,9 @@ watchdog.unref()
     progress('reimport PSD through production worker')
     const psd = (await fs.readdir(temp)).find((file) => file.endsWith('.psd'))
     await page.getByLabel('Открыть изображение или проект').setInputFiles(path.join(temp, psd))
-    await expect(
-      page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }),
-    ).toBeVisible({ timeout: 30000 })
-    await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Отчёт импорта', exact: true })).toBeVisible({
+      timeout: 30000,
+    })
     await expect(page.locator('.save-indicator')).toContainText('Автокопия сохранена', {
       timeout: 15000,
     })
@@ -331,9 +330,7 @@ watchdog.unref()
       mimeType: 'image/vnd.adobe.photoshop',
       buffer: Buffer.from(writePsd(native, { noBackground: true, invalidateTextLayers: false })),
     })
-    await page
-      .getByRole('button', { name: 'Открыть рабочую копию', exact: true })
-      .click({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Открыть', exact: true }).click({ timeout: 30000 })
     await expect(page.locator('.busy-overlay')).toBeHidden({ timeout: 30000 })
     await page.locator('.layer-row').filter({ hasText: 'Native point' }).click()
     const nativeText = page.getByLabel('Текст слоя', { exact: true })

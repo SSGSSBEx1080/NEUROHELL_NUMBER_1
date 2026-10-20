@@ -27,8 +27,11 @@ async function open(page: Page, name: string, bytes: Buffer) {
   })
   if (name.endsWith('.777'))
     await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
-  if (name.endsWith('.psd'))
-    await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  if (name.endsWith('.psd')) {
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    const profileOpen = page.getByRole('button', { name: 'Открыть', exact: true })
+    if (await profileOpen.isVisible()) await profileOpen.click()
+  }
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 async function png(page: Page) {
@@ -457,11 +460,13 @@ for (const mode of ['native-text', 'native-text-box'])
     await open(page, `${mode}.psd`, bytes)
     await page.locator('.layer-row').first().click()
     await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('TEST')
+    await expect(page.getByLabel('Сглаживание текста')).toHaveValue('sharp')
     expect((await save(page)).equals(bytes)).toBe(true)
     await page.getByLabel('Текст слоя', { exact: true }).fill('EDIT')
     await page.getByLabel('Текст слоя', { exact: true }).press('Control+Enter')
     const edited = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
     expect(edited.children![0].text!.text).toBe('EDIT')
+    expect(edited.children![0].text!.antiAlias).toBe('sharp')
     expect(edited.children![0].text!.shapeType).toBe(mode.endsWith('box') ? 'box' : 'point')
   })
 
@@ -491,12 +496,296 @@ test('external native text edits cannot be overwritten by stale private XMP', as
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from(writePsd(native)),
   })
+  await page.getByRole('button', { name: 'Открыть', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByRole('button', { name: 'Отчёт импорта', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText(
     'Устаревший внутренний проект проигнорирован',
   )
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
   await page.locator('.layer-row').first().click()
   await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Changed externally')
+})
+
+test('text anti-aliasing reshapes real glyph alpha, undoes and exports natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 240, 'Text anti-aliasing', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'AA',
+      text: 'A',
+      x: 70,
+      y: 35,
+      // Deliberately obsolete point-text rectangle: shaped rendering must use
+      // measured ink bounds, not clip the glyph to these stored dimensions.
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-antialias.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'AA' }).click()
+  const select = page.getByLabel('Сглаживание текста')
+  await expect(select).toHaveValue('smooth')
+
+  const stats = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let partial = 0,
+        opaque = 0,
+        coverage = 0
+      for (let i = 3; i < data.length; i += 4) {
+        coverage += data[i]
+        if (data[i] === 255) opaque++
+        else if (data[i] > 0) partial++
+      }
+      return { partial, opaque, coverage }
+    })
+  await expect.poll(async () => (await stats()).opaque).toBeGreaterThan(100)
+  const smooth = await stats()
+  expect(smooth.partial).toBeGreaterThan(20)
+
+  await select.selectOption('none')
+  await expect.poll(async () => (await stats()).partial).toBe(0)
+  expect((await stats()).opaque).toBeGreaterThan(100)
+
+  await select.selectOption('sharp')
+  await expect.poll(async () => (await stats()).partial).toBeGreaterThan(0)
+  const sharp = await stats()
+  expect(sharp.partial).toBeLessThan(smooth.partial)
+
+  await select.selectOption('strong')
+  await expect.poll(async () => (await stats()).coverage).toBeGreaterThan(smooth.coverage)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(select).toHaveValue('sharp')
+  await select.selectOption('strong')
+  await expect(select).toHaveValue('strong')
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  const text = flatten(parsed.children || []).find((l) => l.text)?.text
+  expect(text?.antiAlias).toBe('strong')
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  expect(flatten(stripped.children || []).find((l) => l.text)?.text?.antiAlias).toBe('strong')
+})
+
+test('text underline and strikethrough draw real rules, undo and export natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 260, 'Text decorations', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'Decorated',
+      text: 'O',
+      x: 70,
+      y: 30,
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-decorations.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'Decorated' }).click()
+
+  const stats = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let left = c.width,
+        right = -1,
+        top = c.height,
+        bottom = -1,
+        maxRun = 0
+      for (let y = 0; y < c.height; y++) {
+        let run = 0
+        for (let x = 0; x < c.width; x++) {
+          const alpha = data[(y * c.width + x) * 4 + 3]
+          if (alpha > 10) {
+            left = Math.min(left, x)
+            right = Math.max(right, x)
+            top = Math.min(top, y)
+            bottom = Math.max(bottom, y)
+          }
+          run = alpha > 200 ? run + 1 : 0
+          maxRun = Math.max(maxRun, run)
+        }
+      }
+      return { left, right, top, bottom, width: right - left + 1, maxRun }
+    })
+
+  await expect.poll(async () => (await stats()).width).toBeGreaterThan(50)
+  const plain = await stats()
+  expect(plain.maxRun / plain.width).toBeLessThan(0.9)
+
+  const underline = page.getByRole('button', { name: 'Подчёркивание текста', exact: true })
+  const strikethrough = page.getByRole('button', { name: 'Зачёркивание текста', exact: true })
+  await underline.click()
+  await expect(underline).toHaveClass(/active/)
+  await expect.poll(async () => (await stats()).bottom).toBeGreaterThan(plain.bottom + 5)
+
+  await strikethrough.click()
+  await expect(strikethrough).toHaveClass(/active/)
+  await expect.poll(async () => (await stats()).maxRun / plain.width).toBeGreaterThan(0.9)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(strikethrough).not.toHaveClass(/active/)
+  await strikethrough.click()
+  await expect(strikethrough).toHaveClass(/active/)
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  const style = flatten(parsed.children || []).find((l) => l.text)?.text?.style
+  expect(style?.underline).toBe(true)
+  expect(style?.strikethrough).toBe(true)
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const strippedStyle = flatten(stripped.children || []).find((l) => l.text)?.text?.style
+  expect(strippedStyle?.underline).toBe(true)
+  expect(strippedStyle?.strikethrough).toBe(true)
+
+  // Reimporting that XMP-free PSD must reconstruct the same editable toggles
+  // from native Type style data alone.
+  await open(page, 'decorated-native-reimport.psd', Buffer.from(writePsd(stripped)))
+  await page.locator('.layer-row').filter({ hasText: 'Decorated' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('O')
+  await expect(underline).toHaveClass(/active/)
+  await expect(strikethrough).toHaveClass(/active/)
+})
+
+test('text baseline shift moves real glyphs up and down, undoes and exports natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 340, 'Text baseline shift', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'Shifted',
+      text: 'O',
+      x: 110,
+      y: 105,
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-baseline-shift.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'Shifted' }).click()
+
+  const bounds = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let top = c.height,
+        bottom = -1
+      for (let y = 0; y < c.height; y++)
+        for (let x = 0; x < c.width; x++)
+          if (data[(y * c.width + x) * 4 + 3] > 10) {
+            top = Math.min(top, y)
+            bottom = Math.max(bottom, y)
+          }
+      return { top, bottom, height: bottom - top + 1 }
+    })
+
+  await expect.poll(async () => (await bounds()).height).toBeGreaterThan(50)
+  const plain = await bounds()
+  const shift = page.getByLabel('Сдвиг базовой линии', { exact: true })
+  await expect(shift).toHaveValue('0')
+
+  await shift.fill('30')
+  await shift.press('Enter')
+  await expect(shift).toHaveValue('30')
+  await expect.poll(async () => (await bounds()).top).toBeLessThanOrEqual(plain.top - 25)
+  await expect.poll(async () => (await bounds()).bottom).toBeLessThanOrEqual(plain.bottom - 25)
+
+  await shift.fill('-20')
+  await shift.press('Enter')
+  await expect(shift).toHaveValue('-20')
+  await expect.poll(async () => (await bounds()).top).toBeGreaterThanOrEqual(plain.top + 15)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(shift).toHaveValue('30')
+  await expect.poll(async () => (await bounds()).top).toBeLessThanOrEqual(plain.top - 25)
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  expect(flatten(parsed.children || []).find((l) => l.text)?.text?.style?.baselineShift).toBe(30)
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  expect(flatten(stripped.children || []).find((l) => l.text)?.text?.style?.baselineShift).toBe(30)
+
+  await open(page, 'baseline-shift-native-reimport.psd', Buffer.from(writePsd(stripped)))
+  await page.locator('.layer-row').filter({ hasText: 'Shifted' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('O')
+  await expect(shift).toHaveValue('30')
+})
+
+test('external PSD baseline shift uses Type matrix scale but not character vertical scale', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const bytes = Buffer.from(
+    writePsd({
+      width: 520,
+      height: 280,
+      children: [
+        {
+          name: 'External shift',
+          text: {
+            text: 'Aa',
+            transform: [2, 0, 0, 2, 40, 170],
+            shapeType: 'point',
+            pointBase: [0, 0],
+            orientation: 'horizontal',
+            antiAlias: 'sharp',
+            style: {
+              font: { name: 'Manrope' },
+              fontSize: 32,
+              horizontalScale: 1.5,
+              verticalScale: 1.5,
+              fillColor: { r: 0, g: 0, b: 0 },
+              leading: 38.4,
+              autoLeading: false,
+              tracking: 0,
+              baselineShift: 16,
+            },
+            paragraphStyle: { justification: 'left', autoHyphenate: false },
+          },
+        },
+      ],
+    }),
+  )
+  await open(page, 'external-baseline-shift-scale.psd', bytes)
+  await page.locator('.layer-row').filter({ hasText: 'External shift' }).click()
+  await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Aa')
+  // 32 × matrix 2 × character scale 1.5 = 96, while the absolute PSD shift
+  // is scaled only by the Type matrix: 16 × 2 = 32 (not 48).
+  await expect(page.getByLabel('Размер', { exact: true })).toHaveValue('96')
+  await expect(page.getByLabel('Сдвиг базовой линии', { exact: true })).toHaveValue('32')
 })
 
 test('mask/style offscreens and explicit rasterization retain point text beyond its obsolete rectangle', async ({
