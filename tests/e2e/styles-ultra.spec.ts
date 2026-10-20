@@ -424,6 +424,14 @@ test('contours reshape shadow falloff and bevel gloss, then export every contour
   await controls.getByLabel('Сдвиг Y', { exact: true }).fill('0')
   await controls.getByRole('slider', { name: 'Непрозрачность тени' }).fill('100')
   await controls.getByLabel('Контур тени').selectOption('Конус')
+  await page.getByRole('button', { name: 'Редактировать точки', exact: true }).click()
+  await expect(page.getByTestId('contour-point-editor')).toBeVisible()
+  await controls.getByLabel('Точка контура').selectOption('1')
+  await controls.getByLabel('Выход точки').fill('90')
+  await expect(controls.getByLabel('Контур тени')).toHaveValue('__custom__')
+  await page.getByRole('button', { name: 'Добавить точку', exact: true }).click()
+  await expect(controls.locator('.contour-editor-point')).toHaveCount(4)
+  await page.getByRole('button', { name: 'Скрыть редактор точек', exact: true }).click()
 
   await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
   await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
@@ -449,10 +457,11 @@ test('contours reshape shadow falloff and bevel gloss, then export every contour
   let parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
   let layer = (parsed.children || []).find((l) => l.effects?.dropShadow?.length)
   expect(layer?.effects?.dropShadow?.[0].contour).toEqual({
-    name: 'Конус',
+    name: 'Пользовательский',
     curve: [
       { x: 0, y: 0 },
-      { x: 128, y: 255 },
+      { x: 128, y: 230 },
+      { x: 192, y: 114 },
       { x: 255, y: 0 },
     ],
   })
@@ -461,7 +470,7 @@ test('contours reshape shadow falloff and bevel gloss, then export every contour
   parsed.imageResources = {}
   const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
   const stripped = (withoutXmp.children || []).find((l) => l.effects?.dropShadow?.length)
-  expect(stripped?.effects?.dropShadow?.[0].contour?.name).toBe('Конус')
+  expect(stripped?.effects?.dropShadow?.[0].contour?.name).toBe('Пользовательский')
   expect(stripped?.effects?.bevel?.contour?.name).toBe('Нисходящий')
 
   // Add the remaining contour-bearing effects through the same UI and prove
@@ -474,6 +483,21 @@ test('contours reshape shadow falloff and bevel gloss, then export every contour
   await page.getByRole('button', { name: 'Внешнее свечение', exact: false }).click()
   await controls.getByRole('slider', { name: 'Радиус свечения' }).fill('12')
   await controls.getByLabel('Контур свечения').selectOption('Ступени')
+  await page.getByRole('button', { name: 'Редактировать точки', exact: true }).click()
+  await controls.getByLabel('Точка контура').selectOption('3')
+  const draggedPoint = controls.locator('.contour-editor-point').nth(3)
+  const pointBox = (await draggedPoint.boundingBox())!
+  await page.mouse.move(pointBox.x + pointBox.width / 2, pointBox.y + pointBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(pointBox.x + pointBox.width / 2, pointBox.y + pointBox.height / 2 + 24, {
+    steps: 6,
+  })
+  await page.mouse.up()
+  await expect(controls.getByLabel('Контур свечения')).toHaveValue('__custom__')
+  // Normalize the dragged point through the numeric field so the native PSD
+  // assertion below is exact rather than dependent on browser pointer pixels.
+  await controls.getByLabel('Выход точки').fill('25')
+  await page.getByRole('button', { name: 'Скрыть редактор точек', exact: true }).click()
   await controls.getByRole('slider', { name: 'Диапазон контура свечения' }).fill('25')
   await page.getByRole('checkbox', { name: 'Сглаживание контура свечения' }).check()
 
@@ -491,7 +515,10 @@ test('contours reshape shadow falloff and bevel gloss, then export every contour
   parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
   layer = (parsed.children || []).find((l) => l.effects?.satin)
   expect(layer?.effects?.innerShadow?.[0].contour?.name).toBe('Полукруг')
-  expect(layer?.effects?.outerGlow?.contour?.name).toBe('Ступени')
+  expect(layer?.effects?.outerGlow?.contour?.name).toBe('Пользовательский')
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].y).toBe(64)
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].x).toBeGreaterThanOrEqual(124)
+  expect(layer?.effects?.outerGlow?.contour?.curve[3].x).toBeLessThanOrEqual(128)
   expect(layer?.effects?.outerGlow?.antialiased).toBe(true)
   expect(layer?.effects?.outerGlow?.range).toBeCloseTo(0.25, 2)
   expect(layer?.effects?.innerGlow?.contour?.name).toBe('S-кривая')

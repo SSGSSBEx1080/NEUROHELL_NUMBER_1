@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   Check,
   ChevronDown,
@@ -47,11 +47,17 @@ import {
 } from '../engine/styles'
 import { gradientCss } from '../engine/gradientRamp'
 import {
+  CUSTOM_EFFECT_CONTOUR_NAME,
+  MAX_EFFECT_CONTOUR_POINTS,
+  addEffectContourPoint,
   contourWithEditorEndpoints,
   effectContourPreset,
   effectContourPresets,
   matchingContourPreset,
+  moveEffectContourPoint,
   parseEffectContour,
+  removeEffectContourPoint,
+  sampleEffectContour,
 } from '../engine/contours'
 import { defaultPatternDefinition, prepareStylePatterns } from '../engine/patterns'
 import {
@@ -177,6 +183,73 @@ function ContourControls({
   const previewPoints = contourWithEditorEndpoints(current)
     .points.map((point) => `${(point.x / 255) * 100},${54 - (point.y / 255) * 52}`)
     .join(' ')
+  const [editing, setEditing] = useState(false)
+  const [selectedPointIndex, setSelectedPointIndex] = useState(0)
+  const dragPointIndex = useRef<number | null>(null)
+  const editorPoints = contourWithEditorEndpoints(current).points
+  const selectedIndex = Math.max(0, Math.min(selectedPointIndex, editorPoints.length - 1))
+  const selectedPoint = editorPoints[selectedIndex]
+  const percent = (value: number) => Math.round((value / 255) * 100)
+  const editorY = (value: number) => 156 - (value / 255) * 152
+  const editorLine = editorPoints.map((point) => `${point.x},${editorY(point.y)}`).join(' ')
+  const updatePoint = (index: number, point: { x: number; y: number }) =>
+    onContour(moveEffectContourPoint(current, index, point))
+  const graphPoint = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)))
+    const svgY =
+      Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))) * 160
+    return {
+      x: Math.round(x * 255),
+      y: Math.max(0, Math.min(255, Math.round(((156 - svgY) / 152) * 255))),
+    }
+  }
+  const deletePoint = (index: number) => {
+    onContour(removeEffectContourPoint(current, index))
+    setSelectedPointIndex(Math.max(0, index - 1))
+  }
+  const handleGraphPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const point = graphPoint(event)
+    const rawIndex = (event.target as Element).getAttribute?.('data-point-index')
+    if (rawIndex !== null && rawIndex !== undefined) {
+      const index = Number(rawIndex)
+      setSelectedPointIndex(index)
+      if (event.altKey && index > 0 && index < editorPoints.length - 1) {
+        deletePoint(index)
+        return
+      }
+      dragPointIndex.current = index
+      event.currentTarget.setPointerCapture(event.pointerId)
+      updatePoint(index, point)
+      return
+    }
+    if (editorPoints.length >= MAX_EFFECT_CONTOUR_POINTS) return
+    const added = addEffectContourPoint(current, point)
+    onContour(added.contour)
+    setSelectedPointIndex(added.index)
+    dragPointIndex.current = added.index
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const handleGraphPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (dragPointIndex.current === null) return
+    updatePoint(dragPointIndex.current, graphPoint(event))
+  }
+  const stopGraphDrag = () => {
+    dragPointIndex.current = null
+  }
+  const addPointInSelectedSegment = () => {
+    const first = editorPoints[selectedIndex]
+    const second = editorPoints[selectedIndex + 1] || editorPoints[selectedIndex - 1]
+    if (!first || !second) return
+    const x = Math.round((first.x + second.x) / 2)
+    if (x === first.x || x === second.x) return
+    const added = addEffectContourPoint(current, {
+      x,
+      y: Math.round(sampleEffectContour(current, x / 255) * 255),
+    })
+    onContour(added.contour)
+    setSelectedPointIndex(added.index)
+  }
   return (
     <div className="contour-controls">
       <span className="panel-subtitle">{title}</span>
@@ -195,12 +268,17 @@ function ContourControls({
           aria-label={selectLabel}
           value={selectedName}
           onChange={(e) => {
-            if (e.target.value !== '__custom__') onContour(effectContourPreset(e.target.value))
+            if (e.target.value !== '__custom__') {
+              setSelectedPointIndex(0)
+              onContour(effectContourPreset(e.target.value))
+            }
           }}
         >
           {!preset && (
             <option value="__custom__" disabled>
-              Из PSD: {current.name}
+              {current.name === CUSTOM_EFFECT_CONTOUR_NAME
+                ? 'Пользовательский контур'
+                : `Из PSD: ${current.name}`}
             </option>
           )}
           {effectContourPresets.map((item) => (
@@ -210,6 +288,115 @@ function ContourControls({
           ))}
         </Select>
       </div>
+      <button
+        type="button"
+        className="compact-button contour-edit-toggle"
+        aria-expanded={editing}
+        onClick={() => setEditing((value) => !value)}
+      >
+        {editing ? 'Скрыть редактор точек' : 'Редактировать точки'}
+      </button>
+      {editing && (
+        <div className="contour-editor" data-testid="contour-point-editor">
+          <svg
+            className="contour-editor-graph"
+            viewBox="0 0 255 160"
+            role="img"
+            aria-label={`Редактор кривой контура: ${current.name}`}
+            onPointerDown={handleGraphPointerDown}
+            onPointerMove={handleGraphPointerMove}
+            onPointerUp={stopGraphDrag}
+            onPointerCancel={stopGraphDrag}
+          >
+            {[0, 64, 128, 191, 255].map((value) => (
+              <line key={`x${value}`} x1={value} y1="0" x2={value} y2="160" />
+            ))}
+            {[0, 64, 128, 191, 255].map((value) => (
+              <line key={`y${value}`} x1="0" y1={editorY(value)} x2="255" y2={editorY(value)} />
+            ))}
+            <polyline points={editorLine} />
+            {editorPoints.map((point, index) => (
+              <circle
+                key={`${index}-${point.x}`}
+                className={`contour-editor-point${index === selectedIndex ? ' selected' : ''}`}
+                data-point-index={index}
+                cx={point.x}
+                cy={editorY(point.y)}
+                r="6"
+              >
+                <title>{`Точка ${index + 1}: вход ${percent(point.x)}%, выход ${percent(point.y)}%`}</title>
+              </circle>
+            ))}
+          </svg>
+          <div className="contour-point-tools">
+            <Select
+              aria-label="Точка контура"
+              value={String(selectedIndex)}
+              onChange={(e) => setSelectedPointIndex(Number(e.target.value))}
+            >
+              {editorPoints.map((point, index) => (
+                <option key={`${index}-${point.x}`} value={index}>
+                  Точка {index + 1}: {percent(point.x)}% → {percent(point.y)}%
+                </option>
+              ))}
+            </Select>
+            <Field
+              label="Вход точки"
+              value={percent(selectedPoint.x)}
+              min={0}
+              max={100}
+              suffix="%"
+              disabled={selectedIndex === 0 || selectedIndex === editorPoints.length - 1}
+              onChange={(value) =>
+                updatePoint(selectedIndex, {
+                  x: (value / 100) * 255,
+                  y: selectedPoint.y,
+                })
+              }
+            />
+            <Field
+              label="Выход точки"
+              value={percent(selectedPoint.y)}
+              min={0}
+              max={100}
+              suffix="%"
+              onChange={(value) =>
+                updatePoint(selectedIndex, {
+                  x: selectedPoint.x,
+                  y: (value / 100) * 255,
+                })
+              }
+            />
+          </div>
+          <div className="contour-point-actions">
+            <button
+              type="button"
+              className="compact-button"
+              disabled={editorPoints.length >= MAX_EFFECT_CONTOUR_POINTS}
+              onClick={addPointInSelectedSegment}
+            >
+              <Plus size={13} /> Добавить точку
+            </button>
+            <button
+              type="button"
+              className="compact-button"
+              disabled={
+                editorPoints.length <= 2 ||
+                selectedIndex === 0 ||
+                selectedIndex === editorPoints.length - 1
+              }
+              onClick={() => deletePoint(selectedIndex)}
+            >
+              <Trash2 size={13} /> Удалить точку
+            </button>
+          </div>
+          <p className="panel-note">
+            Перетаскивай точку; клик по графику добавляет точку, Alt+клик удаляет внутреннюю.
+            Крайние входы закреплены на 0% и 100%. После ручной правки контур называется
+            пользовательским, пока снова точно не совпадёт с пресетом.
+          </p>
+        </div>
+      )}
       {antialiasLabel && onAntialiased && (
         <label className="checkbox-row">
           <input

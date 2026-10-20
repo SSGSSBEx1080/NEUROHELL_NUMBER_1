@@ -2,6 +2,8 @@ import type { EffectContourDefinition, EffectContourPoint } from '../types'
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v)))
+export const MAX_EFFECT_CONTOUR_POINTS = 32
+export const CUSTOM_EFFECT_CONTOUR_NAME = 'Пользовательский'
 const clonePoints = (points: EffectContourPoint[]) => points.map((p) => ({ ...p }))
 
 export function linearEffectContour(): EffectContourDefinition {
@@ -136,7 +138,7 @@ export function parseEffectContour(
   }
   const points = downsample(
     [...byX.values()].sort((a, b) => a.x - b.x),
-    32,
+    MAX_EFFECT_CONTOUR_POINTS,
   )
   if (points.length < 2) return cloneEffectContour(fallback)
   return {
@@ -211,6 +213,83 @@ export function matchingContourPreset(
 ): EffectContourDefinition | undefined {
   const key = JSON.stringify(definition.points)
   return effectContourPresets.find((preset) => JSON.stringify(preset.points) === key)
+}
+
+function editorContourPoints(definition: EffectContourDefinition): EffectContourPoint[] {
+  const withEndpoints = contourWithEditorEndpoints(parseEffectContour(definition)).points
+  return downsample(withEndpoints, MAX_EFFECT_CONTOUR_POINTS)
+}
+
+function finishEditedContour(points: EffectContourPoint[]): EffectContourDefinition {
+  const custom = parseEffectContour({ name: CUSTOM_EFFECT_CONTOUR_NAME, points })
+  const preset = matchingContourPreset(custom)
+  return preset ? cloneEffectContour(preset) : custom
+}
+
+/**
+ * Point-editor operations. The first/last editor points remain at input 0 and
+ * 255 (their outputs may move), interior inputs stay strictly ordered, and an
+ * edited curve is named either by an exactly matching preset or as custom.
+ * An imported PSD name therefore cannot survive silently after its points move.
+ */
+export function moveEffectContourPoint(
+  definition: EffectContourDefinition,
+  index: number,
+  point: EffectContourPoint,
+): EffectContourDefinition {
+  const points = editorContourPoints(definition)
+  if (!Number.isInteger(index) || index < 0 || index >= points.length)
+    return parseEffectContour(definition)
+  const previous = points[index - 1],
+    next = points[index + 1]
+  const minX = index === 0 ? 0 : (previous?.x ?? 0) + 1
+  const maxX = index === points.length - 1 ? 255 : (next?.x ?? 255) - 1
+  points[index] = {
+    x:
+      index === 0
+        ? 0
+        : index === points.length - 1
+          ? 255
+          : Math.max(
+              minX,
+              Math.min(maxX, byte(Number.isFinite(point.x) ? point.x : points[index].x)),
+            ),
+    y: byte(Number.isFinite(point.y) ? point.y : points[index].y),
+  }
+  return finishEditedContour(points)
+}
+
+export function addEffectContourPoint(
+  definition: EffectContourDefinition,
+  point: EffectContourPoint,
+): { contour: EffectContourDefinition; index: number } {
+  const points = editorContourPoints(definition)
+  const clean = {
+    x: Math.max(1, Math.min(254, byte(Number.isFinite(point.x) ? point.x : 128))),
+    y: byte(Number.isFinite(point.y) ? point.y : 128),
+  }
+  const existing = points.findIndex((candidate) => candidate.x === clean.x)
+  if (existing >= 0) {
+    points[existing] = clean
+    return { contour: finishEditedContour(points), index: existing }
+  }
+  if (points.length >= MAX_EFFECT_CONTOUR_POINTS)
+    return { contour: parseEffectContour(definition), index: points.length - 1 }
+  const index = points.findIndex((candidate) => candidate.x > clean.x)
+  const insertion = index < 0 ? points.length - 1 : index
+  points.splice(insertion, 0, clean)
+  return { contour: finishEditedContour(points), index: insertion }
+}
+
+export function removeEffectContourPoint(
+  definition: EffectContourDefinition,
+  index: number,
+): EffectContourDefinition {
+  const points = editorContourPoints(definition)
+  if (points.length <= 2 || !Number.isInteger(index) || index <= 0 || index >= points.length - 1)
+    return parseEffectContour(definition)
+  points.splice(index, 1)
+  return finishEditedContour(points)
 }
 
 /**

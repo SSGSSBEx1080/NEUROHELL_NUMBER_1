@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { initializeCanvas, readPsd, writePsd } from 'ag-psd'
 import {
+  CUSTOM_EFFECT_CONTOUR_NAME,
+  MAX_EFFECT_CONTOUR_POINTS,
+  addEffectContourPoint,
   buildContourAlphaLut,
   contourWithEditorEndpoints,
   effectContourPreset,
   isLinearEffectContour,
   linearEffectContour,
   matchingContourPreset,
+  moveEffectContourPoint,
   parseEffectContour,
+  removeEffectContourPoint,
   sampleEffectContour,
 } from '../../src/engine/contours'
 import { applyBevelToPixels, type RgbaPixelData } from '../../src/engine/bevel'
@@ -133,6 +138,75 @@ describe('effect contour parsing and sampling', () => {
     expect(compressed[128]).toBe(0)
     expect(stretched[128]).toBeGreaterThan(120)
     expect(stretched[128]).toBeLessThan(140)
+  })
+})
+
+describe('effect contour point editor operations', () => {
+  it('moves interior points only between neighbours and endpoint outputs without moving endpoint inputs', () => {
+    const moved = moveEffectContourPoint(cone(), 1, { x: 999, y: -20 })
+    expect(moved).toEqual({
+      name: CUSTOM_EFFECT_CONTOUR_NAME,
+      points: [
+        { x: 0, y: 0 },
+        { x: 254, y: 0 },
+        { x: 255, y: 0 },
+      ],
+    })
+    expect(moveEffectContourPoint(cone(), 0, { x: 80, y: 33 }).points[0]).toEqual({
+      x: 0,
+      y: 33,
+    })
+    expect(moveEffectContourPoint(cone(), 2, { x: 20, y: 44 }).points[2]).toEqual({
+      x: 255,
+      y: 44,
+    })
+  })
+
+  it('adds, replaces and removes points while renaming an imported curve after it changes', () => {
+    const imported: EffectContourDefinition = {
+      name: 'Gaussian',
+      points: [
+        { x: 32, y: 7 },
+        { x: 128, y: 166 },
+        { x: 223, y: 248 },
+      ],
+    }
+    const added = addEffectContourPoint(imported, { x: 80, y: 70 })
+    expect(added.index).toBe(2)
+    expect(added.contour.name).toBe(CUSTOM_EFFECT_CONTOUR_NAME)
+    expect(added.contour.points).toContainEqual({ x: 80, y: 70 })
+    expect(added.contour.points[0].x).toBe(0)
+    expect(added.contour.points.at(-1)?.x).toBe(255)
+
+    const replaced = addEffectContourPoint(added.contour, { x: 80, y: 90 })
+    expect(replaced.contour.points.filter((point) => point.x === 80)).toEqual([{ x: 80, y: 90 }])
+    const removed = removeEffectContourPoint(replaced.contour, replaced.index)
+    expect(removed.points.some((point) => point.x === 80)).toBe(false)
+    expect(removeEffectContourPoint(removed, 0)).toEqual(removed)
+  })
+
+  it('restores a preset name on an exact match and refuses a 33rd point', () => {
+    const almostCone: EffectContourDefinition = {
+      name: CUSTOM_EFFECT_CONTOUR_NAME,
+      points: [
+        { x: 0, y: 0 },
+        { x: 128, y: 200 },
+        { x: 255, y: 0 },
+      ],
+    }
+    expect(moveEffectContourPoint(almostCone, 1, { x: 128, y: 255 })).toEqual(cone())
+
+    let full: EffectContourDefinition = {
+      name: 'Dense',
+      points: Array.from({ length: MAX_EFFECT_CONTOUR_POINTS }, (_, index) => ({
+        x: Math.round((index * 255) / (MAX_EFFECT_CONTOUR_POINTS - 1)),
+        y: index * 7,
+      })),
+    }
+    full = parseEffectContour(full)
+    expect(full.points).toHaveLength(MAX_EFFECT_CONTOUR_POINTS)
+    const refused = addEffectContourPoint(full, { x: 129, y: 12 })
+    expect(refused.contour).toEqual(full)
   })
 })
 
