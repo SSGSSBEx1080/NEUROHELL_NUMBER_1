@@ -5,6 +5,7 @@ import { getTextGeometry, clearTextGeometryCache } from './textGeometry'
 import { getTextLayout, textFont } from './textLayout'
 import { layerPoint } from './shapeGeometry'
 import { homography, validQuad } from './projection'
+import { textAntiAliasFromPsd, textAntiAliasMode } from './textAntiAlias'
 const px = (value: number) => ({ units: 'Pixels' as const, value })
 const rgb = (color: string) => ({
   r: parseInt(color.slice(1, 3), 16),
@@ -62,7 +63,7 @@ export function exportNativeText(layer: Layer): LayerTextData {
     right: bounds.right.value,
     bottom: bounds.bottom.value,
     orientation: 'horizontal',
-    antiAlias: 'smooth',
+    antiAlias: textAntiAliasMode(layer.textAntiAlias),
     useFractionalGlyphWidths: true,
     style: {
       ...nativeFontStyle(layer.fontFamily || 'Manrope', layer.fontWeight || 500, layer.italic),
@@ -154,6 +155,8 @@ export async function importNativeText(
     warn(
       `Шрифт «${style.font?.name || 'не указан'}» не найден в каталоге редактора. Рабочий текст использует Manrope; исходный PSD без правок остаётся неизменным. Установи нужный шрифт перед редактированием.`,
     )
+  const antiAlias = textAntiAliasFromPsd(text.antiAlias)
+  if (antiAlias.warning) warn(antiAlias.warning)
   const nativeSize = style.fontSize || 48,
     leading =
       style.autoLeading !== false
@@ -175,6 +178,7 @@ export async function importNativeText(
     textAlign: align as Layer['textAlign'],
     lineHeight: leading / (nativeSize * vertical),
     letterSpacing: ((style.tracking || 0) * size) / 1000,
+    textAntiAlias: antiAlias.mode,
     textBaseline: text.shapeType === 'box' ? 'top' : 'alphabetic',
     color:
       color && 'r' in color

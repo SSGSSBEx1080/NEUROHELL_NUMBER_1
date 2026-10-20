@@ -460,11 +460,13 @@ for (const mode of ['native-text', 'native-text-box'])
     await open(page, `${mode}.psd`, bytes)
     await page.locator('.layer-row').first().click()
     await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('TEST')
+    await expect(page.getByLabel('Сглаживание текста')).toHaveValue('sharp')
     expect((await save(page)).equals(bytes)).toBe(true)
     await page.getByLabel('Текст слоя', { exact: true }).fill('EDIT')
     await page.getByLabel('Текст слоя', { exact: true }).press('Control+Enter')
     const edited = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
     expect(edited.children![0].text!.text).toBe('EDIT')
+    expect(edited.children![0].text!.antiAlias).toBe('sharp')
     expect(edited.children![0].text!.shapeType).toBe(mode.endsWith('box') ? 'box' : 'point')
   })
 
@@ -503,6 +505,79 @@ test('external native text edits cannot be overwritten by stale private XMP', as
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
   await page.locator('.layer-row').first().click()
   await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Changed externally')
+})
+
+test('text anti-aliasing reshapes real glyph alpha, undoes and exports natively without XMP', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const doc = newDocument(420, 240, 'Text anti-aliasing', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'text',
+      name: 'AA',
+      text: 'A',
+      x: 70,
+      y: 35,
+      // Deliberately obsolete point-text rectangle: shaped rendering must use
+      // measured ink bounds, not clip the glyph to these stored dimensions.
+      width: 15,
+      height: 15,
+      fontFamily: 'Manrope',
+      fontSize: 140,
+      fontWeight: 700,
+      color: '#000000',
+    }),
+  ]
+  await open(page, 'text-antialias.777', Buffer.from(JSON.stringify(doc)))
+  await page.locator('.layer-row').filter({ hasText: 'AA' }).click()
+  const select = page.getByLabel('Сглаживание текста')
+  await expect(select).toHaveValue('smooth')
+
+  const stats = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      const data = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+      let partial = 0,
+        opaque = 0,
+        coverage = 0
+      for (let i = 3; i < data.length; i += 4) {
+        coverage += data[i]
+        if (data[i] === 255) opaque++
+        else if (data[i] > 0) partial++
+      }
+      return { partial, opaque, coverage }
+    })
+  await expect.poll(async () => (await stats()).opaque).toBeGreaterThan(100)
+  const smooth = await stats()
+  expect(smooth.partial).toBeGreaterThan(20)
+
+  await select.selectOption('none')
+  await expect.poll(async () => (await stats()).partial).toBe(0)
+  expect((await stats()).opaque).toBeGreaterThan(100)
+
+  await select.selectOption('sharp')
+  await expect.poll(async () => (await stats()).partial).toBeGreaterThan(0)
+  const sharp = await stats()
+  expect(sharp.partial).toBeLessThan(smooth.partial)
+
+  await select.selectOption('strong')
+  await expect.poll(async () => (await stats()).coverage).toBeGreaterThan(smooth.coverage)
+
+  await page.getByRole('button', { name: 'Отменить (Ctrl+Z)', exact: true }).click()
+  await expect(select).toHaveValue('sharp')
+  await select.selectOption('strong')
+  await expect(select).toHaveValue('strong')
+
+  const parsed = readPsd(await save(page), { useImageData: true, skipThumbnail: true })
+  const text = flatten(parsed.children || []).find((l) => l.text)?.text
+  expect(text?.antiAlias).toBe('strong')
+  parsed.imageResources = {}
+  const stripped = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  expect(flatten(stripped.children || []).find((l) => l.text)?.text?.antiAlias).toBe('strong')
 })
 
 test('mask/style offscreens and explicit rasterization retain point text beyond its obsolete rectangle', async ({

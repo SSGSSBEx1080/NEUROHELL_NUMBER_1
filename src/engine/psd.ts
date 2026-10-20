@@ -61,6 +61,7 @@ import {
 } from './patterns'
 import { isBlendIfActive, parseBlendIf } from './blendIf'
 import { parseEffectContour } from './contours'
+import { textAntiAliasMode } from './textAntiAlias'
 import { makeLayer, newDocument, parseProject, uid } from './document'
 import {
   cacheImage,
@@ -1789,6 +1790,16 @@ export async function exportPsd(
   if (summary.text || summary.editableContents)
     summary.warnings.push(
       'PSD не встраивает шрифты. Для одинаковой типографики они должны быть доступны принимающему редактору. Некоторые редакторы могут предложить обновить текстовый движок.',
+    )
+  const hasShapedText = (d: EditorDocument): boolean =>
+    d.layers.some(
+      (l) =>
+        (l.kind === 'text' && textAntiAliasMode(l.textAntiAlias) !== 'smooth') ||
+        (l.smart ? hasShapedText(l.smart) : false),
+    )
+  if (hasShapedText(doc))
+    summary.warnings.push(
+      'Режим сглаживания текста записан нативно в PSD, а merged/Type-кеш пересчитан собственной alpha-моделью ФШ777. Другой редактор может перерисовать края по-своему; хинтинг Adobe не обещается.',
     )
   const { buffer } = await runCodec<{ buffer: ArrayBuffer }>({
     operation: 'write',

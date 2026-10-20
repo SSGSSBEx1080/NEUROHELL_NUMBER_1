@@ -74,6 +74,8 @@ export interface ShapePath {
   fillRule: 'non-zero' | 'even-odd'
   knots: { linked: boolean; points: number[] }[]
 }
+/** Photoshop's grayscale type anti-aliasing modes; LCD/platform modes are not faked. */
+export type TextAntiAliasMode = 'none' | 'sharp' | 'crisp' | 'strong' | 'smooth'
 export interface Layer {
   id: string
   name: string
@@ -98,6 +100,8 @@ export interface Layer {
   textAlign?: 'left' | 'center' | 'right'
   lineHeight?: number
   letterSpacing?: number
+  /** Undefined is the legacy/default Smooth rendering, preserving old projects byte-for-byte. */
+  textAntiAlias?: TextAntiAliasMode
   color: string
   shape?: ShapeKind
   shapeFill?: boolean

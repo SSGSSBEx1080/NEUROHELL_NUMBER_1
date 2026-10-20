@@ -4,6 +4,7 @@ import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
 import { parseTextFrame } from './textLayout'
+import { TEXT_ANTI_ALIAS_MODES } from './textAntiAlias'
 export type ActionProperties = Partial<
   Pick<
     Layer,
@@ -21,6 +22,7 @@ export type ActionProperties = Partial<
     | 'textAlign'
     | 'lineHeight'
     | 'letterSpacing'
+    | 'textAntiAlias'
     | 'textScaleX'
     | 'shape'
     | 'shapeFill'
@@ -83,6 +85,7 @@ const enums: Record<string, readonly string[]> = {
   strokeCap: ['butt', 'round', 'square'],
   strokeJoin: ['miter', 'round', 'bevel'],
   textAlign: ['left', 'center', 'right'],
+  textAntiAlias: TEXT_ANTI_ALIAS_MODES,
   blendMode: [
     'source-over',
     'multiply',

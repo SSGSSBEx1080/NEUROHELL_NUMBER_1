@@ -10,6 +10,7 @@ import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
 import { parseDocumentColorProfile, workingDocumentColorProfile } from './colorProfiles'
+import { parseTextAntiAlias } from './textAntiAlias'
 import {
   DEFAULT_ADJUSTMENTS,
   MAX_DIMENSION,
@@ -286,6 +287,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : 'left',
       lineHeight: finite(l.lineHeight, 0.5, 4, 1.2),
       letterSpacing: finite(l.letterSpacing, -30, 100, 0),
+      textAntiAlias: l.kind === 'text' ? parseTextAntiAlias(l.textAntiAlias) : undefined,
       shape: Object.hasOwn(shapeNames, String(l.shape)) ? (l.shape as Layer['shape']) : 'rectangle',
       shapeFill: l.shapeFill !== false,
       cornerRadii:

@@ -691,6 +691,29 @@ export function PropertiesPanel({
                         onChange={(lineHeight) => patch({ lineHeight }, '', true)}
                         onCommit={finish}
                       />
+                      <Select
+                        aria-label="Сглаживание текста"
+                        value={layer.textAntiAlias || 'smooth'}
+                        onChange={(e) =>
+                          patch(
+                            { textAntiAlias: e.target.value as Layer['textAntiAlias'] },
+                            'Сглаживание текста',
+                          )
+                        }
+                      >
+                        <option value="none">Сглаживание: нет (жёсткий край)</option>
+                        <option value="sharp">Сглаживание: резкое (Sharp)</option>
+                        <option value="crisp">Сглаживание: чёткое (Crisp)</option>
+                        <option value="strong">Сглаживание: насыщенное (Strong)</option>
+                        <option value="smooth">Сглаживание: гладкое (Smooth)</option>
+                      </Select>
+                      {(layer.textAntiAlias || 'smooth') !== 'smooth' && (
+                        <p className="panel-note">
+                          Края формирует собственная alpha-модель поверх Canvas: «Нет» даёт только
+                          0/255, Sharp/Crisp сужают переход, Strong утяжеляет штрих. Хинтинг Adobe и
+                          LCD-субпиксели не воспроизводятся.
+                        </p>
+                      )}
                       <Suspense fallback={null}>
                         <TextFrameSettings layer={layer} patch={patch} finish={finish} />
                       </Suspense>
