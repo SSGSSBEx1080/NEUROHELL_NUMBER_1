@@ -84,6 +84,69 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.gradients[0].reverse).toBe(true)
   })
 
+  it('round-trips gradient-filled strokes and shaped gradient overlays natively', () => {
+    const styles = normalizeStyles({
+      strokes: [
+        {
+          enabled: true,
+          size: 8,
+          position: 'outside',
+          opacity: 0.9,
+          fill: 'gradient',
+          gradientShape: 'reflected',
+          gradientAngle: 30,
+          gradientScale: 1.25,
+          gradientReverse: true,
+          gradient: {
+            name: 'Обводка',
+            kind: 'solid',
+            stops: [
+              { position: 0, color: '#102030' },
+              { position: 1, color: '#f0e0d0' },
+            ],
+          },
+        },
+      ],
+      gradients: [
+        {
+          enabled: true,
+          angle: 70,
+          opacity: 0.8,
+          reverse: false,
+          shape: 'radial',
+          scale: 1.5,
+          gradient: {
+            name: 'Оверлей',
+            kind: 'solid',
+            stops: [
+              { position: 0, color: '#000000' },
+              { position: 1, color: '#ffffff' },
+            ],
+          },
+        },
+      ],
+    })!
+    expect(styles.strokes[0].fill).toBe('gradient')
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const layer = readPsd(writePsd({ width: 4, height: 4, children: [{ name: 'g', effects }] }), {
+      useImageData: true,
+    }).children![0]
+    expect(layer.effects?.stroke?.[0].fillType).toBe('gradient')
+    expect(layer.effects?.stroke?.[0].gradient?.style).toBe('reflected')
+    expect(layer.effects?.gradientOverlay?.[0].type).toBe('radial')
+    expect(layer.effects?.gradientOverlay?.[0].scale).toBeCloseTo(1.5, 2)
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.strokes[0].fill).toBe('gradient')
+    expect(back.strokes[0].gradientShape).toBe('reflected')
+    expect(back.strokes[0].gradientAngle).toBeCloseTo(30, 1)
+    expect(back.strokes[0].gradientScale).toBeCloseTo(1.25, 2)
+    expect(back.strokes[0].gradientReverse).toBe(true)
+    expect(back.strokes[0].gradient?.stops).toHaveLength(2)
+    expect(back.gradients[0].shape).toBe('radial')
+    expect(back.gradients[0].scale).toBeCloseTo(1.5, 2)
+    expect(back.gradients[0].angle).toBeCloseTo(70, 1)
+  })
+
   it('round-trips a native noise gradient descriptor', () => {
     const styles = normalizeStyles({
       gradients: [

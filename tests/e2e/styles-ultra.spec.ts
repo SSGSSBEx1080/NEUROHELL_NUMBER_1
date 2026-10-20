@@ -142,6 +142,53 @@ test('Blend If hides a layer by underlying and own luminance and exports native 
   expect(layer?.blendingRanges?.ranges).toHaveLength(3)
 })
 
+test('gradient-filled stroke and radial gradient overlay render real shapes', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  // Stroke filled with the default ULTRA gradient (violet -> orange, top -> bottom).
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('16')
+  await page.getByLabel('Тип заливки обводки').selectOption('gradient')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 41)
+      return p[3] === 255 && p[2] > p[0]
+    })
+    .toBe(true) // violet near the top
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 159)
+      return p[3] === 255 && p[0] > p[2]
+    })
+    .toBe(true) // orange near the bottom
+
+  // Radial overlay: gradient start in the middle, end towards the corners.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Стиль градиента наложения').selectOption('radial')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 100)
+      return p[3] === 255 && p[2] > p[0]
+    })
+    .toBe(true)
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 66, 56)
+      return p[3] === 255 && p[0] > p[2]
+    })
+    .toBe(true)
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

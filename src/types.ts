@@ -204,10 +204,19 @@ export const DEFAULT_ADJUSTMENTS: Adjustments = {
 export const MAX_DIMENSION = 4096
 export const MAX_LAYERS = 100
 
+/** Gradient geometry shared by overlays and gradient-filled strokes (PSD gradient styles). */
+export type StyleGradientShape = 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond'
 export interface StrokeEffectStyle {
   enabled: boolean
   size: number
   color: string
+  /** Fill of the stroke ring: a solid color or a full gradient definition. */
+  fill: 'color' | 'gradient'
+  gradient?: import('./engine/gradientRamp').GradientDefinition
+  gradientShape: StyleGradientShape
+  gradientAngle: number
+  gradientScale: number
+  gradientReverse: boolean
   position: 'outside' | 'inside' | 'center'
   opacity: number
 }
@@ -233,6 +242,9 @@ export interface ColorOverlayStyle {
 export interface GradientOverlayStyle {
   enabled: boolean
   gradient: import('./engine/gradientRamp').GradientDefinition
+  shape: StyleGradientShape
+  /** Gradient scale factor: 1 = 100%, clipped to 0.1..4. */
+  scale: number
   angle: number
   opacity: number
   reverse: boolean

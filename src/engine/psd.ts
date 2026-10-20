@@ -23,7 +23,7 @@ import {
   prepareDocument,
   renderLayer,
 } from './render'
-import { STYLE_LIMITS, defaultStyles, hasStyles } from './styles'
+import { STYLE_LIMITS, defaultStyles, hasStyles, parseGradientShape } from './styles'
 import {
   isOriginalAppearance,
   isOriginalDocument,
@@ -221,15 +221,28 @@ function importStyles(src: PsdLayer): LayerStyles | undefined {
     // PSD effect scale multiplies every size; bake it into editable parameters once.
     const scale = Math.min(10, Math.max(0.01, f.scale ?? 1))
     const strokes = (f.stroke || [])
-      .filter((v) => v.enabled !== false && (!v.fillType || v.fillType === 'color'))
+      .filter((v) => v.enabled !== false && v.fillType !== 'pattern')
       .slice(0, MAX_STYLE_INSTANCES)
-      .map((stroke) => ({
-        enabled: true,
-        size: Math.min(STYLE_LIMITS.strokeSize, (stroke.size?.value || 1) * scale),
-        color: hex(stroke.color),
-        position: stroke.position || ('outside' as const),
-        opacity: stroke.opacity ?? 1,
-      }))
+      .flatMap((stroke) => {
+        const gradient =
+          stroke.fillType === 'gradient' ? gradientFromPsd(stroke.gradient) : undefined
+        if (stroke.fillType === 'gradient' && !gradient) return []
+        return [
+          {
+            enabled: true,
+            size: Math.min(STYLE_LIMITS.strokeSize, (stroke.size?.value || 1) * scale),
+            color: hex(stroke.color),
+            fill: gradient ? ('gradient' as const) : ('color' as const),
+            gradient,
+            gradientShape: parseGradientShape(stroke.gradient?.style, 'linear'),
+            gradientAngle: -(stroke.gradient?.angle || 0),
+            gradientScale: Math.min(4, Math.max(0.1, stroke.gradient?.scale ?? 1)),
+            gradientReverse: stroke.gradient?.reverse === true,
+            position: stroke.position || ('outside' as const),
+            opacity: stroke.opacity ?? 1,
+          },
+        ]
+      })
     if (strokes.length) s.strokes = strokes
     const shadowFrom = (shadow: NonNullable<typeof f.dropShadow>[number]) => {
       const a = ((shadow.angle || 0) * Math.PI) / 180,
@@ -286,6 +299,8 @@ function importStyles(src: PsdLayer): LayerStyles | undefined {
               {
                 enabled: true,
                 gradient,
+                shape: parseGradientShape(item.type, 'linear'),
+                scale: Math.min(4, Math.max(0.1, item.scale ?? 1)),
                 angle: -(item.angle || 0),
                 opacity: item.opacity ?? 1,
                 reverse: item.reverse === true,
@@ -301,15 +316,33 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
   const effects: LayerEffectsInfo = { scale: 1 }
   const strokes = s.strokes.filter((e) => e.enabled)
   if (strokes.length)
-    effects.stroke = strokes.map((stroke) => ({
-      enabled: true,
-      position: stroke.position,
-      fillType: 'color' as const,
-      size: px(stroke.size),
-      color: rgb(stroke.color),
-      opacity: stroke.opacity,
-      blendMode: 'normal' as const,
-    }))
+    effects.stroke = strokes.map((stroke) =>
+      stroke.fill === 'gradient' && stroke.gradient
+        ? {
+            enabled: true,
+            position: stroke.position,
+            fillType: 'gradient' as const,
+            size: px(stroke.size),
+            opacity: stroke.opacity,
+            blendMode: 'normal' as const,
+            gradient: {
+              ...gradientToPsd(stroke.gradient),
+              style: stroke.gradientShape,
+              angle: -stroke.gradientAngle,
+              scale: stroke.gradientScale,
+              reverse: stroke.gradientReverse,
+            },
+          }
+        : {
+            enabled: true,
+            position: stroke.position,
+            fillType: 'color' as const,
+            size: px(stroke.size),
+            color: rgb(stroke.color),
+            opacity: stroke.opacity,
+            blendMode: 'normal' as const,
+          },
+    )
   const shadowTo = (shadow: LayerStyles['shadows'][number]) => ({
     enabled: true,
     color: rgb(shadow.color),
@@ -353,11 +386,11 @@ function exportStyles(s: LayerStyles): LayerEffectsInfo {
   if (gradients.length)
     effects.gradientOverlay = gradients.map((item) => ({
       enabled: true,
-      type: 'linear' as const,
+      type: item.shape,
       angle: -item.angle,
       opacity: item.opacity,
       blendMode: 'normal',
-      scale: 1,
+      scale: item.scale,
       align: true,
       reverse: item.reverse,
       gradient: gradientToPsd(item.gradient),

@@ -1,8 +1,11 @@
 import { rasterBounds } from './layerGeometry'
 import {
   applyGradientStops,
+  gradientRgbaCss,
+  gradientSample,
   opaqueOpacityStops,
   parseGradientDefinition,
+  reflectPosition,
   solidGradient,
   type GradientDefinition,
 } from './gradientRamp'
@@ -15,6 +18,7 @@ import {
   type LayerStyles,
   type ShadowEffectStyle,
   type StrokeEffectStyle,
+  type StyleGradientShape,
 } from '../types'
 
 export const STYLE_LIMITS = { strokeSize: 120, blur: 100, offset: 180 } as const
@@ -33,6 +37,11 @@ export const defaultStrokeStyle = (): StrokeEffectStyle => ({
   enabled: false,
   size: 6,
   color: '#ffffff',
+  fill: 'color',
+  gradientShape: 'linear',
+  gradientAngle: 90,
+  gradientScale: 1,
+  gradientReverse: false,
   position: 'outside',
   opacity: 1,
 })
@@ -72,6 +81,8 @@ export const defaultOverlayStyle = (): ColorOverlayStyle => ({
 export const defaultGradientOverlayStyle = (): GradientOverlayStyle => ({
   enabled: false,
   gradient: defaultGradientOverlayGradient(),
+  shape: 'linear',
+  scale: 1,
   angle: 45,
   opacity: 1,
   reverse: false,
@@ -97,14 +108,32 @@ const num = (v: unknown, fallback: number, min: number, max: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
 const percent = (v: unknown, fallback: number) => num(v, fallback, 0, 1)
 
+const GRADIENT_SHAPES: StyleGradientShape[] = ['linear', 'radial', 'reflected', 'angle', 'diamond']
+export const parseGradientShape = (v: unknown, fallback: StyleGradientShape): StyleGradientShape =>
+  GRADIENT_SHAPES.includes(v as StyleGradientShape) ? (v as StyleGradientShape) : fallback
+function parseGradientValue(input: unknown): GradientDefinition | undefined {
+  if (input === undefined) return undefined
+  try {
+    return parseGradientDefinition(input)
+  } catch {
+    return undefined
+  }
+}
 function parseStroke(input: unknown): StrokeEffectStyle {
   const v = record(input),
     d = defaultStrokeStyle()
   if (!v) return d
+  const gradient = parseGradientValue(v.gradient)
   return {
     enabled: v.enabled === true,
     size: num(v.size, d.size, 0, STYLE_LIMITS.strokeSize),
     color: color(v.color, d.color),
+    fill: v.fill === 'gradient' && gradient ? 'gradient' : 'color',
+    gradient,
+    gradientShape: parseGradientShape(v.gradientShape, d.gradientShape),
+    gradientAngle: num(v.gradientAngle, d.gradientAngle, -180, 360),
+    gradientScale: num(v.gradientScale, d.gradientScale, 0.1, 4),
+    gradientReverse: v.gradientReverse === true,
     position:
       v.position === 'inside' || v.position === 'center' || v.position === 'outside'
         ? v.position
@@ -169,6 +198,8 @@ function parseGradientOverlay(input: unknown): GradientOverlayStyle {
   return {
     enabled: v.enabled === true,
     gradient,
+    shape: parseGradientShape(v.shape, d.shape),
+    scale: num(v.scale, d.scale, 0.1, 4),
     angle: num(v.angle, d.angle, -180, 360),
     opacity: percent(v.opacity, d.opacity),
     reverse: v.reverse === true,
@@ -292,6 +323,75 @@ export function clearStyleCache() {
 }
 
 /**
+ * Fills a w×h context with a gradient in one of the PSD gradient styles.
+ * Linear keeps the historical geometry (projected half-length from the
+ * centre, multiplied by `scale`); radial reaches the far corners at t=1
+ * (before scale); reflected mirrors the ramp around the centre; angle
+ * sweeps a conic ramp starting along the style angle; diamond evaluates a
+ * rotated L1 norm per pixel (t=1 on the inscribed rhombus, before scale).
+ */
+export function paintGradientShape(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  definition: GradientDefinition,
+  shape: StyleGradientShape,
+  angleDeg: number,
+  scale = 1,
+  reverse = false,
+) {
+  const cx = w / 2,
+    cy = h / 2,
+    angle = (angleDeg * Math.PI) / 180
+  if (shape === 'diamond') {
+    const image = ctx.createImageData(w, h),
+      out = [0, 0, 0, 0],
+      cos = Math.cos(angle),
+      sin = Math.sin(angle),
+      norm = Math.max(0.0001, scale)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const dx = (x + 0.5 - cx) / Math.max(1, cx),
+          dy = (y + 0.5 - cy) / Math.max(1, cy),
+          rx = dx * cos + dy * sin,
+          ry = -dx * sin + dy * cos
+        const t = Math.min(1, Math.max(0, (Math.abs(rx) + Math.abs(ry)) / norm))
+        gradientSample(definition, reverse ? 1 - t : t, out)
+        const i = (y * w + x) * 4
+        image.data[i] = Math.round(out[0] * 255)
+        image.data[i + 1] = Math.round(out[1] * 255)
+        image.data[i + 2] = Math.round(out[2] * 255)
+        image.data[i + 3] = Math.round(out[3] * 255)
+      }
+    ctx.putImageData(image, 0, 0)
+    return
+  }
+  let gradient: CanvasGradient
+  if (shape === 'radial') {
+    gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, (Math.hypot(w, h) / 2) * scale)
+    applyGradientStops(gradient, definition, reverse)
+  } else if (shape === 'angle') {
+    gradient = ctx.createConicGradient(angle + Math.PI / 2, cx, cy)
+    applyGradientStops(gradient, definition, reverse)
+  } else {
+    const length = ((Math.abs(w * Math.cos(angle)) + Math.abs(h * Math.sin(angle))) / 2) * scale,
+      dx = Math.cos(angle) * length,
+      dy = Math.sin(angle) * length
+    gradient = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
+    if (shape === 'reflected') {
+      const samples = definition.kind === 'noise' ? 96 : 48
+      for (let i = 0; i <= samples; i++) {
+        const t = i / samples,
+          q = reflectPosition(t)
+        gradient.addColorStop(t, gradientRgbaCss(definition, reverse ? 1 - q : q))
+      }
+    } else applyGradientStops(gradient, definition, reverse)
+  }
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, w, h)
+}
+
+/**
  * Original raster layer styles. Cached separately from position/opacity for smooth dragging.
  * Paint order (back → front): drop shadows, outer glow, content with color/gradient
  * overlays (attenuated by Fill), inner shadows/glow, strokes. Inside each ordered
@@ -364,15 +464,19 @@ export function renderStyled(
       }
     for (const item of [...s.gradients].reverse())
       if (item.enabled) {
-        const angle = (item.angle * Math.PI) / 180,
-          length = (Math.abs(w * Math.cos(angle)) + Math.abs(h * Math.sin(angle))) / 2
-        const dx = Math.cos(angle) * length,
-          dy = Math.sin(angle) * length
-        const gradient = c.createLinearGradient(w / 2 - dx, h / 2 - dy, w / 2 + dx, h / 2 + dy)
-        applyGradientStops(gradient, item.gradient, item.reverse)
+        const fill = surface(w, h)
+        paintGradientShape(
+          fill.getContext('2d')!,
+          w,
+          h,
+          item.gradient,
+          item.shape,
+          item.angle,
+          item.scale,
+          item.reverse,
+        )
         c.globalAlpha = item.opacity
-        c.fillStyle = gradient
-        c.fillRect(0, 0, w, h)
+        c.drawImage(fill, 0, 0)
       }
     c.globalAlpha = 1
     // Fill affects only the content; effects before/after keep their own opacity.
@@ -412,8 +516,26 @@ export function renderStyled(
 
     for (const stroke of [...s.strokes].reverse()) {
       if (!stroke.enabled || stroke.size <= 0 || stroke.opacity <= 0) continue
-      const colored = tint(base, stroke.color),
-        ring = surface(w, h),
+      let colored: HTMLCanvasElement
+      if (stroke.fill === 'gradient' && stroke.gradient) {
+        const fill = surface(w, h)
+        paintGradientShape(
+          fill.getContext('2d')!,
+          w,
+          h,
+          stroke.gradient,
+          stroke.gradientShape,
+          stroke.gradientAngle,
+          stroke.gradientScale,
+          stroke.gradientReverse,
+        )
+        colored = surface(w, h)
+        const cx = colored.getContext('2d')!
+        cx.drawImage(base, 0, 0)
+        cx.globalCompositeOperation = 'source-in'
+        cx.drawImage(fill, 0, 0)
+      } else colored = tint(base, stroke.color)
+      const ring = surface(w, h),
         r = ring.getContext('2d')!
       const radius = stroke.size * scale * (stroke.position === 'center' ? 0.5 : 1)
       const steps = Math.max(16, Math.min(160, Math.ceil(radius * 5)))

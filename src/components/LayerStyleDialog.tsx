@@ -33,6 +33,7 @@ import {
 } from '../engine/blendIf'
 import {
   STYLE_LIMITS,
+  defaultGradientOverlayGradient,
   defaultGradientOverlayStyle,
   defaultInnerShadowStyle,
   defaultOverlayStyle,
@@ -231,7 +232,7 @@ export function LayerStyleDialog({
   const itemLabel = (i: number): string => {
     if (listKey === 'strokes') {
       const e = styles.strokes[i]
-      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${e.color}`
+      return `${e.size} px · ${e.position === 'outside' ? 'снаружи' : e.position === 'center' ? 'по центру' : 'внутри'} · ${e.fill === 'gradient' ? e.gradient?.name || 'Градиент' : e.color}`
     }
     if (listKey === 'shadows' || listKey === 'innerShadows') {
       const e = styles[listKey][i]
@@ -398,11 +399,75 @@ export function LayerStyleDialog({
                 <option value="center">По центру</option>
                 <option value="inside">Внутри</option>
               </Select>
-              <ColorField
-                label="Цвет обводки слоя"
-                value={stroke.color}
-                onChange={(color) => patchItem({ color, enabled: true })}
-              />
+              <Select
+                aria-label="Тип заливки обводки"
+                value={stroke.fill}
+                onChange={(e) =>
+                  patchItem({
+                    fill: e.target.value,
+                    enabled: true,
+                    ...(e.target.value === 'gradient' && !stroke.gradient
+                      ? { gradient: defaultGradientOverlayGradient() }
+                      : {}),
+                  })
+                }
+              >
+                <option value="color">Цвет</option>
+                <option value="gradient">Градиент</option>
+              </Select>
+              {stroke.fill === 'color' ? (
+                <ColorField
+                  label="Цвет обводки слоя"
+                  value={stroke.color}
+                  onChange={(color) => patchItem({ color, enabled: true })}
+                />
+              ) : (
+                <>
+                  {stroke.gradient && (
+                    <GradientDefinitionEditor
+                      definition={stroke.gradient}
+                      onChange={(gradient) => patchItem({ gradient, enabled: true })}
+                      onFinish={() => {}}
+                    />
+                  )}
+                  <Select
+                    aria-label="Стиль градиента обводки"
+                    value={stroke.gradientShape}
+                    onChange={(e) => patchItem({ gradientShape: e.target.value, enabled: true })}
+                  >
+                    <option value="linear">Линейный</option>
+                    <option value="radial">Радиальный</option>
+                    <option value="reflected">Отражённый</option>
+                    <option value="angle">Угловой</option>
+                    <option value="diamond">Ромб</option>
+                  </Select>
+                  <Slider
+                    label="Угол градиента обводки"
+                    value={stroke.gradientAngle}
+                    max={360}
+                    suffix="°"
+                    onChange={(gradientAngle) => patchItem({ gradientAngle, enabled: true })}
+                  />
+                  <Slider
+                    label="Масштаб градиента обводки"
+                    value={stroke.gradientScale * 100}
+                    min={10}
+                    max={400}
+                    suffix="%"
+                    onChange={(v) => patchItem({ gradientScale: v / 100, enabled: true })}
+                  />
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={stroke.gradientReverse}
+                      onChange={(e) =>
+                        patchItem({ gradientReverse: e.target.checked, enabled: true })
+                      }
+                    />
+                    Обратить градиент обводки
+                  </label>
+                </>
+              )}
               <Slider
                 label="Непрозрачность обводки"
                 value={stroke.opacity * 100}
@@ -496,6 +561,25 @@ export function LayerStyleDialog({
                 definition={gradientItem.gradient}
                 onChange={(gradient) => patchItem({ gradient, enabled: true })}
                 onFinish={() => {}}
+              />
+              <Select
+                aria-label="Стиль градиента наложения"
+                value={gradientItem.shape}
+                onChange={(e) => patchItem({ shape: e.target.value, enabled: true })}
+              >
+                <option value="linear">Линейный</option>
+                <option value="radial">Радиальный</option>
+                <option value="reflected">Отражённый</option>
+                <option value="angle">Угловой</option>
+                <option value="diamond">Ромб</option>
+              </Select>
+              <Slider
+                label="Масштаб градиента"
+                value={gradientItem.scale * 100}
+                min={10}
+                max={400}
+                suffix="%"
+                onChange={(v) => patchItem({ scale: v / 100, enabled: true })}
               />
               <Slider
                 label="Угол градиента"
