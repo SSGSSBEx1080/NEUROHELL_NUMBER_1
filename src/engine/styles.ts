@@ -12,6 +12,7 @@ import {
 import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } from './patterns'
 import { applyBevelToPixels } from './bevel'
 import { applySatinToPixels } from './satin'
+import { applyOverlayBlendToPixels } from './overlayBlend'
 import {
   buildContourAlphaLut,
   isLinearEffectContour,
@@ -207,6 +208,8 @@ const BLEND_MODES: BlendMode[] = [
 ]
 const blendMode = (v: unknown, fallback: BlendMode): BlendMode =>
   BLEND_MODES.includes(v as BlendMode) ? (v as BlendMode) : fallback
+const optionalBlendMode = (v: unknown): BlendMode | undefined =>
+  BLEND_MODES.includes(v as BlendMode) ? (v as BlendMode) : undefined
 
 const GRADIENT_SHAPES: StyleGradientShape[] = ['linear', 'radial', 'reflected', 'angle', 'diamond']
 export const parseGradientShape = (v: unknown, fallback: StyleGradientShape): StyleGradientShape =>
@@ -285,6 +288,7 @@ function parseOverlay(input: unknown): ColorOverlayStyle {
     enabled: v.enabled === true,
     color: color(v.color, d.color),
     opacity: percent(v.opacity, d.opacity),
+    blendMode: optionalBlendMode(v.blendMode),
   }
 }
 function parseGradientOverlay(input: unknown): GradientOverlayStyle {
@@ -315,6 +319,7 @@ function parseGradientOverlay(input: unknown): GradientOverlayStyle {
     angle: num(v.angle, d.angle, -180, 360),
     opacity: percent(v.opacity, d.opacity),
     reverse: v.reverse === true,
+    blendMode: optionalBlendMode(v.blendMode),
   }
 }
 function parsePatternOverlay(input: unknown): PatternOverlayStyle {
@@ -326,6 +331,7 @@ function parsePatternOverlay(input: unknown): PatternOverlayStyle {
     pattern: parsePatternDefinition(v.pattern) || d.pattern,
     scale: num(v.scale, d.scale, 0.05, 10),
     opacity: percent(v.opacity, d.opacity),
+    blendMode: optionalBlendMode(v.blendMode),
     phaseX: num(v.phaseX, d.phaseX, -10000, 10000),
     phaseY: num(v.phaseY, d.phaseY, -10000, 10000),
     align: v.align !== false,
@@ -718,6 +724,25 @@ export function renderStyled(
       c = content.getContext('2d')!
     c.drawImage(base, 0, 0)
     c.globalCompositeOperation = 'source-atop'
+    const applyOverlayFill = (
+      fill: HTMLCanvasElement,
+      mode: BlendMode | undefined,
+      opacity: number,
+    ) => {
+      if (!mode || mode === 'source-over') {
+        c.globalAlpha = opacity
+        c.drawImage(fill, 0, 0)
+        c.globalAlpha = 1
+        return
+      }
+      const contentPixels = c.getImageData(0, 0, w, h)
+      const fillPixels = fill.getContext('2d')!.getImageData(0, 0, w, h)
+      applyOverlayBlendToPixels(contentPixels, fillPixels, mode, opacity)
+      c.putImageData(contentPixels, 0, 0)
+    }
+    // Photoshop's fixed overlay stack is Pattern at the bottom, then
+    // Gradient, then Color on top. Multiple instances within each family
+    // retain this dialog's existing list order.
     if (s.pattern.enabled && s.pattern.opacity > 0) {
       const fill = surface(w, h)
       paintPatternFill(
@@ -732,17 +757,10 @@ export function renderStyled(
         -bounds.y,
         scale,
       )
-      c.globalAlpha = s.pattern.opacity
-      c.drawImage(fill, 0, 0)
+      applyOverlayFill(fill, s.pattern.blendMode, s.pattern.opacity)
     }
-    for (const overlay of [...s.overlays].reverse())
-      if (overlay.enabled) {
-        c.globalAlpha = overlay.opacity
-        c.fillStyle = overlay.color
-        c.fillRect(0, 0, w, h)
-      }
     for (const item of [...s.gradients].reverse())
-      if (item.enabled) {
+      if (item.enabled && item.opacity > 0) {
         const fill = surface(w, h)
         paintGradientShape(
           fill.getContext('2d')!,
@@ -754,8 +772,22 @@ export function renderStyled(
           item.scale,
           item.reverse,
         )
-        c.globalAlpha = item.opacity
-        c.drawImage(fill, 0, 0)
+        applyOverlayFill(fill, item.blendMode, item.opacity)
+      }
+    for (const overlay of [...s.overlays].reverse())
+      if (overlay.enabled && overlay.opacity > 0) {
+        if (!overlay.blendMode || overlay.blendMode === 'source-over') {
+          c.globalAlpha = overlay.opacity
+          c.fillStyle = overlay.color
+          c.fillRect(0, 0, w, h)
+          c.globalAlpha = 1
+        } else {
+          const fill = surface(w, h)
+          const fillContext = fill.getContext('2d')!
+          fillContext.fillStyle = overlay.color
+          fillContext.fillRect(0, 0, w, h)
+          applyOverlayFill(fill, overlay.blendMode, overlay.opacity)
+        }
       }
     c.globalAlpha = 1
     // Fill affects only the content; effects before/after keep their own opacity.

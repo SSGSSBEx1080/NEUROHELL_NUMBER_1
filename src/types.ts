@@ -294,6 +294,8 @@ export interface ColorOverlayStyle {
   enabled: boolean
   color: string
   opacity: number
+  /** Undefined keeps legacy Normal without changing old project objects. */
+  blendMode?: BlendMode
 }
 export interface GradientOverlayStyle {
   enabled: boolean
@@ -304,6 +306,8 @@ export interface GradientOverlayStyle {
   angle: number
   opacity: number
   reverse: boolean
+  /** Undefined keeps legacy Normal without changing old project objects. */
+  blendMode?: BlendMode
 }
 export type BevelStyleKind = 'outer' | 'inner' | 'emboss' | 'pillow' | 'stroke'
 export type BevelTechniqueKind = 'smooth' | 'chiselHard' | 'chiselSoft'
@@ -348,6 +352,8 @@ export interface PatternOverlayStyle {
   /** Tile scale factor: 1 = 100%. */
   scale: number
   opacity: number
+  /** Undefined keeps legacy Normal without changing old project objects. */
+  blendMode?: BlendMode
   /** Tile offset in layer/document pixels, depending on `align`. */
   phaseX: number
   phaseY: number

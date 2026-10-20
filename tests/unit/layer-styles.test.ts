@@ -26,13 +26,14 @@ describe('multi-instance layer styles in native PSD effects', () => {
       innerShadows: [{ enabled: true, color: '#000000', blur: 5, x: 0, y: 3, opacity: 0.5 }],
       glow: { enabled: true, color: '#b6a3ff', blur: 9, opacity: 0.6 },
       innerGlow: { enabled: true, color: '#ffffff', blur: 7, opacity: 0.5 },
-      overlays: [{ enabled: true, color: '#123456', opacity: 0.25 }],
+      overlays: [{ enabled: true, color: '#123456', opacity: 0.25, blendMode: 'multiply' }],
       gradients: [
         {
           enabled: true,
           angle: 30,
           opacity: 0.9,
           reverse: true,
+          blendMode: 'screen',
           gradient: {
             name: 'Три точки',
             kind: 'solid',
@@ -61,9 +62,11 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(layer.effects?.dropShadow).toHaveLength(2)
     expect(layer.effects?.innerShadow).toHaveLength(1)
     expect(layer.effects?.solidFill).toHaveLength(1)
+    expect(layer.effects?.solidFill?.[0].blendMode).toBe('multiply')
     expect(layer.effects?.outerGlow?.enabled).toBe(true)
     expect(layer.effects?.innerGlow?.enabled).toBe(true)
     const gradient = layer.effects?.gradientOverlay?.[0]
+    expect(gradient?.blendMode).toBe('screen')
     expect(gradient?.reverse).toBe(true)
     if (!gradient?.gradient || gradient.gradient.type !== 'solid') throw new Error('solid expected')
     expect(gradient.gradient.colorStops).toHaveLength(3)
@@ -80,6 +83,8 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.shadows[0].y).toBeCloseTo(5, 0)
     expect(back.innerShadows).toHaveLength(1)
     expect(back.innerGlow.enabled).toBe(true)
+    expect(back.overlays[0].blendMode).toBe('multiply')
+    expect(back.gradients[0].blendMode).toBe('screen')
     expect(back.gradients[0].gradient.stops).toHaveLength(3)
     expect(back.gradients[0].reverse).toBe(true)
   })
@@ -173,6 +178,7 @@ describe('multi-instance layer styles in native PSD effects', () => {
         pattern,
         scale: 1.5,
         opacity: 0.8,
+        blendMode: 'difference',
         phaseX: 3,
         phaseY: -2,
         align: false,
@@ -203,6 +209,7 @@ describe('multi-instance layer styles in native PSD effects', () => {
     ])
     expect(layer.effects?.patternOverlay).toMatchObject({
       enabled: true,
+      blendMode: 'difference',
       pattern: { id: pattern.id, name: pattern.name },
       phase: { x: 3, y: -2 },
       align: false,
@@ -223,6 +230,7 @@ describe('multi-instance layer styles in native PSD effects', () => {
       enabled: true,
       scale: 1.5,
       opacity: 0.8,
+      blendMode: 'difference',
       phaseX: 3,
       phaseY: -2,
       align: false,

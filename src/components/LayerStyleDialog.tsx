@@ -115,17 +115,17 @@ const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'overlays',
     name: 'Наложение цвета',
-    note: 'Цвет поверх содержимого, без изменения пикселей.',
+    note: 'Верхнее наложение внутри альфы слоя: собственный цвет, режим смешивания и непрозрачность. Исходные пиксели слоя не переписываются.',
   },
   {
     id: 'gradients',
     name: 'Градиент',
-    note: 'Полные градиенты: цвет, прозрачность, середины и шум.',
+    note: 'Среднее наложение: полные градиенты с цветом, прозрачностью, серединами, шумом и режимом смешивания.',
   },
   {
     id: 'pattern',
     name: 'Узор',
-    note: 'Повторяющаяся плитка под наложением цвета и градиентами: процедурные узоры и плитки-изображения, масштаб, фаза и связь со слоем.',
+    note: 'Нижнее наложение: повторяющаяся плитка под градиентами и цветом, с режимом смешивания, масштабом, фазой и связью со слоем.',
   },
   {
     id: 'bevel',
@@ -152,6 +152,30 @@ const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): numb
   if (tab === 'library') return 0
   if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
+}
+
+function EffectBlendModeSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value?: BlendMode
+  onChange: (value: BlendMode) => void
+}) {
+  return (
+    <Select
+      aria-label={label}
+      value={value || 'source-over'}
+      onChange={(e) => onChange(e.target.value as BlendMode)}
+    >
+      {BEVEL_BLEND_MODES.map(([mode, text]) => (
+        <option key={mode} value={mode}>
+          {text}
+        </option>
+      ))}
+    </Select>
+  )
 }
 
 function ContourControls({
@@ -1007,6 +1031,11 @@ export function LayerStyleDialog({
                 value={overlay.color}
                 onChange={(color) => patchItem({ color, enabled: true })}
               />
+              <EffectBlendModeSelect
+                label="Режим наложения цвета"
+                value={overlay.blendMode}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
+              />
               <Slider
                 label="Непрозрачность цвета"
                 value={overlay.opacity * 100}
@@ -1037,6 +1066,11 @@ export function LayerStyleDialog({
                 <option value="angle">Угловой</option>
                 <option value="diamond">Ромб</option>
               </Select>
+              <EffectBlendModeSelect
+                label="Режим наложения градиента"
+                value={gradientItem.blendMode}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
+              />
               <Slider
                 label="Масштаб градиента"
                 value={gradientItem.scale * 100}
@@ -1074,6 +1108,11 @@ export function LayerStyleDialog({
                 definition={styles.pattern.pattern}
                 label="Узор наложения"
                 onChange={(pattern) => patchSingle('pattern', { pattern, enabled: true })}
+              />
+              <EffectBlendModeSelect
+                label="Режим наложения узора"
+                value={styles.pattern.blendMode}
+                onChange={(blendMode) => patchSingle('pattern', { blendMode, enabled: true })}
               />
               <Slider
                 label="Масштаб узора"

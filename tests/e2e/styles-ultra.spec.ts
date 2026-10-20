@@ -187,6 +187,31 @@ test('gradient-filled stroke and radial gradient overlay render real shapes', as
       return p[3] === 255 && p[0] > p[2]
     })
     .toBe(true)
+
+  // Screen blends the violet radial centre with the #808080 shape instead of
+  // replacing it: (182,163,255) over (128,128,128) becomes (219,209,255).
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByLabel('Режим наложения градиента').selectOption('screen')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([219, 209, 255, 255])
+
+  // Color Overlay is above Gradient Overlay. Difference with white therefore
+  // inverts the already-screened centre to (36,46,0), rather than being
+  // screened away by a gradient incorrectly painted after it.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Наложение цвета', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Цвет наложения').fill('#ffffff')
+  await page.getByLabel('Режим наложения цвета').selectOption('difference')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([36, 46, 0, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.gradientOverlay?.[0].blendMode).toBe('screen')
+  expect(layer?.effects?.solidFill?.[0].blendMode).toBe('difference')
 })
 
 test('pattern overlay and pattern-filled stroke render tiles and export native Patt resources', async ({
@@ -210,14 +235,17 @@ test('pattern overlay and pattern-filled stroke render tiles and export native P
   await expect.poll(async () => await pixel(page, 72, 54)).toEqual(foreground)
   await expect.poll(async () => await pixel(page, 80, 54)).toEqual(background)
 
-  // A +8 px phase shifts the scaled tile by exactly one quadrant.
+  // A +8 px phase shifts the scaled tile by exactly one quadrant. Switching
+  // the same edit to Multiply proves the pattern now blends with the gray
+  // shape: foreground/background become (91,82,128) and (18,16,28).
   await page.locator('.style-open-button').click()
   await page.getByRole('button', { name: 'Узор', exact: true }).click()
   await page.getByRole('spinbutton', { name: 'Фаза узора X' }).fill('8')
   await page.getByRole('spinbutton', { name: 'Фаза узора X' }).press('Enter')
+  await page.getByLabel('Режим наложения узора').selectOption('multiply')
   await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
-  await expect.poll(async () => await pixel(page, 72, 54)).toEqual(background)
-  await expect.poll(async () => await pixel(page, 80, 54)).toEqual(foreground)
+  await expect.poll(async () => await pixel(page, 72, 54)).toEqual([18, 16, 28, 255])
+  await expect.poll(async () => await pixel(page, 80, 54)).toEqual([91, 82, 128, 255])
 
   // An inside stroke gets its own differently coloured checker tile.
   await page.locator('.style-open-button').click()
@@ -237,6 +265,7 @@ test('pattern overlay and pattern-filled stroke render tiles and export native P
   const bytes = await exportPsd(page)
   const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
   const layer = (parsed.children || []).find((l) => l.effects?.patternOverlay)
+  expect(layer?.effects?.patternOverlay?.blendMode).toBe('multiply')
   expect(layer?.effects?.patternOverlay?.scale).toBeCloseTo(0.5, 2)
   expect(layer?.effects?.patternOverlay?.phase).toEqual({ x: 8, y: 0 })
   expect(layer?.effects?.stroke?.[0].fillType).toBe('pattern')

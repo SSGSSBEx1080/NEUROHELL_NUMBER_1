@@ -414,6 +414,19 @@ function patternInfoFromPixels(
     data: new Uint8Array(pixels.data as ArrayLike<number>),
   }
 }
+function overlayBlendModeFromPsd(
+  value: string | undefined,
+  label: string,
+  warn?: (message: string) => void,
+): BlendMode | undefined {
+  if (!value) return undefined
+  const mapped = toCanvas[value]
+  if (!mapped)
+    warn?.(
+      `Режим наложения ${label} «${value}» из PSD не воспроизводится: эффект открыт с обычным режимом.`,
+    )
+  return mapped
+}
 function importStyles(
   src: PsdLayer,
   patternDefinitions?: Map<string, PatternDefinition>,
@@ -510,6 +523,7 @@ function importStyles(
         enabled: true,
         color: hex(overlay.color),
         opacity: overlay.opacity ?? 1,
+        blendMode: overlayBlendModeFromPsd(overlay.blendMode, 'наложения цвета', warn),
       }))
     if (overlays.length) s.overlays = overlays
     const gradients = (f.gradientOverlay || [])
@@ -527,6 +541,7 @@ function importStyles(
                 angle: -(item.angle || 0),
                 opacity: item.opacity ?? 1,
                 reverse: item.reverse === true,
+                blendMode: overlayBlendModeFromPsd(item.blendMode, 'наложения градиента', warn),
               },
             ]
           : []
@@ -541,6 +556,7 @@ function importStyles(
           pattern,
           scale: Math.min(10, Math.max(0.05, patternOverlay.scale ?? 1)),
           opacity: patternOverlay.opacity ?? 1,
+          blendMode: overlayBlendModeFromPsd(patternOverlay.blendMode, 'наложения узора', warn),
           phaseX: Math.min(10000, Math.max(-10000, patternOverlay.phase?.x || 0)),
           phaseY: Math.min(10000, Math.max(-10000, patternOverlay.phase?.y || 0)),
           align: patternOverlay.align !== false,
@@ -710,7 +726,7 @@ function exportStyles(
       enabled: true,
       color: rgb(overlay.color),
       opacity: overlay.opacity,
-      blendMode: 'normal' as const,
+      blendMode: toPsd[overlay.blendMode || 'source-over'],
     }))
   const gradients = s.gradients.filter((e) => e.enabled)
   if (gradients.length)
@@ -719,7 +735,7 @@ function exportStyles(
       type: item.shape,
       angle: -item.angle,
       opacity: item.opacity,
-      blendMode: 'normal',
+      blendMode: toPsd[item.blendMode || 'source-over'],
       scale: item.scale,
       align: true,
       reverse: item.reverse,
@@ -728,7 +744,7 @@ function exportStyles(
   if (s.pattern.enabled)
     effects.patternOverlay = {
       enabled: true,
-      blendMode: 'normal',
+      blendMode: toPsd[s.pattern.blendMode || 'source-over'],
       opacity: s.pattern.opacity,
       scale: s.pattern.scale,
       pattern: patternRef(s.pattern.pattern),
