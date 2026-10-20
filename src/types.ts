@@ -257,6 +257,15 @@ export interface StrokeEffectStyle {
   position: 'outside' | 'inside' | 'center'
   opacity: number
 }
+export interface EffectContourPoint {
+  /** PSD shaping-curve coordinates, 0..255 on both axes. */
+  x: number
+  y: number
+}
+export interface EffectContourDefinition {
+  name: string
+  points: EffectContourPoint[]
+}
 export interface ShadowEffectStyle {
   enabled: boolean
   color: string
@@ -264,12 +273,18 @@ export interface ShadowEffectStyle {
   x: number
   y: number
   opacity: number
+  contour?: EffectContourDefinition
+  antialiased?: boolean
 }
 export interface GlowEffectStyle {
   enabled: boolean
   color: string
   blur: number
   opacity: number
+  contour?: EffectContourDefinition
+  antialiased?: boolean
+  /** Contour domain fraction: 0.5 is the neutral PSD default in this engine. */
+  range?: number
 }
 export interface ColorOverlayStyle {
   enabled: boolean
@@ -307,6 +322,8 @@ export interface BevelEffectStyle {
   shadowColor: string
   shadowBlendMode: BlendMode
   shadowOpacity: number
+  glossContour?: EffectContourDefinition
+  antialiasGloss?: boolean
 }
 export interface SatinEffectStyle {
   enabled: boolean
@@ -319,6 +336,7 @@ export interface SatinEffectStyle {
   size: number
   invert: boolean
   antialiased: boolean
+  contour?: EffectContourDefinition
 }
 export interface PatternOverlayStyle {
   enabled: boolean

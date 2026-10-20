@@ -1,4 +1,5 @@
 import { blendCorrection } from './adjustmentMath'
+import { buildContourAlphaLut, isLinearEffectContour } from './contours'
 import { rgbFromHex } from './gradientRamp'
 import type { RgbaPixelData } from './bevel'
 import type { SatinEffectStyle } from '../types'
@@ -79,10 +80,10 @@ function sampleField(
 /**
  * Satin mask before opacity. The layer alpha is blurred by Size/2, sampled
  * half the Distance before and after each pixel along the PSD angle axis,
- * and the absolute difference of those two copies becomes the interior
- * shading mask. Invert flips that mask. This is an independent model of the
- * documented two-copy behaviour with a linear contour, not Adobe's code or
- * a claim of pixel-identical contour handling.
+ * and the absolute difference of those two copies is shaped by the contour.
+ * Invert flips the contoured result (equivalently, it flips the contour).
+ * This is an independent model of the documented two-copy behaviour, not
+ * Adobe's code or a claim of pixel-identical contour handling.
  */
 export function satinMaskField(
   base: RgbaPixelData,
@@ -97,6 +98,9 @@ export function satinMaskField(
   const halfDistance = (effect.distance * scale) / 2
   const dx = Math.cos(angle) * halfDistance
   const dy = -Math.sin(angle) * halfDistance
+  const contourLut = isLinearEffectContour(effect.contour)
+    ? undefined
+    : buildContourAlphaLut(effect.contour, effect.antialiased)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
@@ -104,7 +108,8 @@ export function satinMaskField(
       const before = sampleField(blurred, width, height, x - dx, y - dy, effect.antialiased)
       const after = sampleField(blurred, width, height, x + dx, y + dy, effect.antialiased)
       const difference = clamp01(Math.abs(before - after))
-      mask[i] = effect.invert ? 1 - difference : difference
+      const shaped = contourLut ? contourLut[Math.round(difference * 255)] / 255 : difference
+      mask[i] = effect.invert ? 1 - shaped : shaped
     }
   }
   return mask

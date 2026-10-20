@@ -13,10 +13,17 @@ import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } f
 import { applyBevelToPixels } from './bevel'
 import { applySatinToPixels } from './satin'
 import {
+  buildContourAlphaLut,
+  isLinearEffectContour,
+  linearEffectContour,
+  parseEffectContour,
+} from './contours'
+import {
   MAX_STYLE_INSTANCES,
   type BevelEffectStyle,
   type BlendMode,
   type ColorOverlayStyle,
+  type EffectContourDefinition,
   type GlowEffectStyle,
   type GradientOverlayStyle,
   type Layer,
@@ -68,6 +75,8 @@ export const defaultShadowStyle = (): ShadowEffectStyle => ({
   x: 0,
   y: 12,
   opacity: 0.55,
+  contour: linearEffectContour(),
+  antialiased: false,
 })
 export const defaultInnerShadowStyle = (): ShadowEffectStyle => ({
   enabled: false,
@@ -76,18 +85,26 @@ export const defaultInnerShadowStyle = (): ShadowEffectStyle => ({
   x: 0,
   y: 6,
   opacity: 0.5,
+  contour: linearEffectContour(),
+  antialiased: false,
 })
 export const defaultGlowStyle = (): GlowEffectStyle => ({
   enabled: false,
   color: '#b6a3ff',
   blur: 20,
   opacity: 0.7,
+  contour: linearEffectContour(),
+  antialiased: false,
+  range: 0.5,
 })
 export const defaultInnerGlowStyle = (): GlowEffectStyle => ({
   enabled: false,
   color: '#ffffff',
   blur: 16,
   opacity: 0.65,
+  contour: linearEffectContour(),
+  antialiased: false,
+  range: 0.5,
 })
 export const defaultOverlayStyle = (): ColorOverlayStyle => ({
   enabled: false,
@@ -129,6 +146,8 @@ export const defaultBevelStyle = (): BevelEffectStyle => ({
   shadowColor: '#000000',
   shadowBlendMode: 'multiply',
   shadowOpacity: 0.75,
+  glossContour: linearEffectContour(),
+  antialiasGloss: false,
 })
 export const defaultSatinStyle = (): SatinEffectStyle => ({
   enabled: false,
@@ -140,6 +159,7 @@ export const defaultSatinStyle = (): SatinEffectStyle => ({
   size: 14,
   invert: true,
   antialiased: false,
+  contour: linearEffectContour(),
 })
 export function defaultStyles(): LayerStyles {
   return {
@@ -239,6 +259,8 @@ function parseShadow(input: unknown, inner = false): ShadowEffectStyle {
     x: num(v.x, d.x, -STYLE_LIMITS.offset, STYLE_LIMITS.offset),
     y: num(v.y, d.y, -STYLE_LIMITS.offset, STYLE_LIMITS.offset),
     opacity: percent(v.opacity, d.opacity),
+    contour: parseEffectContour(v.contour, d.contour),
+    antialiased: v.antialiased === true,
   }
 }
 function parseGlow(input: unknown, inner = false): GlowEffectStyle {
@@ -250,6 +272,9 @@ function parseGlow(input: unknown, inner = false): GlowEffectStyle {
     color: color(v.color, d.color),
     blur: num(v.blur, d.blur, 0, STYLE_LIMITS.blur),
     opacity: percent(v.opacity, d.opacity),
+    contour: parseEffectContour(v.contour, d.contour),
+    antialiased: v.antialiased === true,
+    range: num(v.range, d.range ?? 0.5, 0.01, 1),
   }
 }
 function parseOverlay(input: unknown): ColorOverlayStyle {
@@ -331,6 +356,8 @@ function parseBevel(input: unknown): BevelEffectStyle {
     shadowColor: color(v.shadowColor, d.shadowColor),
     shadowBlendMode: blendMode(v.shadowBlendMode, d.shadowBlendMode),
     shadowOpacity: percent(v.shadowOpacity, d.shadowOpacity),
+    glossContour: parseEffectContour(v.glossContour, d.glossContour),
+    antialiasGloss: v.antialiasGloss === true,
   }
 }
 function parseSatin(input: unknown): SatinEffectStyle {
@@ -347,6 +374,7 @@ function parseSatin(input: unknown): SatinEffectStyle {
     size: num(v.size, d.size, 0, STYLE_LIMITS.satinSize),
     invert: v.invert !== false,
     antialiased: v.antialiased === true,
+    contour: parseEffectContour(v.contour, d.contour),
   }
 }
 const list = <T>(value: unknown, legacy: unknown, parse: (v: unknown) => T, make: () => T): T[] => {
@@ -498,6 +526,27 @@ export function clearStyleCache() {
 }
 
 /**
+ * Remaps an effect surface's alpha through its contour. A linear contour at
+ * the neutral 50% range is exactly the pre-contour rendering, so it stays on
+ * the old byte-identical Canvas path and pays no pixel-pass cost.
+ */
+function applyContourAlpha(
+  canvas: HTMLCanvasElement,
+  contour: EffectContourDefinition | undefined,
+  antialiased = false,
+  range = 0.5,
+) {
+  const safeRange = Math.max(0.01, Math.min(1, Number.isFinite(range) ? range : 0.5))
+  if (isLinearEffectContour(contour) && Math.abs(safeRange - 0.5) <= 0.0001) return
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const lut = buildContourAlphaLut(contour, antialiased, safeRange)
+  for (let i = 3; i < pixels.data.length; i += 4) pixels.data[i] = lut[pixels.data[i]]
+  ctx.putImageData(pixels, 0, 0)
+}
+
+/**
  * Fills a w×h context with a gradient in one of the PSD gradient styles.
  * Linear keeps the historical geometry (projected half-length from the
  * centre, multiplied by `scale`); radial reaches the far corners at t=1
@@ -641,6 +690,9 @@ export function renderStyled(
       x: number
       y: number
       opacity: number
+      contour?: EffectContourDefinition
+      antialiased?: boolean
+      range?: number
     }) => {
       const c = surface(w, h),
         x = c.getContext('2d')!
@@ -654,6 +706,7 @@ export function renderStyled(
       x.shadowOffsetY = 0
       x.globalCompositeOperation = 'destination-out'
       x.drawImage(base, 0, 0)
+      applyContourAlpha(c, effect.contour, effect.antialiased, effect.range)
       o.globalAlpha = effect.opacity
       o.drawImage(c, 0, 0)
       o.globalAlpha = 1
@@ -728,6 +781,9 @@ export function renderStyled(
       x: number
       y: number
       opacity: number
+      contour?: EffectContourDefinition
+      antialiased?: boolean
+      range?: number
     }) => {
       const inverted = surface(w, h),
         ix = inverted.getContext('2d')!
@@ -745,6 +801,7 @@ export function renderStyled(
       bx.globalCompositeOperation = 'source-in'
       bx.fillStyle = effect.color
       bx.fillRect(0, 0, w, h)
+      applyContourAlpha(blurred, effect.contour, effect.antialiased, effect.range)
       o.globalAlpha = effect.opacity
       o.drawImage(blurred, 0, 0)
       o.globalAlpha = 1

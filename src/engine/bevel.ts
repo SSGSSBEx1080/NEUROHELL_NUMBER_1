@@ -1,4 +1,5 @@
 import { blendCorrection } from './adjustmentMath'
+import { buildContourAlphaLut, isLinearEffectContour } from './contours'
 import { rgbFromHex } from './gradientRamp'
 import type { BevelEffectStyle, BevelTechniqueKind } from '../types'
 
@@ -222,8 +223,10 @@ function nearestInsideIndices(
 /**
  * Own distance-field bevel: a height profile is built from the signed alpha
  * distance, normals are derived from it and lit by the PSD angle/altitude.
- * This is an independent approximation of the documented controls, not a
- * reproduction of Adobe's proprietary rasteriser or gloss contours.
+ * The gloss contour remaps the signed shadow↔highlight response (left/bottom
+ * is shadow, right/top is highlight, as in a shaping curve). This remains an
+ * independent approximation of the documented controls, not a reproduction
+ * of Adobe's proprietary rasteriser.
  */
 export function applyBevelToPixels(
   output: RgbaPixelData,
@@ -271,6 +274,9 @@ export function applyBevelToPixels(
   const lightZ = Math.sin(altitude)
   const slope = Math.max(0.001, effect.depth) * size
   const gain = 1.75
+  const glossLut = isLinearEffectContour(effect.glossContour)
+    ? undefined
+    : buildContourAlphaLut(effect.glossContour, effect.antialiasGloss)
   const highlight = rgbFromHex(effect.highlightColor)
   const shadow = rgbFromHex(effect.shadowColor)
   const blended = [0, 0, 0]
@@ -298,8 +304,14 @@ export function applyBevelToPixels(
       const inverse = 1 / Math.hypot(nx, ny, 1)
       const diffuse = (nx * lightX + ny * lightY + lightZ) * inverse
       const delta = diffuse - lightZ
-      const highlightAmount = clamp01(delta * gain) * clamp01(effect.highlightOpacity)
-      const shadowAmount = clamp01(-delta * gain) * clamp01(effect.shadowOpacity)
+      let highlightAmount = clamp01(delta * gain) * clamp01(effect.highlightOpacity)
+      let shadowAmount = clamp01(-delta * gain) * clamp01(effect.shadowOpacity)
+      if (glossLut) {
+        const response = Math.max(-1, Math.min(1, delta * gain))
+        const shaped = glossLut[Math.round(((response + 1) / 2) * 255)] / 255
+        highlightAmount = clamp01(shaped * 2 - 1) * clamp01(effect.highlightOpacity)
+        shadowAmount = clamp01(1 - shaped * 2) * clamp01(effect.shadowOpacity)
+      }
       const sourceIndex = inside ? i : (nearest?.[i] ?? -1)
       if (sourceIndex < 0) continue
       if (inside && highlightAmount <= 0.0001 && shadowAmount <= 0.0001) continue

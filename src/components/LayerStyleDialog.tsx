@@ -22,6 +22,7 @@ import {
   type BlendIfQuad,
   type BlendIfRanges,
   type BlendMode,
+  type EffectContourDefinition,
   type Layer,
   type LayerStyles,
 } from '../types'
@@ -45,6 +46,13 @@ import {
   scaleLayerStyles,
 } from '../engine/styles'
 import { gradientCss } from '../engine/gradientRamp'
+import {
+  contourWithEditorEndpoints,
+  effectContourPreset,
+  effectContourPresets,
+  matchingContourPreset,
+  parseEffectContour,
+} from '../engine/contours'
 import { defaultPatternDefinition, prepareStylePatterns } from '../engine/patterns'
 import {
   builtinStylePresets,
@@ -96,7 +104,7 @@ const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'satin',
     name: 'Атлас (Satin)',
-    note: 'Внутренняя атласная вуаль из двух смещённых и размытых копий альфы. Собственный алгоритм с линейным контуром; нелинейные контуры — следующий этап.',
+    note: 'Внутренняя атласная вуаль из двух смещённых и размытых копий альфы. Собственный алгоритм; контур формирует спад вуали, инверсия переворачивает результат контура.',
   },
   {
     id: 'overlays',
@@ -116,7 +124,7 @@ const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'bevel',
     name: 'Фаска и тиснение',
-    note: 'Собственное поле высоты по расстоянию до альфа-края: пять стилей, техника, глубина, смягчение и свет. Текстура и нелинейный контур глянца пока не воспроизводятся.',
+    note: 'Собственное поле высоты по расстоянию до альфа-края: пять стилей, техника, глубина, смягчение, свет и контур глянца. Текстура фаски и отдельный элемент Contour (сечение фаски) пока не воспроизводятся.',
   },
   {
     id: 'blendIf',
@@ -138,6 +146,92 @@ const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): numb
   if (tab === 'library') return 0
   if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
+}
+
+function ContourControls({
+  title,
+  selectLabel,
+  value,
+  antialiased,
+  antialiasLabel,
+  range,
+  rangeLabel,
+  onContour,
+  onAntialiased,
+  onRange,
+}: {
+  title: string
+  selectLabel: string
+  value?: EffectContourDefinition
+  antialiased?: boolean
+  antialiasLabel?: string
+  range?: number
+  rangeLabel?: string
+  onContour: (contour: EffectContourDefinition) => void
+  onAntialiased?: (value: boolean) => void
+  onRange?: (value: number) => void
+}) {
+  const current = parseEffectContour(value)
+  const preset = matchingContourPreset(current)
+  const selectedName = preset?.name || '__custom__'
+  const previewPoints = contourWithEditorEndpoints(current)
+    .points.map((point) => `${(point.x / 255) * 100},${54 - (point.y / 255) * 52}`)
+    .join(' ')
+  return (
+    <div className="contour-controls">
+      <span className="panel-subtitle">{title}</span>
+      <div className="contour-picker-row">
+        <svg
+          className="contour-preview"
+          viewBox="0 0 100 56"
+          role="img"
+          aria-label={`Кривая контура: ${current.name}`}
+        >
+          <line x1="0" y1="28" x2="100" y2="28" />
+          <line x1="50" y1="0" x2="50" y2="56" />
+          <polyline points={previewPoints} />
+        </svg>
+        <Select
+          aria-label={selectLabel}
+          value={selectedName}
+          onChange={(e) => {
+            if (e.target.value !== '__custom__') onContour(effectContourPreset(e.target.value))
+          }}
+        >
+          {!preset && (
+            <option value="__custom__" disabled>
+              Из PSD: {current.name}
+            </option>
+          )}
+          {effectContourPresets.map((item) => (
+            <option key={item.name} value={item.name}>
+              {item.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {antialiasLabel && onAntialiased && (
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={antialiased === true}
+            onChange={(e) => onAntialiased(e.target.checked)}
+          />
+          {antialiasLabel}
+        </label>
+      )}
+      {rangeLabel && onRange && (
+        <Slider
+          label={rangeLabel}
+          value={Math.round((range ?? 0.5) * 100)}
+          min={1}
+          max={100}
+          suffix="%"
+          onChange={(v) => onRange(v / 100)}
+        />
+      )}
+    </div>
+  )
 }
 
 export function LayerStyleDialog({
@@ -590,6 +684,15 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchItem({ opacity: v / 100 })}
               />
+              <ContourControls
+                title="Контур спада тени"
+                selectLabel="Контур тени"
+                value={shadow.contour}
+                antialiased={shadow.antialiased}
+                antialiasLabel="Сглаживание контура тени"
+                onContour={(contour) => patchItem({ contour, enabled: true })}
+                onAntialiased={(antialiased) => patchItem({ antialiased, enabled: true })}
+              />
             </>
           )}
           {(tab === 'glow' || tab === 'innerGlow') && (
@@ -612,6 +715,22 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchSingle(tab, { opacity: v / 100 })}
               />
+              <ContourControls
+                title="Контур спада свечения"
+                selectLabel="Контур свечения"
+                value={styles[tab].contour}
+                antialiased={styles[tab].antialiased}
+                antialiasLabel="Сглаживание контура свечения"
+                range={styles[tab].range}
+                rangeLabel="Диапазон контура свечения"
+                onContour={(contour) => patchSingle(tab, { contour, enabled: true })}
+                onAntialiased={(antialiased) => patchSingle(tab, { antialiased, enabled: true })}
+                onRange={(range) => patchSingle(tab, { range, enabled: true })}
+              />
+              <p className="panel-note">
+                Диапазон ниже 50% делает спад жёстче и шире, выше 50% — короче и мягче. 50% — вся
+                кривая на обычном спаде свечения.
+              </p>
             </>
           )}
           {tab === 'satin' && (
@@ -660,6 +779,12 @@ export function LayerStyleDialog({
                 suffix=" px"
                 onChange={(size) => patchSingle('satin', { size, enabled: true })}
               />
+              <ContourControls
+                title="Контур атласа"
+                selectLabel="Контур атласа"
+                value={styles.satin.contour}
+                onContour={(contour) => patchSingle('satin', { contour, enabled: true })}
+              />
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -678,12 +803,13 @@ export function LayerStyleDialog({
                     patchSingle('satin', { antialiased: e.target.checked, enabled: true })
                   }
                 />
-                Сглаживание атласа (билинейная выборка)
+                Сглаживание атласа (выборка копий и контур)
               </label>
               <p className="panel-note">
                 Размер задаёт размытие альфы (радиус равен половине размера), дистанция — полный
-                разнос двух копий вдоль оси угла. Эффект остаётся внутри альфы слоя и не ослабляется
-                Fill.
+                разнос двух копий вдоль оси угла. Контур преобразует разность копий, а инверсия
+                переворачивает уже оконтуренный результат. Эффект остаётся внутри альфы слоя и не
+                ослабляется Fill.
               </p>
             </>
           )}
@@ -880,6 +1006,21 @@ export function LayerStyleDialog({
                 suffix="°"
                 onChange={(altitude) => patchSingle('bevel', { altitude, enabled: true })}
               />
+              <ContourControls
+                title="Контур глянца"
+                selectLabel="Контур глянца фаски"
+                value={styles.bevel.glossContour}
+                antialiased={styles.bevel.antialiasGloss}
+                antialiasLabel="Сглаживание контура глянца"
+                onContour={(glossContour) => patchSingle('bevel', { glossContour, enabled: true })}
+                onAntialiased={(antialiasGloss) =>
+                  patchSingle('bevel', { antialiasGloss, enabled: true })
+                }
+              />
+              <p className="panel-note">
+                Слева и снизу кривой глянца — тень фаски, справа и сверху — блик. Это не отдельный
+                PSD-элемент Contour, который задаёт само сечение фаски.
+              </p>
               <span className="panel-subtitle">Блик</span>
               <ColorField
                 label="Цвет блика фаски"

@@ -406,6 +406,99 @@ test('Satin shades opposite interior edges, inverts and exports natively', async
   expect(stripped?.effects?.satin?.distance?.value).toBe(20)
 })
 
+test('contours reshape shadow falloff and bevel gloss, then export every contour natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [80, 50], [220, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  const controls = page.locator('.style-controls')
+  await page.getByRole('button', { name: 'Тень', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('20')
+  await controls.getByLabel('Сдвиг X', { exact: true }).fill('50')
+  await controls.getByLabel('Сдвиг Y', { exact: true }).fill('0')
+  await controls.getByRole('slider', { name: 'Непрозрачность тени' }).fill('100')
+  await controls.getByLabel('Контур тени').selectOption('Конус')
+
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размер фаски' }).fill('16')
+  await controls.getByLabel('Контур глянца фаски').selectOption('Нисходящий')
+  await page.getByRole('checkbox', { name: 'Сглаживание контура глянца' }).check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // The descending gloss curve exchanges the normally lit top slope and the
+  // normally shaded bottom slope; the flat centre remains the source grey.
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+
+  // In the displaced drop shadow, the cone maps its opaque core back to
+  // transparent and peaks in the blurred falloff: a real halo/ring, not a
+  // simple opacity multiplier.
+  await expect.poll(async () => (await pixel(page, 230, 100))[3]).toBeLessThan(60)
+  await expect.poll(async () => (await pixel(page, 275, 100))[3]).toBeGreaterThan(120)
+  await expect.poll(async () => (await pixel(page, 292, 100))[3]).toBeLessThan(40)
+
+  let bytes = await exportPsd(page)
+  let parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  let layer = (parsed.children || []).find((l) => l.effects?.dropShadow?.length)
+  expect(layer?.effects?.dropShadow?.[0].contour).toEqual({
+    name: 'Конус',
+    curve: [
+      { x: 0, y: 0 },
+      { x: 128, y: 255 },
+      { x: 255, y: 0 },
+    ],
+  })
+  expect(layer?.effects?.bevel?.antialiasGloss).toBe(true)
+  expect(layer?.effects?.bevel?.contour?.name).toBe('Нисходящий')
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.dropShadow?.length)
+  expect(stripped?.effects?.dropShadow?.[0].contour?.name).toBe('Конус')
+  expect(stripped?.effects?.bevel?.contour?.name).toBe('Нисходящий')
+
+  // Add the remaining contour-bearing effects through the same UI and prove
+  // their curves/ranges also live in native descriptors rather than XMP.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Внутренняя тень', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('7')
+  await controls.getByLabel('Контур тени').selectOption('Полукруг')
+
+  await page.getByRole('button', { name: 'Внешнее свечение', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Радиус свечения' }).fill('12')
+  await controls.getByLabel('Контур свечения').selectOption('Ступени')
+  await controls.getByRole('slider', { name: 'Диапазон контура свечения' }).fill('25')
+  await page.getByRole('checkbox', { name: 'Сглаживание контура свечения' }).check()
+
+  await page.getByRole('button', { name: 'Внутреннее свечение', exact: false }).click()
+  await controls.getByRole('slider', { name: 'Радиус свечения' }).fill('8')
+  await controls.getByLabel('Контур свечения').selectOption('S-кривая')
+  await controls.getByRole('slider', { name: 'Диапазон контура свечения' }).fill('80')
+
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await controls.getByRole('slider', { name: 'Размер атласа' }).fill('10')
+  await controls.getByLabel('Контур атласа').selectOption('Двойное кольцо')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  bytes = await exportPsd(page)
+  parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  layer = (parsed.children || []).find((l) => l.effects?.satin)
+  expect(layer?.effects?.innerShadow?.[0].contour?.name).toBe('Полукруг')
+  expect(layer?.effects?.outerGlow?.contour?.name).toBe('Ступени')
+  expect(layer?.effects?.outerGlow?.antialiased).toBe(true)
+  expect(layer?.effects?.outerGlow?.range).toBeCloseTo(0.25, 2)
+  expect(layer?.effects?.innerGlow?.contour?.name).toBe('S-кривая')
+  expect(layer?.effects?.innerGlow?.range).toBeCloseTo(0.8, 2)
+  expect(layer?.effects?.satin?.contour?.name).toBe('Двойное кольцо')
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

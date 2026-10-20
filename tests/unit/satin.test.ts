@@ -104,6 +104,13 @@ describe('satin pixels and parsing', () => {
       size: 0,
       invert: false,
       antialiased: true,
+      contour: {
+        name: 'Линейный',
+        points: [
+          { x: 0, y: 0 },
+          { x: 255, y: 255 },
+        ],
+      },
     })
   })
 })

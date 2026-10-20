@@ -31,6 +31,7 @@ import {
 import { applyDocumentColorDecision } from './documentColor'
 import type {
   Color,
+  EffectContour,
   EffectPattern,
   Layer as PsdLayer,
   LayerEffectsInfo,
@@ -42,6 +43,7 @@ import type {
   BevelEffectStyle,
   BlendIfRanges,
   BlendMode,
+  EffectContourDefinition,
   EditorDocument,
   Layer,
   LayerStyles,
@@ -58,6 +60,7 @@ import {
   registerPatternTile,
 } from './patterns'
 import { isBlendIfActive, parseBlendIf } from './blendIf'
+import { parseEffectContour } from './contours'
 import { makeLayer, newDocument, parseProject, uid } from './document'
 import {
   cacheImage,
@@ -200,6 +203,23 @@ const rgb = (color: string) => ({
 })
 const px = (value: number) => ({ units: 'Pixels' as const, value })
 const wrapPsdAngle = (value: number) => ((((value + 180) % 360) + 360) % 360) - 180
+const contourFromPsd = (contour?: EffectContour): EffectContourDefinition =>
+  parseEffectContour(contour ? { name: contour.name, points: contour.curve } : undefined)
+const contourToPsd = (definition?: EffectContourDefinition): EffectContour => {
+  const contour = parseEffectContour(definition)
+  return {
+    // Photoshop's canonical name for the identity shaping curve; every other
+    // imported or user-visible curve keeps its own name byte-for-byte.
+    name:
+      (contour.name === 'Линейный' || contour.name === 'Linear') &&
+      contour.points.every((point) => Math.abs(point.x - point.y) <= 1)
+        ? 'Linear'
+        : contour.name,
+    curve: contour.points.map((point) => ({ ...point })),
+  }
+}
+const glowRangeFromPsd = (value: number | undefined) =>
+  Math.min(1, Math.max(0.01, Number.isFinite(value) ? (value as number) : 0.5))
 function canvas(width: number, height: number) {
   if (width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 24_000_000)
     throw new Error('Слишком большой растровый слой PSD')
@@ -448,6 +468,8 @@ function importStyles(
         blur: Math.min(STYLE_LIMITS.blur, (shadow.size?.value || 0) * scale),
         x: -Math.cos(a) * distance,
         y: Math.sin(a) * distance,
+        contour: contourFromPsd(shadow.contour),
+        antialiased: shadow.antialiased === true,
       }
     }
     const shadows = (f.dropShadow || [])
@@ -466,6 +488,9 @@ function importStyles(
         color: hex(f.outerGlow.color),
         blur: Math.min(STYLE_LIMITS.blur, (f.outerGlow.size?.value || 0) * scale),
         opacity: f.outerGlow.opacity ?? 0.5,
+        contour: contourFromPsd(f.outerGlow.contour),
+        antialiased: f.outerGlow.antialiased === true,
+        range: glowRangeFromPsd(f.outerGlow.range),
       }
     if (f.innerGlow?.enabled !== false && f.innerGlow)
       s.innerGlow = {
@@ -473,6 +498,9 @@ function importStyles(
         color: hex(f.innerGlow.color),
         blur: Math.min(STYLE_LIMITS.blur, (f.innerGlow.size?.value || 0) * scale),
         opacity: f.innerGlow.opacity ?? 0.5,
+        contour: contourFromPsd(f.innerGlow.contour),
+        antialiased: f.innerGlow.antialiased === true,
+        range: glowRangeFromPsd(f.innerGlow.range),
       }
     const overlays = (f.solidFill || [])
       .filter((v) => v.enabled !== false)
@@ -531,11 +559,14 @@ function importStyles(
         warn?.(
           'Текстура Bevel & Emboss не импортирована: ag-psd передаёт только флаг useTexture без узора, масштаба и глубины текстуры. Основная фаска редактируется без текстуры.',
         )
-      const curve = bevel.contour?.curve || []
-      const nonLinearContour = curve.some((point) => Math.abs(point.y - point.x) > 0.01)
-      if (bevel.useShape && nonLinearContour)
+      // ag-psd maps both Bevel keys into one field: TrnS is Gloss Contour,
+      // while MpgS is the separate Contour element (the bevel cross-section).
+      // The gloss curve can therefore be trusted only when that element is
+      // off. Never reinterpret a possible cross-section as gloss.
+      const canImportGlossContour = bevel.useShape !== true
+      if (!canImportGlossContour)
         warn?.(
-          'Нелинейный контур глянца Bevel & Emboss пока не воспроизводится рабочим движком; импортируется основная геометрия и освещение фаски. Контуры запланированы отдельным этапом 0.9.',
+          'Элемент Contour у Bevel & Emboss (форма сечения фаски) не импортирован: ag-psd объединяет его кривую MpgS и Gloss Contour TrnS в одно поле, поэтому доступную кривую нельзя честно отнести к глянцу. Основная фаска открыта с линейным контуром глянца.',
         )
       s.bevel = {
         enabled: true,
@@ -554,6 +585,10 @@ function importStyles(
         shadowColor: hex(bevel.shadowColor, '#000000'),
         shadowBlendMode: shadowBlendMode || 'multiply',
         shadowOpacity: bevel.shadowOpacity ?? 0.75,
+        glossContour: canImportGlossContour
+          ? contourFromPsd(bevel.contour)
+          : contourFromPsd(undefined),
+        antialiasGloss: bevel.antialiasGloss === true,
       }
     }
     const satin = f.satin?.enabled !== false ? f.satin : undefined
@@ -562,11 +597,6 @@ function importStyles(
       if (!satinBlendMode)
         warn?.(
           'Режим смешивания Satin не поддерживается рабочим движком и заменён стандартным Multiply.',
-        )
-      const satinCurve = satin.contour?.curve || []
-      if (satinCurve.some((point) => Math.abs(point.y - point.x) > 0.01))
-        warn?.(
-          'Нелинейный контур Satin пока не воспроизводится рабочим движком; импортируются цвет, угол, дистанция, размер и инверсия с линейным контуром. Контуры запланированы отдельным этапом 0.9.',
         )
       s.satin = {
         enabled: true,
@@ -581,6 +611,7 @@ function importStyles(
         size: Math.min(STYLE_LIMITS.satinSize, Math.max(0, (satin.size?.value || 0) * scale)),
         invert: satin.invert !== false,
         antialiased: satin.antialiased === true,
+        contour: contourFromPsd(satin.contour),
       }
     }
   }
@@ -642,6 +673,8 @@ function exportStyles(
     opacity: shadow.opacity,
     blendMode: 'multiply' as const,
     useGlobalLight: false,
+    antialiased: shadow.antialiased === true,
+    contour: contourToPsd(shadow.contour),
   })
   const shadows = s.shadows.filter((e) => e.enabled)
   if (shadows.length) effects.dropShadow = shadows.map(shadowTo)
@@ -654,6 +687,9 @@ function exportStyles(
       size: px(s.glow.blur),
       opacity: s.glow.opacity,
       blendMode: 'screen',
+      antialiased: s.glow.antialiased === true,
+      contour: contourToPsd(s.glow.contour),
+      range: glowRangeFromPsd(s.glow.range),
     }
   if (s.innerGlow.enabled)
     effects.innerGlow = {
@@ -663,6 +699,9 @@ function exportStyles(
       opacity: s.innerGlow.opacity,
       blendMode: 'screen',
       source: 'edge',
+      antialiased: s.innerGlow.antialiased === true,
+      contour: contourToPsd(s.innerGlow.contour),
+      range: glowRangeFromPsd(s.innerGlow.range),
     }
   const overlays = s.overlays.filter((e) => e.enabled)
   if (overlays.length)
@@ -715,14 +754,10 @@ function exportStyles(
       shadowOpacity: s.bevel.shadowOpacity,
       useTexture: false,
       useShape: false,
-      antialiasGloss: false,
-      contour: {
-        name: 'Linear',
-        curve: [
-          { x: 0, y: 0 },
-          { x: 255, y: 255 },
-        ],
-      },
+      antialiasGloss: s.bevel.antialiasGloss === true,
+      // ag-psd serializes Bevel `contour` as TrnS, i.e. Gloss Contour. It is
+      // not the unsupported MpgS cross-section element (hence useShape false).
+      contour: contourToPsd(s.bevel.glossContour),
     }
   if (s.satin.enabled)
     effects.satin = {
@@ -735,13 +770,7 @@ function exportStyles(
       size: px(s.satin.size),
       invert: s.satin.invert,
       antialiased: s.satin.antialiased,
-      contour: {
-        name: 'Linear',
-        curve: [
-          { x: 0, y: 0 },
-          { x: 255, y: 255 },
-        ],
-      },
+      contour: contourToPsd(s.satin.contour),
     }
   return effects
 }
