@@ -349,6 +349,56 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.bevel.shadowOpacity).toBeCloseTo(0.45, 2)
   })
 
+  it('round-trips Satin through the native PSD ChFX descriptor', () => {
+    const styles = normalizeStyles({
+      satin: {
+        enabled: true,
+        color: '#cc5c5c',
+        blendMode: 'overlay',
+        opacity: 0.62,
+        angle: 199,
+        distance: 23,
+        size: 31,
+        invert: false,
+        antialiased: true,
+      },
+    })!
+    expect(styles.satin.angle).toBe(-161)
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const layer = readPsd(writePsd({ width: 4, height: 4, children: [{ name: 's', effects }] }), {
+      useImageData: true,
+    }).children![0]
+    expect(layer.effects?.satin).toMatchObject({
+      enabled: true,
+      blendMode: 'overlay',
+      angle: -161,
+      distance: { units: 'Pixels', value: 23 },
+      size: { units: 'Pixels', value: 31 },
+      invert: false,
+      antialiased: true,
+      contour: {
+        name: 'Linear',
+        curve: [
+          { x: 0, y: 0 },
+          { x: 255, y: 255 },
+        ],
+      },
+    })
+    expect(layer.effects?.satin?.opacity).toBeCloseTo(0.62, 2)
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.satin).toMatchObject({
+      enabled: true,
+      color: '#cc5c5c',
+      blendMode: 'overlay',
+      angle: -161,
+      distance: 23,
+      size: 31,
+      invert: false,
+      antialiased: true,
+    })
+    expect(back.satin.opacity).toBeCloseTo(0.62, 2)
+  })
+
   it('bakes the PSD effect scale into editable sizes on import', () => {
     const styles = normalizeStyles({
       strokes: [{ enabled: true, size: 5, color: '#ffffff', position: 'outside', opacity: 1 }],

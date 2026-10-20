@@ -63,7 +63,7 @@ import { PatternDefinitionEditor } from './PatternDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
-type Tab = ListKey | 'glow' | 'innerGlow' | 'pattern' | 'bevel' | 'blendIf' | 'library'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'satin' | 'pattern' | 'bevel' | 'blendIf' | 'library'
 const BEVEL_BLEND_MODES: [BlendMode, string][] = [
   ['source-over', 'Обычный'],
   ['multiply', 'Умножение'],
@@ -93,6 +93,11 @@ const sections: { id: Tab; name: string; note: string }[] = [
   { id: 'innerShadows', name: 'Внутренняя тень', note: 'Тень от края внутрь формы.' },
   { id: 'glow', name: 'Внешнее свечение', note: 'Свет вокруг формы.' },
   { id: 'innerGlow', name: 'Внутреннее свечение', note: 'Свет от края внутрь.' },
+  {
+    id: 'satin',
+    name: 'Атлас (Satin)',
+    note: 'Внутренняя атласная вуаль из двух смещённых и размытых копий альфы. Собственный алгоритм с линейным контуром; нелинейные контуры — следующий этап.',
+  },
   {
     id: 'overlays',
     name: 'Наложение цвета',
@@ -127,6 +132,7 @@ const sections: { id: Tab; name: string; note: string }[] = [
 const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): number => {
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
+  if (tab === 'satin') return styles.satin.enabled ? 1 : 0
   if (tab === 'pattern') return styles.pattern.enabled ? 1 : 0
   if (tab === 'bevel') return styles.bevel.enabled ? 1 : 0
   if (tab === 'library') return 0
@@ -210,6 +216,7 @@ export function LayerStyleDialog({
   const listKey: ListKey | undefined =
     tab !== 'glow' &&
     tab !== 'innerGlow' &&
+    tab !== 'satin' &&
     tab !== 'pattern' &&
     tab !== 'bevel' &&
     tab !== 'library' &&
@@ -225,7 +232,7 @@ export function LayerStyleDialog({
       [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, ...patch } : item)),
     }))
   }
-  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern' | 'bevel', patch: object) =>
+  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern' | 'bevel' | 'satin', patch: object) =>
     setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
   const factories = {
     strokes: defaultStrokeStyle,
@@ -293,15 +300,23 @@ export function LayerStyleDialog({
       ? styles.glow.enabled
       : tab === 'innerGlow'
         ? styles.innerGlow.enabled
-        : tab === 'pattern'
-          ? styles.pattern.enabled
-          : tab === 'bevel'
-            ? styles.bevel.enabled
-            : listKey
-              ? !!items[index]?.enabled
-              : false
+        : tab === 'satin'
+          ? styles.satin.enabled
+          : tab === 'pattern'
+            ? styles.pattern.enabled
+            : tab === 'bevel'
+              ? styles.bevel.enabled
+              : listKey
+                ? !!items[index]?.enabled
+                : false
   const setActiveEnabled = (enabled: boolean) => {
-    if (tab === 'glow' || tab === 'innerGlow' || tab === 'pattern' || tab === 'bevel')
+    if (
+      tab === 'glow' ||
+      tab === 'innerGlow' ||
+      tab === 'pattern' ||
+      tab === 'bevel' ||
+      tab === 'satin'
+    )
       patchSingle(tab, { enabled })
     else patchItem({ enabled })
   }
@@ -597,6 +612,79 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchSingle(tab, { opacity: v / 100 })}
               />
+            </>
+          )}
+          {tab === 'satin' && (
+            <>
+              <ColorField
+                label="Цвет атласа"
+                value={styles.satin.color}
+                onChange={(color) => patchSingle('satin', { color, enabled: true })}
+              />
+              <Select
+                aria-label="Режим атласа"
+                value={styles.satin.blendMode}
+                onChange={(e) => patchSingle('satin', { blendMode: e.target.value, enabled: true })}
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность атласа"
+                value={styles.satin.opacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('satin', { opacity: v / 100 })}
+              />
+              <Slider
+                label="Угол атласа"
+                value={styles.satin.angle}
+                min={-180}
+                max={180}
+                suffix="°"
+                onChange={(angle) => patchSingle('satin', { angle, enabled: true })}
+              />
+              <Slider
+                label="Дистанция атласа"
+                value={styles.satin.distance}
+                max={STYLE_LIMITS.satinDistance}
+                suffix=" px"
+                onChange={(distance) => patchSingle('satin', { distance, enabled: true })}
+              />
+              <Slider
+                label="Размер атласа"
+                value={styles.satin.size}
+                max={STYLE_LIMITS.satinSize}
+                suffix=" px"
+                onChange={(size) => patchSingle('satin', { size, enabled: true })}
+              />
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.satin.invert}
+                  onChange={(e) =>
+                    patchSingle('satin', { invert: e.target.checked, enabled: true })
+                  }
+                />
+                Инвертировать атлас
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={styles.satin.antialiased}
+                  onChange={(e) =>
+                    patchSingle('satin', { antialiased: e.target.checked, enabled: true })
+                  }
+                />
+                Сглаживание атласа (билинейная выборка)
+              </label>
+              <p className="panel-note">
+                Размер задаёт размытие альфы (радиус равен половине размера), дистанция — полный
+                разнос двух копий вдоль оси угла. Эффект остаётся внутри альфы слоя и не ослабляется
+                Fill.
+              </p>
             </>
           )}
           {tab === 'overlays' && (

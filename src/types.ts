@@ -296,6 +296,18 @@ export interface BevelEffectStyle {
   shadowBlendMode: BlendMode
   shadowOpacity: number
 }
+export interface SatinEffectStyle {
+  enabled: boolean
+  color: string
+  blendMode: BlendMode
+  opacity: number
+  /** PSD offset axis in degrees: 0° horizontal, 90° vertical. */
+  angle: number
+  distance: number
+  size: number
+  invert: boolean
+  antialiased: boolean
+}
 export interface PatternOverlayStyle {
   enabled: boolean
   pattern: PatternDefinition
@@ -324,6 +336,7 @@ export interface LayerStyles {
   gradients: GradientOverlayStyle[]
   pattern: PatternOverlayStyle
   bevel: BevelEffectStyle
+  satin: SatinEffectStyle
 }
 export const MAX_STYLE_INSTANCES = 10
 

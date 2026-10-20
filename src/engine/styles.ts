@@ -11,6 +11,7 @@ import {
 } from './gradientRamp'
 import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } from './patterns'
 import { applyBevelToPixels } from './bevel'
+import { applySatinToPixels } from './satin'
 import {
   MAX_STYLE_INSTANCES,
   type BevelEffectStyle,
@@ -22,6 +23,7 @@ import {
   type LayerStyles,
   type PatternDefinition,
   type PatternOverlayStyle,
+  type SatinEffectStyle,
   type ShadowEffectStyle,
   type StrokeEffectStyle,
   type StyleGradientShape,
@@ -33,6 +35,8 @@ export const STYLE_LIMITS = {
   offset: 180,
   bevelSize: 250,
   bevelSoften: 100,
+  satinDistance: 250,
+  satinSize: 250,
 } as const
 
 export function defaultGradientOverlayGradient(): GradientDefinition {
@@ -126,6 +130,17 @@ export const defaultBevelStyle = (): BevelEffectStyle => ({
   shadowBlendMode: 'multiply',
   shadowOpacity: 0.75,
 })
+export const defaultSatinStyle = (): SatinEffectStyle => ({
+  enabled: false,
+  color: '#000000',
+  blendMode: 'multiply',
+  opacity: 0.5,
+  angle: 19,
+  distance: 11,
+  size: 14,
+  invert: true,
+  antialiased: false,
+})
 export function defaultStyles(): LayerStyles {
   return {
     fillOpacity: 1,
@@ -138,6 +153,7 @@ export function defaultStyles(): LayerStyles {
     gradients: [defaultGradientOverlayStyle()],
     pattern: defaultPatternOverlayStyle(),
     bevel: defaultBevelStyle(),
+    satin: defaultSatinStyle(),
   }
 }
 
@@ -317,6 +333,22 @@ function parseBevel(input: unknown): BevelEffectStyle {
     shadowOpacity: percent(v.shadowOpacity, d.shadowOpacity),
   }
 }
+function parseSatin(input: unknown): SatinEffectStyle {
+  const v = record(input),
+    d = defaultSatinStyle()
+  if (!v) return d
+  return {
+    enabled: v.enabled === true,
+    color: color(v.color, d.color),
+    blendMode: blendMode(v.blendMode, d.blendMode),
+    opacity: percent(v.opacity, d.opacity),
+    angle: cyclicAngle(v.angle, d.angle),
+    distance: num(v.distance, d.distance, 0, STYLE_LIMITS.satinDistance),
+    size: num(v.size, d.size, 0, STYLE_LIMITS.satinSize),
+    invert: v.invert !== false,
+    antialiased: v.antialiased === true,
+  }
+}
 const list = <T>(value: unknown, legacy: unknown, parse: (v: unknown) => T, make: () => T): T[] => {
   if (Array.isArray(value)) {
     const items = value.slice(0, MAX_STYLE_INSTANCES).map(parse)
@@ -350,6 +382,7 @@ export function normalizeStyles(input: unknown): LayerStyles | undefined {
     gradients: list(v.gradients, v.gradient, parseGradientOverlay, defaultGradientOverlayStyle),
     pattern: parsePatternOverlay(v.pattern ?? v.patternOverlay),
     bevel: parseBevel(v.bevel ?? v.bevelEmboss),
+    satin: parseSatin(v.satin),
   }
 }
 export const hasStyles = (s?: LayerStyles) =>
@@ -363,7 +396,8 @@ export const hasStyles = (s?: LayerStyles) =>
     s.overlays.some((e) => e.enabled) ||
     s.gradients.some((e) => e.enabled) ||
     s.pattern.enabled ||
-    s.bevel.enabled)
+    s.bevel.enabled ||
+    s.satin.enabled)
 
 /** Short human summary for the layers panel, e.g. “Обводка ×3 · Тень”. */
 export function styleEffectSummary(s?: LayerStyles): string {
@@ -381,6 +415,7 @@ export function styleEffectSummary(s?: LayerStyles): string {
   add('Градиент', s.gradients.filter((e) => e.enabled).length)
   if (s.pattern.enabled) parts.push('Узор')
   if (s.bevel.enabled) parts.push('Фаска')
+  if (s.satin.enabled) parts.push('Атлас')
   if (s.fillOpacity !== 1) parts.push(`Заливка ${Math.round(s.fillOpacity * 100)}%`)
   return parts.join(' · ')
 }
@@ -417,6 +452,11 @@ export function scaleLayerStyles(styles: LayerStyles, factor: number): LayerStyl
     ...clone.bevel,
     size: scaled(clone.bevel.size, 0, STYLE_LIMITS.bevelSize),
     soften: scaled(clone.bevel.soften, 0, STYLE_LIMITS.bevelSoften),
+  }
+  clone.satin = {
+    ...clone.satin,
+    distance: scaled(clone.satin.distance, 0, STYLE_LIMITS.satinDistance),
+    size: scaled(clone.satin.size, 0, STYLE_LIMITS.satinSize),
   }
   return clone
 }
@@ -562,7 +602,7 @@ export function paintPatternFill(
 /**
  * Original raster layer styles. Cached separately from position/opacity for smooth dragging.
  * Paint order (back → front): drop shadows, outer glow, content with color/gradient
- * overlays (attenuated by Fill), inner shadows/glow, strokes, then Bevel &
+ * overlays (attenuated by Fill), Satin, inner shadows/glow, strokes, then Bevel &
  * Emboss as the final lighting pass. Inside each ordered
  * list index 0 is topmost, so lists are painted in reverse.
  */
@@ -669,6 +709,18 @@ export function renderStyled(
     o.globalAlpha = s.fillOpacity
     o.drawImage(content, 0, 0)
     o.globalAlpha = 1
+
+    if (s.satin.enabled && s.satin.opacity > 0) {
+      const satinPixels = o.getImageData(0, 0, w, h)
+      applySatinToPixels(
+        satinPixels,
+        b.getImageData(0, 0, w, h),
+        c.getImageData(0, 0, w, h),
+        s.satin,
+        scale,
+      )
+      o.putImageData(satinPixels, 0, 0)
+    }
 
     const innerEffect = (effect: {
       color: string

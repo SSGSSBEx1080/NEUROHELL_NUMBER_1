@@ -526,6 +526,33 @@ function importStyles(
         shadowOpacity: bevel.shadowOpacity ?? 0.75,
       }
     }
+    const satin = f.satin?.enabled !== false ? f.satin : undefined
+    if (satin) {
+      const satinBlendMode = satin.blendMode ? toCanvas[satin.blendMode] : 'multiply'
+      if (!satinBlendMode)
+        warn?.(
+          'Режим смешивания Satin не поддерживается рабочим движком и заменён стандартным Multiply.',
+        )
+      const satinCurve = satin.contour?.curve || []
+      if (satinCurve.some((point) => Math.abs(point.y - point.x) > 0.01))
+        warn?.(
+          'Нелинейный контур Satin пока не воспроизводится рабочим движком; импортируются цвет, угол, дистанция, размер и инверсия с линейным контуром. Контуры запланированы отдельным этапом 0.9.',
+        )
+      s.satin = {
+        enabled: true,
+        color: hex(satin.color, '#000000'),
+        blendMode: satinBlendMode || 'multiply',
+        opacity: satin.opacity ?? 0.5,
+        angle: wrapPsdAngle(satin.angle ?? 19),
+        distance: Math.min(
+          STYLE_LIMITS.satinDistance,
+          Math.max(0, (satin.distance?.value || 0) * scale),
+        ),
+        size: Math.min(STYLE_LIMITS.satinSize, Math.max(0, (satin.size?.value || 0) * scale)),
+        invert: satin.invert !== false,
+        antialiased: satin.antialiased === true,
+      }
+    }
   }
   return hasStyles(s) ? s : undefined
 }
@@ -659,6 +686,25 @@ function exportStyles(
       useTexture: false,
       useShape: false,
       antialiasGloss: false,
+      contour: {
+        name: 'Linear',
+        curve: [
+          { x: 0, y: 0 },
+          { x: 255, y: 255 },
+        ],
+      },
+    }
+  if (s.satin.enabled)
+    effects.satin = {
+      enabled: true,
+      blendMode: toPsd[s.satin.blendMode],
+      color: rgb(s.satin.color),
+      opacity: s.satin.opacity,
+      angle: s.satin.angle,
+      distance: px(s.satin.distance),
+      size: px(s.satin.size),
+      invert: s.satin.invert,
+      antialiased: s.satin.antialiased,
       contour: {
         name: 'Linear',
         curve: [

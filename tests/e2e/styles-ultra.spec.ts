@@ -349,6 +349,63 @@ test('Bevel & Emboss lights the shape, reverses direction and exports natively',
   expect(stripped?.effects?.bevel?.style).toBe('stroke emboss')
 })
 
+test('Satin shades opposite interior edges, inverts and exports natively', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Непрозрачность атласа' }).fill('100')
+  await page.getByRole('slider', { name: 'Угол атласа' }).fill('90')
+  await page.getByRole('slider', { name: 'Дистанция атласа' }).fill('20')
+  await page.getByRole('slider', { name: 'Размер атласа' }).fill('0')
+  await page.getByRole('checkbox', { name: 'Инвертировать атлас' }).uncheck()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // A vertical 20 px two-copy mask touches the top/bottom interior bands only.
+  await expect.poll(async () => await pixel(page, 150, 58)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 142)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => await pixel(page, 68, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Атлас (Satin)', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Инвертировать атлас' }).check()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([0, 0, 0, 255])
+  await expect.poll(async () => await pixel(page, 150, 58)).toEqual([128, 128, 128, 255])
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.satin)
+  expect(layer?.effects?.satin).toMatchObject({
+    enabled: true,
+    blendMode: 'multiply',
+    angle: 90,
+    distance: { value: 20, units: 'Pixels' },
+    size: { value: 0, units: 'Pixels' },
+    invert: true,
+    antialiased: false,
+    contour: {
+      name: 'Linear',
+      curve: [
+        { x: 0, y: 0 },
+        { x: 255, y: 255 },
+      ],
+    },
+  })
+  expect(layer?.effects?.satin?.opacity).toBeCloseTo(1, 2)
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.satin)
+  expect(stripped?.effects?.satin?.distance?.value).toBe(20)
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {
