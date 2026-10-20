@@ -27,8 +27,11 @@ async function open(page: Page, name: string, bytes: Buffer) {
   })
   if (name.endsWith('.777'))
     await page.getByRole('button', { name: 'Открыть проект', exact: true }).click()
-  if (name.endsWith('.psd'))
-    await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  if (name.endsWith('.psd')) {
+    await expect(page.locator('.busy-overlay')).toBeHidden()
+    const profileOpen = page.getByRole('button', { name: 'Открыть', exact: true })
+    if (await profileOpen.isVisible()) await profileOpen.click()
+  }
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 async function png(page: Page) {
@@ -491,10 +494,13 @@ test('external native text edits cannot be overwritten by stale private XMP', as
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from(writePsd(native)),
   })
+  await page.getByRole('button', { name: 'Открыть', exact: true }).click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByRole('button', { name: 'Отчёт импорта', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText(
     'Устаревший внутренний проект проигнорирован',
   )
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
   await page.locator('.layer-row').first().click()
   await expect(page.getByLabel('Текст слоя', { exact: true })).toHaveValue('Changed externally')
 })

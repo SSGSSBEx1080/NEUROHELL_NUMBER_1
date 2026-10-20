@@ -9,6 +9,7 @@ import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
+import { parseDocumentColorProfile, workingDocumentColorProfile } from './colorProfiles'
 import {
   DEFAULT_ADJUSTMENTS,
   MAX_DIMENSION,
@@ -44,7 +45,17 @@ export function newDocument(
   name = 'Без названия',
   background = '#ffffff',
 ): EditorDocument {
-  return { version: 1, id: uid(), name, width, height, background, dpi: 72, layers: [] }
+  return {
+    version: 1,
+    id: uid(),
+    name,
+    width,
+    height,
+    background,
+    dpi: 72,
+    colorProfile: workingDocumentColorProfile(),
+    layers: [],
+  }
 }
 export function demoDocument(): EditorDocument {
   const doc = newDocument(1600, 1000, 'За пределами', '#18131d')
@@ -359,6 +370,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
         : undefined,
     })),
     sourceId: typeof d.sourceId === 'string' ? d.sourceId.slice(0, 100) : undefined,
+    colorProfile: parseDocumentColorProfile(d.colorProfile),
     dpi: finite(d.dpi, 1, 1200, 72),
     version: 1,
     id: typeof d.id === 'string' ? d.id.slice(0, 100) : uid(),

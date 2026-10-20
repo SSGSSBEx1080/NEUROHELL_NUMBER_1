@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Gauge, Monitor, Save, ShieldCheck } from 'lucide-react'
+import { Gauge, Monitor, Palette, Save, ShieldCheck } from 'lucide-react'
 import { defaultPreferences, type Preferences } from '../engine/preferences'
 import { Modal, Select, Slider } from './ui'
 export function SettingsDialog({
@@ -25,6 +25,7 @@ export function SettingsDialog({
           {[
             ['appearance', Monitor, 'Интерфейс'],
             ['performance', Gauge, 'Производительность'],
+            ['color', Palette, 'Цвет'],
             ['saving', Save, 'Сохранение'],
           ].map(([id, Icon, label]) => {
             const Component = Icon as typeof Monitor
@@ -111,6 +112,100 @@ export function SettingsDialog({
               <p className="panel-note">
                 До 48 Мп активных источников, 256 МиБ кэша изображений. Это не лимит всей памяти
                 приложения.
+              </p>
+            </>
+          )}
+          {tab === 'color' && (
+            <>
+              <h3>Управление цветом</h3>
+              <p className="settings-copy">
+                Рабочее пространство редактирования — <strong>sRGB IEC61966-2.1</strong>. PSD с
+                другим поддерживаемым матричным/TRC ICC можно преобразовать в него при открытии;
+                LUT/CMYK/Lab-профили распознаются, но не выдаются за преобразованные.
+              </p>
+              <label className="dialog-label">
+                Профиль серого по умолчанию
+                <Select
+                  aria-label="Профиль серого по умолчанию"
+                  value={value.colorGrayProfile}
+                  onChange={(e) =>
+                    patch({
+                      colorGrayProfile: e.target.value as Preferences['colorGrayProfile'],
+                    })
+                  }
+                >
+                  <option value="sgray">sGray</option>
+                  <option value="gray-gamma-2.2">Gray Gamma 2.2</option>
+                  <option value="gray-gamma-1.8">Gray Gamma 1.8</option>
+                </Select>
+              </label>
+              <label className="dialog-label">
+                Если встроенный профиль PSD не совпадает
+                <Select
+                  aria-label="Политика несовпадения профиля PSD"
+                  value={value.colorMismatchPolicy}
+                  onChange={(e) =>
+                    patch({
+                      colorMismatchPolicy: e.target.value as Preferences['colorMismatchPolicy'],
+                    })
+                  }
+                >
+                  <option value="ask">Спрашивать при открытии</option>
+                  <option value="convert">Автоматически преобразовать в sRGB</option>
+                  <option value="discard">Отбрасывать профиль</option>
+                  <option value="assign-working">Назначать sRGB без преобразования</option>
+                </Select>
+              </label>
+              <label className="dialog-label">
+                Если в PSD нет профиля
+                <Select
+                  aria-label="Политика отсутствующего профиля PSD"
+                  value={value.colorMissingPolicy}
+                  onChange={(e) =>
+                    patch({
+                      colorMissingPolicy: e.target.value as Preferences['colorMissingPolicy'],
+                    })
+                  }
+                >
+                  <option value="ask">Спрашивать при открытии</option>
+                  <option value="leave">Оставлять без профиля</option>
+                  <option value="assign-working">Назначать sRGB без преобразования</option>
+                </Select>
+              </label>
+              <label className="dialog-label">
+                Метод преобразования по умолчанию
+                <Select
+                  aria-label="Метод преобразования профиля по умолчанию"
+                  value={value.colorIntent}
+                  onChange={(e) =>
+                    patch({ colorIntent: e.target.value as Preferences['colorIntent'] })
+                  }
+                >
+                  <option value="relative">Относительный колориметрический</option>
+                  <option value="absolute">Абсолютный колориметрический</option>
+                </Select>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={value.colorBlackPoint}
+                  onChange={(e) => patch({ colorBlackPoint: e.target.checked })}
+                />
+                Компенсация точки чёрного
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={value.colorDither}
+                  onChange={(e) => patch({ colorDither: e.target.checked })}
+                />
+                Дизеринг при преобразовании 8-битного цвета
+              </label>
+              <p className="panel-note">
+                Поддерживаемые встроенные и пользовательские матричные профили: sRGB IEC61966-2.1,
+                Adobe RGB (1998), Apple RGB, ColorMatch RGB, Display P3, ProPhoto RGB, Rec.2020,
+                sGray, Gray Gamma и другие ICC с тегами цветовых компонентов/TRC и XYZ PCS. Плоский
+                экспорт PNG/JPEG может преобразовать копию в эти назначения и встроить ICC.
               </p>
             </>
           )}

@@ -76,7 +76,6 @@ async function nativeOnly(page: Page, bytes: Buffer) {
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from(buffer),
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
 }
 

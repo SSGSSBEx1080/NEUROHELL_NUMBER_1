@@ -6,6 +6,12 @@ export interface Preferences {
   smooth: boolean
   reduceMotion: boolean
   showPerformance: boolean
+  colorMismatchPolicy: 'ask' | 'convert' | 'discard' | 'assign-working'
+  colorMissingPolicy: 'ask' | 'leave' | 'assign-working'
+  colorGrayProfile: 'sgray' | 'gray-gamma-1.8' | 'gray-gamma-2.2'
+  colorIntent: 'relative' | 'absolute'
+  colorBlackPoint: boolean
+  colorDither: boolean
 }
 export const defaultPreferences: Preferences = {
   theme: 'violet',
@@ -15,6 +21,12 @@ export const defaultPreferences: Preferences = {
   smooth: true,
   reduceMotion: false,
   showPerformance: false,
+  colorMismatchPolicy: 'ask',
+  colorMissingPolicy: 'ask',
+  colorGrayProfile: 'sgray',
+  colorIntent: 'relative',
+  colorBlackPoint: true,
+  colorDither: true,
 }
 export function loadPreferences(): Preferences {
   try {
@@ -27,6 +39,20 @@ export function loadPreferences(): Preferences {
       smooth: p.smooth !== false,
       reduceMotion: !!p.reduceMotion,
       showPerformance: !!p.showPerformance,
+      colorMismatchPolicy: ['ask', 'convert', 'discard', 'assign-working'].includes(
+        p.colorMismatchPolicy,
+      )
+        ? p.colorMismatchPolicy
+        : 'ask',
+      colorMissingPolicy: ['ask', 'leave', 'assign-working'].includes(p.colorMissingPolicy)
+        ? p.colorMissingPolicy
+        : 'ask',
+      colorGrayProfile: ['sgray', 'gray-gamma-1.8', 'gray-gamma-2.2'].includes(p.colorGrayProfile)
+        ? p.colorGrayProfile
+        : 'sgray',
+      colorIntent: p.colorIntent === 'absolute' ? 'absolute' : 'relative',
+      colorBlackPoint: p.colorBlackPoint !== false,
+      colorDither: p.colorDither !== false,
     }
   } catch {
     return { ...defaultPreferences }

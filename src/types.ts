@@ -140,6 +140,17 @@ export interface TextEntry {
   status: 'draft' | 'ready' | 'checked'
   layerId?: string
 }
+export interface DocumentColorProfile {
+  /** Stable profile id. The editable core is sRGB or explicitly untagged. */
+  id: string
+  name: string
+  kind: 'rgb' | 'gray'
+  status: 'working' | 'untagged'
+  /** Human-readable source profile when pixels were converted to working sRGB. */
+  convertedFrom?: string
+  /** Human-readable discarded/retagged source when colour numbers did not change. */
+  assignedFrom?: string
+}
 export interface EditorDocument {
   version: 1
   id: string
@@ -149,6 +160,7 @@ export interface EditorDocument {
   background: string
   layers: Layer[]
   sourceId?: string
+  colorProfile?: DocumentColorProfile
   dpi?: number
   layout?: DocumentLayout
   textEntries?: TextEntry[]

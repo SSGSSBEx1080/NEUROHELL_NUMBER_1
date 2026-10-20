@@ -105,7 +105,7 @@ test('pen click/drag creates native cubic paths, XMP-free node edits and undo pr
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from(writePsd(psd)),
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  await page.getByRole('button', { name: 'Открыть', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await key(page, 'a')
   await anchor(page, 0, 1).click()

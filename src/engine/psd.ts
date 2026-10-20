@@ -10,7 +10,25 @@ import { layerPoint } from './shapeGeometry'
 import { inspectNativeLayers, type PsdExportReport } from './psdReport'
 import { DEFAULT_ADJUSTMENTS, MAX_STYLE_INSTANCES } from '../types'
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
-import { preserveMergedPixels, preserveUnknownResources } from './psdBinary'
+import {
+  imageResourceData,
+  preserveMergedPixels,
+  preserveUnknownResources,
+  withPsdIccProfile,
+} from './psdBinary'
+import {
+  WORKING_RGB_PROFILE,
+  buildIccProfile,
+  builtinColorProfile,
+  isSrgbProfile,
+  parseIccProfile,
+  profilesMatch,
+  untaggedDocumentColorProfile,
+  workingDocumentColorProfile,
+  type ColorProfileModel,
+  type ParsedColorProfile,
+} from './colorProfiles'
+import { applyDocumentColorDecision } from './documentColor'
 import type {
   Color,
   EffectPattern,
@@ -64,6 +82,18 @@ export interface CompatibilityReport {
   warnings: string[]
   layerCount: number
   format: string
+  color: PsdColorProfileReport
+}
+export interface PsdColorProfileReport {
+  mode: 'rgb' | 'grayscale'
+  status: 'own' | 'matching' | 'missing' | 'mismatch' | 'unsupported' | 'mode-mismatch'
+  embeddedName?: string
+  embeddedKind?: string
+  profile?: ParsedColorProfile
+  sourceModel?: ColorProfileModel
+  conversionSupported: boolean
+  reason?: string
+  explicitlyUntagged?: boolean
 }
 const toCanvas: Record<string, BlendMode> = {
   normal: 'source-over',
@@ -824,12 +854,29 @@ export async function importPsd(
 ): Promise<{ document: EditorDocument; report: CompatibilityReport }> {
   const header = validatePsdHeader(buffer),
     original = buffer.slice(0)
+  let embeddedProfile: ParsedColorProfile | undefined
+  let embeddedProfileInvalid = false
+  let explicitlyUntagged = false
+  let resourceWarning: string | undefined
+  try {
+    const icc = imageResourceData(original, 1039)
+    const untagged = imageResourceData(original, 1041)
+    explicitlyUntagged = untagged?.[0] === 1
+    if (icc) {
+      embeddedProfile = parseIccProfile(icc)
+      embeddedProfileInvalid = !embeddedProfile
+    }
+  } catch {
+    resourceWarning =
+      'Секция image resources PSD повреждена: встроенный ICC-профиль прочитать не удалось.'
+  }
   const { psd, messages, project } = await runCodec<{
     psd: Psd
     messages: string[]
     project?: unknown
   }>({ operation: 'read', buffer }, [buffer])
   const warnings = new Set<string>()
+  if (resourceWarning) warnings.add(resourceWarning)
   if (messages.includes('FSH777_STALE_XMP'))
     warnings.add(
       'Файл изменён после сохранения ФШ777. Устаревший внутренний проект проигнорирован: читаются настоящие слои PSD, включая внешние изменения текста и фигур.',
@@ -944,10 +991,32 @@ export async function importPsd(
             budget.documents++
             budget.bytes += bytes.byteLength
             budget.pixels += embeddedHeader.width * embeddedHeader.height
-            const contents = await importPsd(bytes, linked?.name || layer.name + '.psd', {
+            let contents = await importPsd(bytes, linked?.name || layer.name + '.psd', {
               depth: nested.depth + 1,
               budget,
             })
+            if (
+              contents.report.color.status === 'mismatch' &&
+              contents.report.color.conversionSupported &&
+              contents.report.color.sourceModel
+            ) {
+              contents = {
+                ...contents,
+                document: await applyDocumentColorDecision(contents.document, {
+                  action: 'convert',
+                  source: contents.report.color.sourceModel,
+                }),
+              }
+              warnings.add(
+                `Вложенный PSD «${layer.name.slice(0, 100)}»: встроенный профиль ${contents.report.color.embeddedName || ''} автоматически преобразован в рабочее sRGB без отдельного вопроса.`,
+              )
+            } else if (
+              contents.report.color.status === 'unsupported' ||
+              contents.report.color.status === 'mode-mismatch'
+            )
+              warnings.add(
+                `Вложенный PSD «${layer.name.slice(0, 100)}»: собственный ICC-профиль не преобразован (${contents.report.color.reason || 'неподдерживаемый тип'}); предпросмотр вложенного содержимого считается как sRGB, исходные байты смарт-объекта сохраняются до правки.`,
+              )
             if (nested.depth + 1 + smartDepth(contents.document) > 3)
               throw new Error('более трёх уровней содержимого')
             const smart = { ...contents.document, id: uid() },
@@ -1017,9 +1086,6 @@ export async function importPsd(
           src: imageSource(psd.imageData),
         }),
       )
-    warnings.add(
-      'Без правок PSD сохраняется побайтно, включая неизвестные данные и профили. После правок используется sRGB-предпросмотр; полная поддержка ICC/Adobe-эффектов не гарантируется.',
-    )
     if (messages.length)
       warnings.add(
         'Декодер сообщил о неподдерживаемых метаданных. Неизменённый оригинал сохраняется целиком; после правок неизвестные блоки могут быть потеряны.',
@@ -1040,6 +1106,121 @@ export async function importPsd(
       warnings.add(
         'Часть направляющих вне поддерживаемого бюджета (200 / 16384 px) не показана. Пока макет направляющих не изменён, исходный ресурс PSD сохраняется.',
       )
+  }
+  const colorMode = header.mode === 1 ? 'grayscale' : 'rgb'
+  let color: PsdColorProfileReport
+  if (project) {
+    color = {
+      mode: colorMode,
+      status: 'own',
+      embeddedName: embeddedProfile?.name,
+      embeddedKind: embeddedProfile?.colorSpace,
+      profile: embeddedProfile,
+      sourceModel: embeddedProfile?.model,
+      conversionSupported: !!embeddedProfile?.model && !embeddedProfile.unsupportedReason,
+      reason: embeddedProfile?.unsupportedReason,
+      explicitlyUntagged,
+    }
+  } else if (embeddedProfileInvalid) {
+    const reason =
+      'Ресурс ICC 1039 есть, но это не корректный ICC-профиль (нет подписи acsp или размер обрезан).'
+    color = {
+      mode: colorMode,
+      status: 'unsupported',
+      conversionSupported: false,
+      reason,
+      explicitlyUntagged,
+    }
+    doc.colorProfile = untaggedDocumentColorProfile()
+    warnings.add(`Цветовой профиль PSD: ${reason}`)
+  } else if (!embeddedProfile) {
+    color = {
+      mode: colorMode,
+      status: 'missing',
+      conversionSupported: false,
+      explicitlyUntagged,
+    }
+    doc.colorProfile = untaggedDocumentColorProfile()
+    warnings.add('PSD не содержит встроенного ICC-профиля (ресурс 1039).')
+  } else if (!embeddedProfile.model || embeddedProfile.unsupportedReason) {
+    const reason = embeddedProfile.unsupportedReason || 'Тип ICC-профиля не поддерживается.'
+    color = {
+      mode: colorMode,
+      status: 'unsupported',
+      embeddedName: embeddedProfile.name,
+      embeddedKind: embeddedProfile.colorSpace,
+      profile: embeddedProfile,
+      conversionSupported: false,
+      reason,
+      explicitlyUntagged,
+    }
+    doc.colorProfile = untaggedDocumentColorProfile()
+    warnings.add(
+      `Встроенный профиль «${embeddedProfile.name}» распознан, но не преобразован: ${reason}`,
+    )
+  } else if (
+    (colorMode === 'rgb' && embeddedProfile.model.kind !== 'rgb') ||
+    (colorMode === 'grayscale' && embeddedProfile.model.kind !== 'gray')
+  ) {
+    const reason =
+      colorMode === 'rgb'
+        ? 'Профиль серого нельзя применить к RGB-документу.'
+        : 'RGB-профиль нельзя применить к документу в оттенках серого.'
+    color = {
+      mode: colorMode,
+      status: 'mode-mismatch',
+      embeddedName: embeddedProfile.name,
+      embeddedKind: embeddedProfile.colorSpace,
+      profile: embeddedProfile,
+      sourceModel: embeddedProfile.model,
+      conversionSupported: false,
+      reason,
+      explicitlyUntagged,
+    }
+    doc.colorProfile = untaggedDocumentColorProfile()
+    warnings.add(
+      `Встроенный профиль «${embeddedProfile.name}» не соответствует режиму PSD: ${reason}`,
+    )
+  } else if (
+    (colorMode === 'rgb' && isSrgbProfile(embeddedProfile)) ||
+    (colorMode === 'grayscale' &&
+      profilesMatch(embeddedProfile.model, builtinColorProfile('sgray')!))
+  ) {
+    color = {
+      mode: colorMode,
+      status: 'matching',
+      embeddedName: embeddedProfile.name,
+      embeddedKind: embeddedProfile.colorSpace,
+      profile: embeddedProfile,
+      sourceModel: embeddedProfile.model,
+      conversionSupported: true,
+      explicitlyUntagged,
+    }
+    doc.colorProfile = workingDocumentColorProfile(
+      colorMode === 'grayscale' ? { convertedFrom: embeddedProfile.name } : {},
+    )
+    warnings.add(
+      colorMode === 'grayscale'
+        ? `Цветовой профиль: ${embeddedProfile.name}. Его кривая совпадает с sRGB, поэтому оттенки серого открыты в рабочей RGB-модели без изменения кодов.`
+        : `Цветовой профиль: ${embeddedProfile.name} — совпадает с рабочим пространством sRGB IEC61966-2.1.`,
+    )
+  } else {
+    color = {
+      mode: colorMode,
+      status: 'mismatch',
+      embeddedName: embeddedProfile.name,
+      embeddedKind: embeddedProfile.colorSpace,
+      profile: embeddedProfile,
+      sourceModel: embeddedProfile.model,
+      conversionSupported: true,
+      explicitlyUntagged,
+    }
+    // Provisional only: the UI/batch caller must apply the profile decision
+    // before opening. Untagged describes the fallback preview interpretation.
+    doc.colorProfile = untaggedDocumentColorProfile()
+    warnings.add(
+      `Встроенный цветовой профиль «${embeddedProfile.name}» отличается от рабочего пространства sRGB IEC61966-2.1.`,
+    )
   }
   doc = parseProject({
     ...doc,
@@ -1066,6 +1247,7 @@ export async function importPsd(
       format: header.psb ? 'PSB' : 'PSD',
       warnings: [...warnings],
       layerCount: doc.layers.length,
+      color,
     },
   }
 }
@@ -1553,6 +1735,7 @@ export async function exportPsd(
         verticalResolutionUnit: 'PPI',
         heightUnit: 'Inches',
       },
+      iccUntaggedProfile: doc.colorProfile?.status === 'untagged',
     },
   }
   if (doc.layout && (!original || !sameNativeLayout(doc.layout, source?.baseline.layout))) {
@@ -1565,6 +1748,14 @@ export async function exportPsd(
         'Макет направляющих изменён. Неподдерживаемые исходные направляющие вне отображённого набора не перенесены; исходный файл не перезаписывай без резервной копии.',
       )
   }
+  if (doc.colorProfile?.status === 'untagged')
+    notes.push(
+      'Документ помечен как без цветового профиля: пересобранный PSD записан без ICC (ресурс 1041 = untagged). Другие программы будут интерпретировать числа по своему рабочему пространству.',
+    )
+  else if (doc.colorProfile?.convertedFrom)
+    notes.push(
+      `Цвета документа ранее преобразованы из «${doc.colorProfile.convertedFrom}» в рабочее sRGB IEC61966-2.1; пересобранный PSD содержит встроенный sRGB ICC.`,
+    )
   const summary = inspectNativeLayers(psd, notes, editableContents)
   if (summary.text || summary.editableContents)
     summary.warnings.push(
@@ -1576,10 +1767,15 @@ export async function exportPsd(
     psb,
     project: portable,
   })
-  const bytes =
+  let bytes =
     source && appearanceUnchanged
       ? preserveMergedPixels(source.bytes, preserveUnknownResources(source.bytes, buffer))
       : buffer
+  if (!(source && appearanceUnchanged))
+    bytes = withPsdIccProfile(
+      bytes,
+      doc.colorProfile?.status === 'untagged' ? undefined : buildIccProfile(WORKING_RGB_PROFILE),
+    )
   if (bytes.byteLength > 80 * 1024 * 1024)
     throw new Error(
       'PSD превышает 80 МБ — лимит повторного открытия. Уменьши изображения или объедини слои.',

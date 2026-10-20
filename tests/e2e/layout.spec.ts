@@ -86,7 +86,7 @@ test('guides and asymmetric grid survive native PSD without XMP and never enter 
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: native,
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
+  await page.getByRole('button', { name: 'Открыть', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await expect(page.getByTestId('document-guide')).toHaveCount(2)
   expect(await save(page)).toEqual(native)
@@ -308,7 +308,6 @@ test('metadata-only edits inside a preserved smart object update its native link
     mimeType: 'image/vnd.adobe.photoshop',
     buffer: original,
   })
-  await page.getByRole('button', { name: 'Открыть рабочую копию', exact: true }).click()
   await expect(page.locator('.busy-overlay')).toBeHidden()
   await page
     .getByRole('button', { name: 'Открыть содержимое: Editable source', exact: true })
