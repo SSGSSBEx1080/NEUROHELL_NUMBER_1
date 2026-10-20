@@ -10,8 +10,11 @@ import {
   type GradientDefinition,
 } from './gradientRamp'
 import { defaultPatternDefinition, parsePatternDefinition, patternTileCanvas } from './patterns'
+import { applyBevelToPixels } from './bevel'
 import {
   MAX_STYLE_INSTANCES,
+  type BevelEffectStyle,
+  type BlendMode,
   type ColorOverlayStyle,
   type GlowEffectStyle,
   type GradientOverlayStyle,
@@ -24,7 +27,13 @@ import {
   type StyleGradientShape,
 } from '../types'
 
-export const STYLE_LIMITS = { strokeSize: 120, blur: 100, offset: 180 } as const
+export const STYLE_LIMITS = {
+  strokeSize: 120,
+  blur: 100,
+  offset: 180,
+  bevelSize: 250,
+  bevelSoften: 100,
+} as const
 
 export function defaultGradientOverlayGradient(): GradientDefinition {
   return solidGradient(
@@ -99,6 +108,24 @@ export const defaultPatternOverlayStyle = (): PatternOverlayStyle => ({
   phaseY: 0,
   align: true,
 })
+export const defaultBevelStyle = (): BevelEffectStyle => ({
+  enabled: false,
+  style: 'inner',
+  technique: 'smooth',
+  depth: 1,
+  direction: 'up',
+  size: 5,
+  soften: 0,
+  angle: 120,
+  altitude: 30,
+  useGlobalLight: true,
+  highlightColor: '#ffffff',
+  highlightBlendMode: 'screen',
+  highlightOpacity: 0.75,
+  shadowColor: '#000000',
+  shadowBlendMode: 'multiply',
+  shadowOpacity: 0.75,
+})
 export function defaultStyles(): LayerStyles {
   return {
     fillOpacity: 1,
@@ -110,6 +137,7 @@ export function defaultStyles(): LayerStyles {
     overlays: [defaultOverlayStyle()],
     gradients: [defaultGradientOverlayStyle()],
     pattern: defaultPatternOverlayStyle(),
+    bevel: defaultBevelStyle(),
   }
 }
 
@@ -120,6 +148,29 @@ const color = (v: unknown, fallback: string) =>
 const num = (v: unknown, fallback: number, min: number, max: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
 const percent = (v: unknown, fallback: number) => num(v, fallback, 0, 1)
+const cyclicAngle = (v: unknown, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? ((((v + 180) % 360) + 360) % 360) - 180 : fallback
+const BLEND_MODES: BlendMode[] = [
+  'source-over',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'lighter',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+]
+const blendMode = (v: unknown, fallback: BlendMode): BlendMode =>
+  BLEND_MODES.includes(v as BlendMode) ? (v as BlendMode) : fallback
 
 const GRADIENT_SHAPES: StyleGradientShape[] = ['linear', 'radial', 'reflected', 'angle', 'diamond']
 export const parseGradientShape = (v: unknown, fallback: StyleGradientShape): StyleGradientShape =>
@@ -239,6 +290,33 @@ function parsePatternOverlay(input: unknown): PatternOverlayStyle {
     align: v.align !== false,
   }
 }
+function parseBevel(input: unknown): BevelEffectStyle {
+  const v = record(input),
+    d = defaultBevelStyle()
+  if (!v) return d
+  return {
+    enabled: v.enabled === true,
+    style:
+      v.style === 'outer' || v.style === 'emboss' || v.style === 'pillow' || v.style === 'stroke'
+        ? v.style
+        : 'inner',
+    technique:
+      v.technique === 'chiselHard' || v.technique === 'chiselSoft' ? v.technique : 'smooth',
+    depth: num(v.depth, d.depth, 0.01, 10),
+    direction: v.direction === 'down' ? 'down' : 'up',
+    size: num(v.size, d.size, 0, STYLE_LIMITS.bevelSize),
+    soften: num(v.soften, d.soften, 0, STYLE_LIMITS.bevelSoften),
+    angle: cyclicAngle(v.angle, d.angle),
+    altitude: num(v.altitude, d.altitude, 0, 90),
+    useGlobalLight: v.useGlobalLight !== false,
+    highlightColor: color(v.highlightColor, d.highlightColor),
+    highlightBlendMode: blendMode(v.highlightBlendMode, d.highlightBlendMode),
+    highlightOpacity: percent(v.highlightOpacity, d.highlightOpacity),
+    shadowColor: color(v.shadowColor, d.shadowColor),
+    shadowBlendMode: blendMode(v.shadowBlendMode, d.shadowBlendMode),
+    shadowOpacity: percent(v.shadowOpacity, d.shadowOpacity),
+  }
+}
 const list = <T>(value: unknown, legacy: unknown, parse: (v: unknown) => T, make: () => T): T[] => {
   if (Array.isArray(value)) {
     const items = value.slice(0, MAX_STYLE_INSTANCES).map(parse)
@@ -271,6 +349,7 @@ export function normalizeStyles(input: unknown): LayerStyles | undefined {
     overlays: list(v.overlays, v.overlay, parseOverlay, defaultOverlayStyle),
     gradients: list(v.gradients, v.gradient, parseGradientOverlay, defaultGradientOverlayStyle),
     pattern: parsePatternOverlay(v.pattern ?? v.patternOverlay),
+    bevel: parseBevel(v.bevel ?? v.bevelEmboss),
   }
 }
 export const hasStyles = (s?: LayerStyles) =>
@@ -283,7 +362,8 @@ export const hasStyles = (s?: LayerStyles) =>
     s.innerGlow.enabled ||
     s.overlays.some((e) => e.enabled) ||
     s.gradients.some((e) => e.enabled) ||
-    s.pattern.enabled)
+    s.pattern.enabled ||
+    s.bevel.enabled)
 
 /** Short human summary for the layers panel, e.g. “Обводка ×3 · Тень”. */
 export function styleEffectSummary(s?: LayerStyles): string {
@@ -300,6 +380,7 @@ export function styleEffectSummary(s?: LayerStyles): string {
   add('Цвет', s.overlays.filter((e) => e.enabled).length)
   add('Градиент', s.gradients.filter((e) => e.enabled).length)
   if (s.pattern.enabled) parts.push('Узор')
+  if (s.bevel.enabled) parts.push('Фаска')
   if (s.fillOpacity !== 1) parts.push(`Заливка ${Math.round(s.fillOpacity * 100)}%`)
   return parts.join(' · ')
 }
@@ -331,6 +412,11 @@ export function scaleLayerStyles(styles: LayerStyles, factor: number): LayerStyl
     ...clone.pattern,
     phaseX: scaled(clone.pattern.phaseX, -10000, 10000),
     phaseY: scaled(clone.pattern.phaseY, -10000, 10000),
+  }
+  clone.bevel = {
+    ...clone.bevel,
+    size: scaled(clone.bevel.size, 0, STYLE_LIMITS.bevelSize),
+    soften: scaled(clone.bevel.soften, 0, STYLE_LIMITS.bevelSoften),
   }
   return clone
 }
@@ -476,7 +562,8 @@ export function paintPatternFill(
 /**
  * Original raster layer styles. Cached separately from position/opacity for smooth dragging.
  * Paint order (back → front): drop shadows, outer glow, content with color/gradient
- * overlays (attenuated by Fill), inner shadows/glow, strokes. Inside each ordered
+ * overlays (attenuated by Fill), inner shadows/glow, strokes, then Bevel &
+ * Emboss as the final lighting pass. Inside each ordered
  * list index 0 is topmost, so lists are painted in reverse.
  */
 export function renderStyled(
@@ -613,6 +700,7 @@ export function renderStyled(
     for (const effect of [...s.innerShadows].reverse()) if (effect.enabled) innerEffect(effect)
     if (s.innerGlow.enabled) innerEffect({ ...s.innerGlow, x: 0, y: 0 })
 
+    const strokeEmbossRings: { canvas: HTMLCanvasElement; opacity: number }[] = []
     for (const stroke of [...s.strokes].reverse()) {
       if (!stroke.enabled || stroke.size <= 0 || stroke.opacity <= 0) continue
       let colored: HTMLCanvasElement
@@ -681,6 +769,41 @@ export function renderStyled(
       o.globalAlpha = stroke.opacity
       o.drawImage(ring, 0, 0)
       o.globalAlpha = 1
+      if (s.bevel.enabled && s.bevel.style === 'stroke')
+        strokeEmbossRings.push({ canvas: ring, opacity: stroke.opacity })
+    }
+
+    if (s.bevel.enabled && s.bevel.size > 0) {
+      const outputPixels = o.getImageData(0, 0, w, h)
+      if (s.bevel.style === 'stroke') {
+        for (const ring of strokeEmbossRings) {
+          const maskPixels = ring.canvas.getContext('2d')!.getImageData(0, 0, w, h)
+          if (ring.opacity < 1)
+            for (let i = 3; i < maskPixels.data.length; i += 4)
+              maskPixels.data[i] = Math.round(maskPixels.data[i] * ring.opacity)
+          applyBevelToPixels(
+            outputPixels,
+            maskPixels,
+            {
+              width: w,
+              height: h,
+              data: new Uint8ClampedArray(outputPixels.data),
+            },
+            s.bevel,
+            scale,
+            'stroke',
+          )
+        }
+      } else {
+        applyBevelToPixels(
+          outputPixels,
+          b.getImageData(0, 0, w, h),
+          c.getImageData(0, 0, w, h),
+          s.bevel,
+          scale,
+        )
+      }
+      o.putImageData(outputPixels, 0, 0)
     }
     entry = { layer, image: output, left: bounds.x, top: bounds.y, scale }
     cache.set(layer.id, entry)

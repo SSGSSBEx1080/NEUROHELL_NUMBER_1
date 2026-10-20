@@ -48,6 +48,10 @@ export function rasterBounds(layer: Layer, effects = false, flipped = false): Re
             e.enabled ? e.blur * 2 + Math.max(Math.abs(e.x), Math.abs(e.y)) : 0,
           ),
           s.glow.enabled ? s.glow.blur * 2 : 0,
+          s.bevel.enabled &&
+            (s.bevel.style === 'outer' || s.bevel.style === 'emboss' || s.bevel.style === 'pillow')
+            ? s.bevel.size + s.bevel.soften
+            : 0,
         )
       : 0) +
     2

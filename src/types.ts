@@ -274,6 +274,28 @@ export interface GradientOverlayStyle {
   opacity: number
   reverse: boolean
 }
+export type BevelStyleKind = 'outer' | 'inner' | 'emboss' | 'pillow' | 'stroke'
+export type BevelTechniqueKind = 'smooth' | 'chiselHard' | 'chiselSoft'
+export interface BevelEffectStyle {
+  enabled: boolean
+  style: BevelStyleKind
+  technique: BevelTechniqueKind
+  /** Depth as a fraction: 1 = 100%. */
+  depth: number
+  direction: 'up' | 'down'
+  size: number
+  soften: number
+  /** PSD light angle in degrees: 0° right, 90° top, 120° top-left. */
+  angle: number
+  altitude: number
+  useGlobalLight: boolean
+  highlightColor: string
+  highlightBlendMode: BlendMode
+  highlightOpacity: number
+  shadowColor: string
+  shadowBlendMode: BlendMode
+  shadowOpacity: number
+}
 export interface PatternOverlayStyle {
   enabled: boolean
   pattern: PatternDefinition
@@ -301,6 +323,7 @@ export interface LayerStyles {
   overlays: ColorOverlayStyle[]
   gradients: GradientOverlayStyle[]
   pattern: PatternOverlayStyle
+  bevel: BevelEffectStyle
 }
 export const MAX_STYLE_INSTANCES = 10
 

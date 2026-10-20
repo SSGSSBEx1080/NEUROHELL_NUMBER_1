@@ -257,6 +257,98 @@ test('pattern overlay and pattern-filled stroke render tiles and export native P
   expect(stripped?.effects?.stroke?.[0].pattern?.id).toBe(strokeId)
 })
 
+test('Bevel & Emboss lights the shape, reverses direction and exports natively', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер фаски' }).fill('16')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // Default PSD light 120°/30° comes from the top-left; the centre stays flat.
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 68, 100))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 232, 100))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Направление фаски').selectOption('down')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeLessThan(110)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeGreaterThan(140)
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Направление фаски').selectOption('up')
+  await page.getByLabel('Стиль фаски').selectOption('outer')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 42)
+      return p[3] === 255 && p[0] > 140
+    })
+    .toBe(true)
+  await expect
+    .poll(async () => {
+      const p = await pixel(page, 150, 158)
+      return p[3] === 255 && p[0] < 110
+    })
+    .toBe(true)
+
+  // Stroke Emboss shades the actual 18 px inside stroke ring, not the fill.
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Обводка', exact: false }).click()
+  await expect(page.getByTestId('effect-instance-list')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByRole('slider', { name: 'Размер обводки' }).fill('18')
+  await page.locator('.style-controls').getByLabel('Положение обводки').selectOption('inside')
+  await page.getByLabel('Цвет обводки слоя').fill('#808080')
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByLabel('Стиль фаски').selectOption('stroke')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  await expect.poll(async () => (await pixel(page, 150, 58))[0]).toBeGreaterThan(140)
+  await expect.poll(async () => (await pixel(page, 150, 142))[0]).toBeLessThan(110)
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([128, 128, 128, 255])
+  await expect.poll(async () => (await pixel(page, 150, 42))[3]).toBe(0)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.bevel)
+  expect(layer?.effects?.bevel).toMatchObject({
+    enabled: true,
+    style: 'stroke emboss',
+    technique: 'smooth',
+    direction: 'up',
+    angle: 120,
+    altitude: 30,
+    highlightBlendMode: 'screen',
+    shadowBlendMode: 'multiply',
+    size: { value: 16, units: 'Pixels' },
+  })
+  expect(layer?.effects?.bevel?.strength).toBeCloseTo(1, 2)
+  expect(layer?.effects?.bevel?.contour).toMatchObject({
+    name: 'Linear',
+    curve: [
+      { x: 0, y: 0 },
+      { x: 255, y: 255 },
+    ],
+  })
+  parsed.imageResources = {}
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  const stripped = (withoutXmp.children || []).find((l) => l.effects?.bevel)
+  expect(stripped?.effects?.bevel?.style).toBe('stroke emboss')
+})
+
 test('batch applies a real action to copies and never downloads under input names', async ({
   page,
 }) => {

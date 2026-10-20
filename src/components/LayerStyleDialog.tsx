@@ -21,6 +21,7 @@ import {
   type BlendIfChannelKey,
   type BlendIfQuad,
   type BlendIfRanges,
+  type BlendMode,
   type Layer,
   type LayerStyles,
 } from '../types'
@@ -62,7 +63,26 @@ import { PatternDefinitionEditor } from './PatternDefinitionEditor'
 import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
-type Tab = ListKey | 'glow' | 'innerGlow' | 'pattern' | 'blendIf' | 'library'
+type Tab = ListKey | 'glow' | 'innerGlow' | 'pattern' | 'bevel' | 'blendIf' | 'library'
+const BEVEL_BLEND_MODES: [BlendMode, string][] = [
+  ['source-over', 'Обычный'],
+  ['multiply', 'Умножение'],
+  ['screen', 'Экран'],
+  ['overlay', 'Перекрытие'],
+  ['darken', 'Темнее'],
+  ['lighten', 'Светлее'],
+  ['color-dodge', 'Осветление основы'],
+  ['lighter', 'Линейное осветление (сложение)'],
+  ['color-burn', 'Затемнение основы'],
+  ['hard-light', 'Жёсткий свет'],
+  ['soft-light', 'Мягкий свет'],
+  ['difference', 'Разница'],
+  ['exclusion', 'Исключение'],
+  ['hue', 'Цветовой тон'],
+  ['saturation', 'Насыщенность'],
+  ['color', 'Цветность'],
+  ['luminosity', 'Яркость'],
+]
 const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'strokes',
@@ -89,6 +109,11 @@ const sections: { id: Tab; name: string; note: string }[] = [
     note: 'Повторяющаяся плитка под наложением цвета и градиентами: процедурные узоры и плитки-изображения, масштаб, фаза и связь со слоем.',
   },
   {
+    id: 'bevel',
+    name: 'Фаска и тиснение',
+    note: 'Собственное поле высоты по расстоянию до альфа-края: пять стилей, техника, глубина, смягчение и свет. Текстура и нелинейный контур глянца пока не воспроизводятся.',
+  },
+  {
     id: 'blendIf',
     name: 'Параметры наложения',
     note: 'Blend If: показывать пиксели по яркости/каналам этого и нижнего слоя. Разделённые пороги дают плавный переход.',
@@ -103,6 +128,7 @@ const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): numb
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
   if (tab === 'pattern') return styles.pattern.enabled ? 1 : 0
+  if (tab === 'bevel') return styles.bevel.enabled ? 1 : 0
   if (tab === 'library') return 0
   if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
@@ -185,6 +211,7 @@ export function LayerStyleDialog({
     tab !== 'glow' &&
     tab !== 'innerGlow' &&
     tab !== 'pattern' &&
+    tab !== 'bevel' &&
     tab !== 'library' &&
     tab !== 'blendIf'
       ? tab
@@ -198,7 +225,7 @@ export function LayerStyleDialog({
       [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, ...patch } : item)),
     }))
   }
-  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern', patch: object) =>
+  const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern' | 'bevel', patch: object) =>
     setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
   const factories = {
     strokes: defaultStrokeStyle,
@@ -268,11 +295,14 @@ export function LayerStyleDialog({
         ? styles.innerGlow.enabled
         : tab === 'pattern'
           ? styles.pattern.enabled
-          : listKey
-            ? !!items[index]?.enabled
-            : false
+          : tab === 'bevel'
+            ? styles.bevel.enabled
+            : listKey
+              ? !!items[index]?.enabled
+              : false
   const setActiveEnabled = (enabled: boolean) => {
-    if (tab === 'glow' || tab === 'innerGlow' || tab === 'pattern') patchSingle(tab, { enabled })
+    if (tab === 'glow' || tab === 'innerGlow' || tab === 'pattern' || tab === 'bevel')
+      patchSingle(tab, { enabled })
     else patchItem({ enabled })
   }
   const applyPreset = (preset: StylePreset) => {
@@ -689,6 +719,141 @@ export function LayerStyleDialog({
               <p className="panel-note">
                 Со связью начало плитки движется вместе со слоем. Без связи фаза считается от начала
                 документа, поэтому узор не сдвигается при обычном перемещении слоя.
+              </p>
+            </>
+          )}
+          {tab === 'bevel' && (
+            <>
+              <Select
+                aria-label="Стиль фаски"
+                value={styles.bevel.style}
+                onChange={(e) => patchSingle('bevel', { style: e.target.value, enabled: true })}
+              >
+                <option value="outer">Внешний скос</option>
+                <option value="inner">Внутренний скос</option>
+                <option value="emboss">Тиснение</option>
+                <option value="pillow">Подушечное тиснение</option>
+                <option value="stroke">Тиснение обводки</option>
+              </Select>
+              <Select
+                aria-label="Метод фаски"
+                value={styles.bevel.technique}
+                onChange={(e) => patchSingle('bevel', { technique: e.target.value, enabled: true })}
+              >
+                <option value="smooth">Сглаживание</option>
+                <option value="chiselHard">Жёсткая огранка</option>
+                <option value="chiselSoft">Мягкая огранка</option>
+              </Select>
+              <Select
+                aria-label="Направление фаски"
+                value={styles.bevel.direction}
+                onChange={(e) => patchSingle('bevel', { direction: e.target.value, enabled: true })}
+              >
+                <option value="up">Вверх</option>
+                <option value="down">Вниз</option>
+              </Select>
+              <Slider
+                label="Глубина фаски"
+                value={styles.bevel.depth * 100}
+                min={1}
+                max={1000}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { depth: v / 100, enabled: true })}
+              />
+              <Slider
+                label="Размер фаски"
+                value={styles.bevel.size}
+                max={STYLE_LIMITS.bevelSize}
+                suffix=" px"
+                onChange={(size) => patchSingle('bevel', { size, enabled: true })}
+              />
+              <Slider
+                label="Смягчение фаски"
+                value={styles.bevel.soften}
+                max={STYLE_LIMITS.bevelSoften}
+                suffix=" px"
+                onChange={(soften) => patchSingle('bevel', { soften, enabled: true })}
+              />
+              <Slider
+                label="Угол света фаски"
+                value={styles.bevel.angle}
+                min={-180}
+                max={180}
+                suffix="°"
+                onChange={(angle) =>
+                  patchSingle('bevel', { angle, useGlobalLight: false, enabled: true })
+                }
+              />
+              <Slider
+                label="Высота света фаски"
+                value={styles.bevel.altitude}
+                min={0}
+                max={90}
+                suffix="°"
+                onChange={(altitude) => patchSingle('bevel', { altitude, enabled: true })}
+              />
+              <span className="panel-subtitle">Блик</span>
+              <ColorField
+                label="Цвет блика фаски"
+                value={styles.bevel.highlightColor}
+                onChange={(highlightColor) =>
+                  patchSingle('bevel', { highlightColor, enabled: true })
+                }
+              />
+              <Select
+                aria-label="Режим блика фаски"
+                value={styles.bevel.highlightBlendMode}
+                onChange={(e) =>
+                  patchSingle('bevel', { highlightBlendMode: e.target.value, enabled: true })
+                }
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность блика фаски"
+                value={styles.bevel.highlightOpacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { highlightOpacity: v / 100 })}
+              />
+              <span className="panel-subtitle">Тень фаски</span>
+              <ColorField
+                label="Цвет тени фаски"
+                value={styles.bevel.shadowColor}
+                onChange={(shadowColor) => patchSingle('bevel', { shadowColor, enabled: true })}
+              />
+              <Select
+                aria-label="Режим тени фаски"
+                value={styles.bevel.shadowBlendMode}
+                onChange={(e) =>
+                  patchSingle('bevel', { shadowBlendMode: e.target.value, enabled: true })
+                }
+              >
+                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                  <option key={mode} value={mode}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Slider
+                label="Непрозрачность тени фаски"
+                value={styles.bevel.shadowOpacity * 100}
+                suffix="%"
+                onChange={(v) => patchSingle('bevel', { shadowOpacity: v / 100 })}
+              />
+              {styles.bevel.style === 'stroke' && !styles.strokes.some((e) => e.enabled) && (
+                <p className="panel-note">
+                  Тиснение обводки работает только с включённой обводкой и освещает каждое её
+                  фактическое кольцо.
+                </p>
+              )}
+              <p className="panel-note">
+                {styles.bevel.useGlobalLight
+                  ? 'PSD-флаг глобального света сохраняется как есть. Общедокументной синхронизации углов пока нет; ручная правка угла выше отключит флаг для этого слоя.'
+                  : 'Угол и высота света заданы для этого слоя отдельно. 90° — свет сверху, 120° — сверху слева.'}
               </p>
             </>
           )}

@@ -276,6 +276,79 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.gradients[0].gradient.noise?.min[0]).toBeCloseTo(0.1, 2)
   })
 
+  it('round-trips Bevel & Emboss through the native PSD effect descriptor', () => {
+    const styles = normalizeStyles({
+      bevel: {
+        enabled: true,
+        style: 'pillow',
+        technique: 'chiselSoft',
+        depth: 1.8,
+        direction: 'down',
+        size: 17,
+        soften: 3,
+        angle: 210,
+        altitude: 42,
+        useGlobalLight: false,
+        highlightColor: '#ffe08a',
+        highlightBlendMode: 'overlay',
+        highlightOpacity: 0.65,
+        shadowColor: '#102040',
+        shadowBlendMode: 'soft-light',
+        shadowOpacity: 0.45,
+      },
+    })!
+    expect(styles.bevel.angle).toBe(-150) // 210° canonicalizes to the same PSD direction.
+    const effects = __psdStyleCodecForTests.exportStyles(styles)
+    const layer = readPsd(writePsd({ width: 4, height: 4, children: [{ name: 'b', effects }] }), {
+      useImageData: true,
+    }).children![0]
+    expect(layer.effects?.bevel).toMatchObject({
+      enabled: true,
+      style: 'pillow emboss',
+      technique: 'chisel soft',
+      direction: 'down',
+      size: { units: 'Pixels', value: 17 },
+      soften: { units: 'Pixels', value: 3 },
+      angle: -150,
+      altitude: 42,
+      useGlobalLight: false,
+      highlightBlendMode: 'overlay',
+      shadowBlendMode: 'soft light',
+      useTexture: false,
+      useShape: false,
+      contour: {
+        name: 'Linear',
+        curve: [
+          { x: 0, y: 0 },
+          { x: 255, y: 255 },
+        ],
+      },
+    })
+    expect(layer.effects?.bevel?.strength).toBeCloseTo(1.8, 2)
+    expect(layer.effects?.bevel?.highlightOpacity).toBeCloseTo(0.65, 2)
+    expect(layer.effects?.bevel?.shadowOpacity).toBeCloseTo(0.45, 2)
+
+    const back = __psdStyleCodecForTests.importStyles(layer)!
+    expect(back.bevel).toMatchObject({
+      enabled: true,
+      style: 'pillow',
+      technique: 'chiselSoft',
+      direction: 'down',
+      size: 17,
+      soften: 3,
+      angle: -150,
+      altitude: 42,
+      useGlobalLight: false,
+      highlightColor: '#ffe08a',
+      highlightBlendMode: 'overlay',
+      shadowColor: '#102040',
+      shadowBlendMode: 'soft-light',
+    })
+    expect(back.bevel.depth).toBeCloseTo(1.8, 2)
+    expect(back.bevel.highlightOpacity).toBeCloseTo(0.65, 2)
+    expect(back.bevel.shadowOpacity).toBeCloseTo(0.45, 2)
+  })
+
   it('bakes the PSD effect scale into editable sizes on import', () => {
     const styles = normalizeStyles({
       strokes: [{ enabled: true, size: 5, color: '#ffffff', position: 'outside', opacity: 1 }],

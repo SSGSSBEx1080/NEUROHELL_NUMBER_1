@@ -21,6 +21,7 @@ import type {
   PixelData,
 } from 'ag-psd'
 import type {
+  BevelEffectStyle,
   BlendIfRanges,
   BlendMode,
   EditorDocument,
@@ -103,6 +104,31 @@ const toPsd: Record<BlendMode, PsdLayer['blendMode']> = {
   luminosity: 'luminosity',
   lighter: 'linear dodge',
 }
+type PsdBevel = NonNullable<LayerEffectsInfo['bevel']>
+const bevelStyleFromPsd: Record<string, BevelEffectStyle['style']> = {
+  'outer bevel': 'outer',
+  'inner bevel': 'inner',
+  emboss: 'emboss',
+  'pillow emboss': 'pillow',
+  'stroke emboss': 'stroke',
+}
+const bevelStyleToPsd: Record<BevelEffectStyle['style'], PsdBevel['style']> = {
+  outer: 'outer bevel',
+  inner: 'inner bevel',
+  emboss: 'emboss',
+  pillow: 'pillow emboss',
+  stroke: 'stroke emboss',
+}
+const bevelTechniqueFromPsd: Record<string, BevelEffectStyle['technique']> = {
+  smooth: 'smooth',
+  'chisel hard': 'chiselHard',
+  'chisel soft': 'chiselSoft',
+}
+const bevelTechniqueToPsd: Record<BevelEffectStyle['technique'], PsdBevel['technique']> = {
+  smooth: 'smooth',
+  chiselHard: 'chisel hard',
+  chiselSoft: 'chisel soft',
+}
 export function runCodec<T>(job: object, transfers: Transferable[] = []): Promise<T> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./psd.worker.ts', import.meta.url), { type: 'module' })
@@ -143,6 +169,7 @@ const rgb = (color: string) => ({
   b: parseInt(color.slice(5, 7), 16),
 })
 const px = (value: number) => ({ units: 'Pixels' as const, value })
+const wrapPsdAngle = (value: number) => ((((value + 180) % 360) + 360) % 360) - 180
 function canvas(width: number, height: number) {
   if (width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 24_000_000)
     throw new Error('Слишком большой растровый слой PSD')
@@ -339,7 +366,7 @@ function patternInfoFromPixels(
 function importStyles(
   src: PsdLayer,
   patternDefinitions?: Map<string, PatternDefinition>,
-  warnPattern?: (message: string) => void,
+  warn?: (message: string) => void,
 ): LayerStyles | undefined {
   const f = src.effects,
     s = defaultStyles()
@@ -356,7 +383,7 @@ function importStyles(
         if (stroke.fillType === 'gradient' && !gradient) return []
         const pattern =
           stroke.fillType === 'pattern'
-            ? resolvePsdPattern(stroke.pattern, patternDefinitions, warnPattern)
+            ? resolvePsdPattern(stroke.pattern, patternDefinitions, warn)
             : undefined
         if (stroke.fillType === 'pattern' && !pattern) return []
         return [
@@ -448,7 +475,7 @@ function importStyles(
     if (gradients.length) s.gradients = gradients
     const patternOverlay = f.patternOverlay
     if (patternOverlay?.enabled !== false && patternOverlay) {
-      const pattern = resolvePsdPattern(patternOverlay.pattern, patternDefinitions, warnPattern)
+      const pattern = resolvePsdPattern(patternOverlay.pattern, patternDefinitions, warn)
       if (pattern)
         s.pattern = {
           enabled: true,
@@ -459,6 +486,45 @@ function importStyles(
           phaseY: Math.min(10000, Math.max(-10000, patternOverlay.phase?.y || 0)),
           align: patternOverlay.align !== false,
         }
+    }
+    const bevel = f.bevel?.enabled !== false ? f.bevel : undefined
+    if (bevel) {
+      const highlightBlendMode = bevel.highlightBlendMode
+        ? toCanvas[bevel.highlightBlendMode]
+        : 'screen'
+      const shadowBlendMode = bevel.shadowBlendMode ? toCanvas[bevel.shadowBlendMode] : 'multiply'
+      if (!highlightBlendMode || !shadowBlendMode)
+        warn?.(
+          'Режим смешивания блика или тени Bevel & Emboss не поддерживается рабочим движком и заменён стандартным Screen/Multiply.',
+        )
+      if (bevel.useTexture)
+        warn?.(
+          'Текстура Bevel & Emboss не импортирована: ag-psd передаёт только флаг useTexture без узора, масштаба и глубины текстуры. Основная фаска редактируется без текстуры.',
+        )
+      const curve = bevel.contour?.curve || []
+      const nonLinearContour = curve.some((point) => Math.abs(point.y - point.x) > 0.01)
+      if (bevel.useShape && nonLinearContour)
+        warn?.(
+          'Нелинейный контур глянца Bevel & Emboss пока не воспроизводится рабочим движком; импортируется основная геометрия и освещение фаски. Контуры запланированы отдельным этапом 0.9.',
+        )
+      s.bevel = {
+        enabled: true,
+        style: bevelStyleFromPsd[bevel.style || 'inner bevel'] || 'inner',
+        technique: bevelTechniqueFromPsd[bevel.technique || 'smooth'] || 'smooth',
+        depth: Math.min(10, Math.max(0.01, bevel.strength ?? 1)),
+        direction: bevel.direction === 'down' ? 'down' : 'up',
+        size: Math.min(STYLE_LIMITS.bevelSize, Math.max(0, (bevel.size?.value || 0) * scale)),
+        soften: Math.min(STYLE_LIMITS.bevelSoften, Math.max(0, (bevel.soften?.value || 0) * scale)),
+        angle: wrapPsdAngle(bevel.angle ?? 120),
+        altitude: Math.min(90, Math.max(0, bevel.altitude ?? 30)),
+        useGlobalLight: bevel.useGlobalLight !== false,
+        highlightColor: hex(bevel.highlightColor, '#ffffff'),
+        highlightBlendMode: highlightBlendMode || 'screen',
+        highlightOpacity: bevel.highlightOpacity ?? 0.75,
+        shadowColor: hex(bevel.shadowColor, '#000000'),
+        shadowBlendMode: shadowBlendMode || 'multiply',
+        shadowOpacity: bevel.shadowOpacity ?? 0.75,
+      }
     }
   }
   return hasStyles(s) ? s : undefined
@@ -571,6 +637,35 @@ function exportStyles(
       pattern: patternRef(s.pattern.pattern),
       phase: { x: s.pattern.phaseX, y: s.pattern.phaseY },
       align: s.pattern.align,
+    }
+  if (s.bevel.enabled)
+    effects.bevel = {
+      enabled: true,
+      style: bevelStyleToPsd[s.bevel.style],
+      technique: bevelTechniqueToPsd[s.bevel.technique],
+      strength: s.bevel.depth,
+      direction: s.bevel.direction,
+      size: px(s.bevel.size),
+      soften: px(s.bevel.soften),
+      angle: s.bevel.angle,
+      altitude: s.bevel.altitude,
+      useGlobalLight: s.bevel.useGlobalLight,
+      highlightColor: rgb(s.bevel.highlightColor),
+      highlightBlendMode: toPsd[s.bevel.highlightBlendMode],
+      highlightOpacity: s.bevel.highlightOpacity,
+      shadowColor: rgb(s.bevel.shadowColor),
+      shadowBlendMode: toPsd[s.bevel.shadowBlendMode],
+      shadowOpacity: s.bevel.shadowOpacity,
+      useTexture: false,
+      useShape: false,
+      antialiasGloss: false,
+      contour: {
+        name: 'Linear',
+        curve: [
+          { x: 0, y: 0 },
+          { x: 255, y: 255 },
+        ],
+      },
     }
   return effects
 }
