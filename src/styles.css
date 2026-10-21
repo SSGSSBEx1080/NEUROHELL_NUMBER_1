@@ -3253,6 +3253,27 @@ kbd {
   overflow-x: auto;
   scrollbar-width: none;
 }
+/* The brush family carries five slider fields plus extra controls; keep
+   them compact in the options bar (dialogs keep the roomy defaults) so
+   nothing falls into the hidden horizontal scroll at common widths. */
+.options-bar .tool-options {
+  gap: 12px;
+}
+.options-bar .slider-number-field {
+  min-width: 124px;
+}
+.options-bar .slider-number-field > input[type='range'] {
+  min-width: 28px;
+}
+.options-bar .slider-number-field > .number-field {
+  width: 56px;
+}
+.options-bar .select-wrap {
+  flex: 0 0 auto;
+}
+.options-bar .select-wrap select {
+  max-width: 158px;
+}
 .options-bar .tool-options .tool-instruction {
   flex-shrink: 1;
   min-width: 0;

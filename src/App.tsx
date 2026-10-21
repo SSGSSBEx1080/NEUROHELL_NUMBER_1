@@ -2674,24 +2674,30 @@ export default function App() {
                   onChange={(brushSmoothing) => setSettings({ brushSmoothing })}
                 />
                 {tool !== 'clone' && (
-                  <>
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={settings.pressureSize !== false}
-                        onChange={(e) => setSettings({ pressureSize: e.target.checked })}
-                      />
-                      Нажим → размер
-                    </label>
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={!!settings.pressureOpacity}
-                        onChange={(e) => setSettings({ pressureOpacity: e.target.checked })}
-                      />
-                      Нажим → непрозрачность
-                    </label>
-                  </>
+                  <Select
+                    aria-label="Нажим пера"
+                    value={
+                      settings.pressureSize === false && !settings.pressureOpacity
+                        ? 'off'
+                        : settings.pressureSize === false
+                          ? 'opacity'
+                          : settings.pressureOpacity
+                            ? 'both'
+                            : 'size'
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setSettings({
+                        pressureSize: v === 'size' || v === 'both',
+                        pressureOpacity: v === 'opacity' || v === 'both',
+                      })
+                    }}
+                  >
+                    <option value="size">Нажим → размер</option>
+                    <option value="both">Нажим → размер + непрозрачность</option>
+                    <option value="opacity">Нажим → непрозрачность</option>
+                    <option value="off">Нажим выкл</option>
+                  </Select>
                 )}
                 {tool === 'clone' ? (
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
