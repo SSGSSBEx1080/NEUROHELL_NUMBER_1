@@ -353,3 +353,51 @@ test('explicit rasterization includes blurred image bounds instead of clipping i
   expect(worst).toBeLessThanOrEqual(2)
   await expect(page.getByLabel('Ш', { exact: true })).toHaveValue('148')
 })
+
+test('liquify forward warp drags the edge on an explicit copy and leaves the original intact', async ({
+  page,
+}) => {
+  await ready(page)
+  const src = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4,
+          v = xx < 60 ? 0 : 255
+        p.data[i] = p.data[i + 1] = p.data[i + 2] = v
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const base = newDocument(120, 80, 'Пластика', 'transparent')
+  base.layers = [makeLayer({ kind: 'image', name: 'Край', src, width: 120, height: 80 })]
+  await open(page, base)
+  await menu(page, 'Фильтры', 'Пластика на копии…')
+  await page.getByLabel('Размер кисти', { exact: true }).fill('50')
+  await page.getByLabel('Плотность', { exact: true }).fill('100')
+  const box = await page.getByTestId('liquify-canvas').boundingBox()
+  // The view scales 120x80 down; map natural (30..80, 40) through the box.
+  const sx = box!.width / 120,
+    y = box!.y + 40 * sx
+  await page.mouse.move(box!.x + 30 * sx, y)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + 85 * sx, y, { steps: 12 })
+  await page.mouse.up()
+  await expect(page.getByRole('button', { name: 'Применить копию', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Применить копию', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Край · Пластика' })).toHaveCount(1)
+  const after = await pixels(page),
+    moved = (40 * 120 + 70) * 4,
+    corner = (2 * 120 + 70) * 4
+  // Near the stroke the black half was dragged past x=70; far from it the
+  // edge stays at x=60 so x=70 remains white.
+  expect(after[moved]).toBeLessThan(60)
+  expect(after[corner]).toBe(255)
+})
