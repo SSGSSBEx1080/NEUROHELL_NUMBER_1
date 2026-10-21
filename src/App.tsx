@@ -57,6 +57,9 @@ const FrequencyDialog = lazy(() =>
 const PinWarpDialog = lazy(() =>
   import('./components/PinWarpDialog').then((m) => ({ default: m.PinWarpDialog })),
 )
+const DisplaceDialog = lazy(() =>
+  import('./components/DisplaceDialog').then((m) => ({ default: m.DisplaceDialog })),
+)
 const BrushPresetsDialog = lazy(() =>
   import('./components/BrushPresetsDialog').then((m) => ({ default: m.BrushPresetsDialog })),
 )
@@ -321,6 +324,7 @@ export default function App() {
     | 'liquify'
     | 'frequency'
     | 'pin-warp'
+    | 'displace'
     | 'brush-presets'
     | 'gradient-tool'
     | 'batch'
@@ -2259,6 +2263,11 @@ export default function App() {
       disabled: !canFilter,
     },
     {
+      label: 'Смещение по карте на копии…',
+      action: () => setModal('displace'),
+      disabled: !canFilter,
+    },
+    {
       label: 'Частотное разложение…',
       action: () => setModal('frequency'),
       disabled: !canFilter,
@@ -3552,6 +3561,24 @@ export default function App() {
                 throw new Error('Документ изменился. Открой пластику заново.')
               const next = insertFilteredCopy(doc, selectedId, copy, hide)
               editor.change(() => next, 'Пластика на растровой копии')
+              setSelectedId(copy.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'displace' && selectedId && (
+          <DisplaceDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(copy, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой смещение заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Смещение по карте на копии')
               setSelectedId(copy.id)
               setSettings({ editMask: false, quickMask: false })
               setTool('move')

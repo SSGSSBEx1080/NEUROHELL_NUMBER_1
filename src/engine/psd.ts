@@ -219,6 +219,32 @@ export function runCodec<T>(job: object, transfers: Transferable[] = []): Promis
     worker.postMessage(job, transfers)
   })
 }
+export interface PsdCompositePixels {
+  width: number
+  height: number
+  pixels: Uint8ClampedArray
+}
+/** Reads only a PSD's flattened composite for use as a displacement map. */
+export async function readPsdCompositePixels(buffer: ArrayBuffer): Promise<PsdCompositePixels> {
+  if (buffer.byteLength > 80 * 1024 * 1024) throw new Error('PSD/PSB карты: файл до 80 МБ')
+  const copy = buffer.slice(0),
+    result = await runCodec<PsdCompositePixels>({ operation: 'read-composite', buffer: copy }, [
+      copy,
+    ])
+  if (
+    !Number.isInteger(result.width) ||
+    !Number.isInteger(result.height) ||
+    result.width < 1 ||
+    result.height < 1 ||
+    result.pixels.length !== result.width * result.height * 4
+  )
+    throw new Error('Некорректное сводное изображение PSD карты')
+  return {
+    width: result.width,
+    height: result.height,
+    pixels: new Uint8ClampedArray(result.pixels),
+  }
+}
 const hex = (c?: Color, fallback = '#ffffff') =>
   !c || !('r' in c)
     ? fallback

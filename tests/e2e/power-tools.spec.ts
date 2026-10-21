@@ -297,6 +297,96 @@ test('radial blur exposes spin/zoom and centre controls and applies only to a co
     alpha(original.children![0].imageData!.data),
   )
 })
+test('displace uses an external map file, accepts a PSD composite map and only creates a copy', async ({
+  page,
+}) => {
+  await ready(page)
+  const images = await page.evaluate(() => {
+    const target = document.createElement('canvas')
+    target.width = 120
+    target.height = 80
+    const tx = target.getContext('2d')!
+    tx.fillStyle = 'black'
+    tx.fillRect(0, 0, 120, 80)
+    tx.fillStyle = 'white'
+    tx.fillRect(30, 0, 10, 80)
+    const map = document.createElement('canvas')
+    map.width = 16
+    map.height = 16
+    const mx = map.getContext('2d')!
+    mx.fillStyle = 'black'
+    mx.fillRect(0, 0, 16, 16)
+    return { target: target.toDataURL(), map: map.toDataURL().split(',')[1] }
+  })
+  const doc = newDocument(120, 80, 'Displace source', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'image',
+      name: 'Displace target',
+      src: images.target,
+      width: 120,
+      height: 80,
+    }),
+  ]
+  await open(page, doc)
+  const originalBytes = await save(page),
+    original = readPsd(originalBytes, { useImageData: true }),
+    before = await pixels(page)
+  await menu(page, 'Фильтры', 'Смещение по карте на копии…')
+  await page.getByLabel('Файл карты смещения').setInputFiles({
+    name: 'black-map.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(images.map, 'base64'),
+  })
+  await expect(page.getByTestId('displace-map-preview')).toBeVisible()
+  await page.getByLabel('Вертикальный масштаб', { exact: true }).fill('0')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  const preview = await page
+    .getByTestId('displace-after')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      const ctx = c.getContext('2d')!
+      return {
+        moved: ctx.getImageData(47, 40, 1, 1).data[0],
+        old: ctx.getImageData(35, 40, 1, 1).data[0],
+      }
+    })
+  // A black map at horizontal scale 10 moves content 12.8 px right.
+  expect(preview.moved).toBeGreaterThan(200)
+  expect(preview.old).toBeLessThan(20)
+  expect(await pixels(page)).toEqual(before)
+  await page.getByRole('button', { name: 'Применить на копии', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Displace target · Смещение по карте' }),
+  ).toHaveCount(1)
+  const after = await pixels(page)
+  expect(after[(40 * 120 + 47) * 4]).toBeGreaterThan(200)
+  expect(after[(40 * 120 + 35) * 4]).toBeLessThan(20)
+  const psd = readPsd(await save(page), { useImageData: true })
+  expect(psd.children![0].hidden).toBe(true)
+  expect(psd.children![0].imageData?.data).toEqual(original.children![0].imageData?.data)
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  expect(await pixels(page)).toEqual(before)
+
+  // The PSD just saved by the editor is also a valid Maximize Compatibility map.
+  await menu(page, 'Фильтры', 'Смещение по карте на копии…')
+  await page.getByLabel('Файл карты смещения').setInputFiles({
+    name: 'composite-map.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer: originalBytes,
+  })
+  await expect(page.getByTestId('displace-map-preview')).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await page.getByLabel('Горизонтальный масштаб', { exact: true }).fill('0')
+  await page.getByLabel('Вертикальный масштаб', { exact: true }).fill('0')
+  await expect(page.getByText(/макс\. смещение 0\.0 px/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+  expect(await pixels(page)).toEqual(before)
+})
 test('filtering a smart object makes an explicit raster copy and preserves its original native embedded PSD', async ({
   page,
 }) => {

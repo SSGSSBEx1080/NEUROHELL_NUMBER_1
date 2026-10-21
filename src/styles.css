@@ -5699,6 +5699,39 @@ canvas {
   gap: 8px;
   margin-top: 10px;
 }
+
+.displace-map-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 6px 0 2px;
+}
+.displace-map-preview {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #60506e;
+  color: #a598b4;
+  font-size: 11px;
+  overflow: hidden;
+}
+.displace-map-preview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.displace-map-controls {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.displace-map-name {
+  color: #a598b4;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .filter-compare-slider {
   display: flex;
   gap: 16px;
