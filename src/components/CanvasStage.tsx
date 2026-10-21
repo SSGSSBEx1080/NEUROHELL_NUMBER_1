@@ -687,7 +687,9 @@ export function CanvasStage({
       return
     }
     if (pathController.active) {
-      e.currentTarget.focus({ preventScroll: true })
+      // `el`, not e.currentTarget: after the paintCommit await above, React has
+      // finished dispatching and currentTarget is null.
+      el.focus({ preventScroll: true })
       if (pathController.down(p, e, scale)) return
     }
     if (settings.quickMask && (tool === 'brush' || tool === 'eraser')) {
