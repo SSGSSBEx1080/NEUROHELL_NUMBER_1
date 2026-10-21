@@ -417,6 +417,7 @@ function parseMask(input: unknown): Layer['mask'] {
     density: finite(m.density, 0, 1, 1),
     feather: finite(m.feather, 0, 100, 0),
     defaultColor: finite(m.defaultColor, 0, 255, 0),
+    ...(m.composite === true ? { composite: true } : {}),
   }
 }
 export function descendants(doc: EditorDocument, id: string): Set<string> {

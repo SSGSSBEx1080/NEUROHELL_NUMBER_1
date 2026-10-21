@@ -432,6 +432,12 @@ export interface LayerMask extends Rect {
   density: number
   feather: number
   defaultColor: number
+  /**
+   * This raster is a PSD baked pixel+vector composite (channel -3), not the
+   * native pixel-mask component alone. Export uses it to keep or drop the
+   * native vector/real-mask pair consistently.
+   */
+  composite?: boolean
 }
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
 export interface SelectionRaster extends Rect {

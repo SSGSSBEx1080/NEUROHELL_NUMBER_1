@@ -93,6 +93,7 @@ import {
   sameEmbeddedContent,
 } from './psdSource'
 import { validatePsdHeader } from './psdHeader'
+import { psdCompositeMask } from './psdMask'
 export interface CompatibilityReport {
   title: string
   warnings: string[]
@@ -1020,8 +1021,9 @@ export async function importPsd(
           ),
           blendIf: importBlendIf(src),
         })
+        const compositeMask = psdCompositeMask(src)
         const correction =
-          !group && !src.vectorMask && !src.realMask && !src.effects
+          !group && !src.effects && ((!src.vectorMask && !src.realMask) || !!compositeMask)
             ? importAdjustment(src.adjustment)
             : undefined
         if (correction)
@@ -1133,7 +1135,27 @@ export async function importPsd(
           warnings.add(
             'Часть векторных фигур использует неподдерживаемую заливку или логические операции контуров: исходная структура сохраняется, предпросмотр растровый.',
           )
-        if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
+        const useCompositeMask = !!compositeMask && !editableShape
+        if (useCompositeMask) {
+          const m = compositeMask!.data,
+            data = m.imageData!
+          layer.mask = {
+            src: imageSource(data),
+            x: (m.left || 0) + (m.positionRelativeToLayer ? src.left || 0 : 0),
+            y: (m.top || 0) + (m.positionRelativeToLayer ? src.top || 0 : 0),
+            width: data.width,
+            height: data.height,
+            enabled: compositeMask!.enabled,
+            linked: true,
+            defaultColor: m.defaultColor ?? 0,
+            density: 1,
+            feather: 0,
+            composite: true,
+          }
+          warnings.add(
+            'Слой с пиксельной и векторной масками: редактор использует запечённую общую маску PSD (канал -3), поэтому видимое покрытие совпадает после пересчёта. Исходная пара масок сохраняется при экспорте, пока общую маску не изменят.',
+          )
+        } else if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
           const m = src.mask,
             data = m.imageData!
           layer.mask = {
@@ -1160,8 +1182,8 @@ export async function importPsd(
             'Сложный, вертикальный или неоднородно оформленный текст сохранён с исходными native-данными и пиксельным предпросмотром. «Извлечь текст» создаст редактируемую упрощённую копию; оригинал остаётся в PSD.',
           )
         if (
-          (src.vectorMask && !editableShape) ||
-          src.realMask ||
+          (src.vectorMask && !editableShape && !useCompositeMask) ||
+          (src.realMask && !useCompositeMask) ||
           !toCanvas[src.blendMode || 'normal']
         )
           warnings.add(
@@ -1646,24 +1668,36 @@ export async function exportPsd(
           old = before?.mask
         const unchangedMask =
           preserved &&
-          raw?.mask &&
+          (raw?.mask || (old?.composite && raw?.realMask)) &&
           old &&
           sameVisual({ ...m, x: 0, y: 0, enabled: true }, { ...old, x: 0, y: 0, enabled: true }) &&
           Math.abs(m.x - old.x - (layer.x - before!.x)) < 0.001 &&
           Math.abs(m.y - old.y - (layer.y - before!.y)) < 0.001
+        if (!unchangedMask && old?.composite) {
+          // The editor mask is the baked pixel+vector product. Once it is
+          // edited, writing it as the sole raster mask is exact; keeping the
+          // stale native vector/real pair would apply the old vector half again.
+          out.realMask = undefined
+          out.vectorMask = undefined
+        }
         if (unchangedMask) {
-          const sourceMask = raw!.mask!,
-            dx = m.x - old!.x + (sourceMask.positionRelativeToLayer ? before!.x : 0),
-            dy = m.y - old!.y + (sourceMask.positionRelativeToLayer ? before!.y : 0)
-          out.mask = {
-            ...sourceMask,
-            disabled: !m.enabled,
-            positionRelativeToLayer: false,
-            left: (sourceMask.left || 0) + dx,
-            top: (sourceMask.top || 0) + dy,
-            right: (sourceMask.right || 0) + dx,
-            bottom: (sourceMask.bottom || 0) + dy,
+          const translateMask = (sourceMask: NonNullable<PsdLayer['mask']>) => {
+            const dx = m.x - old!.x + (sourceMask.positionRelativeToLayer ? before!.x : 0),
+              dy = m.y - old!.y + (sourceMask.positionRelativeToLayer ? before!.y : 0)
+            return {
+              ...sourceMask,
+              disabled: !m.enabled,
+              positionRelativeToLayer: false,
+              left: (sourceMask.left || 0) + dx,
+              top: (sourceMask.top || 0) + dy,
+              right: (sourceMask.right || 0) + dx,
+              bottom: (sourceMask.bottom || 0) + dy,
+            }
           }
+          if (raw!.mask) out.mask = translateMask(raw!.mask)
+          if (raw!.realMask) out.realMask = translateMask(raw!.realMask)
+          if (old?.composite && out.vectorMask)
+            out.vectorMask = { ...out.vectorMask, disable: !m.enabled }
         } else if (out.imageData && (layer.rotation || layer.warp || layer.flipX || layer.flipY)) {
           // PSD raster masks live in document coordinates, unlike our editable local
           // transform. Derive coverage from the same rendered pixels, not an unrotated
@@ -1727,7 +1761,13 @@ export async function exportPsd(
             imageData: c.getContext('2d')!.getImageData(0, 0, c.width, c.height),
           }
         }
-      } else out.mask = undefined
+      } else {
+        out.mask = undefined
+        if (before?.mask?.composite) {
+          out.realMask = undefined
+          out.vectorMask = undefined
+        }
+      }
       if (layer.smart && !preserved) {
         const nested = await exportPsd(layer.smart, false, depth + 1),
           id = uid()
