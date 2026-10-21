@@ -1,4 +1,5 @@
 import { rasterBounds } from './layerGeometry'
+import { PIXEL_BLEND_MODES } from './blendModes'
 import {
   applyGradientStops,
   gradientRgbaCss,
@@ -206,6 +207,7 @@ const BLEND_MODES: BlendMode[] = [
   'saturation',
   'color',
   'luminosity',
+  ...PIXEL_BLEND_MODES,
 ]
 const blendMode = (v: unknown, fallback: BlendMode): BlendMode =>
   BLEND_MODES.includes(v as BlendMode) ? (v as BlendMode) : fallback

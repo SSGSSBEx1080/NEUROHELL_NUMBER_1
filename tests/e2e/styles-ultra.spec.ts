@@ -843,3 +843,47 @@ test('real effects.psd opens with resource Global Light 132/30 over stored linke
   await expect(page.getByRole('slider', { name: 'Высота света фаски' })).toHaveValue('30')
   await page.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
 })
+
+test('pixel-only FX blend modes render in overlays and export natively', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Стиль градиента наложения').selectOption('radial')
+  await page.getByLabel('Режим наложения градиента').selectOption('subtract')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // The radial centre is (182,163,255); Subtract from #808080 clips to black.
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([0, 0, 0, 255])
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Наложение цвета', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Цвет наложения').fill('#ffffff')
+  await page.getByLabel('Режим наложения цвета').selectOption('dissolve')
+  await page.getByRole('slider', { name: 'Непрозрачность цвета' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  const dissolvedRatio = () =>
+    page.locator('[data-testid=editor-canvas]').evaluate((c: HTMLCanvasElement) => {
+      const data = c.getContext('2d')!.getImageData(130, 85, 40, 30).data
+      let whites = 0,
+        total = 0
+      for (let i = 0; i < data.length; i += 4) {
+        total++
+        if (data[i] > 250 && data[i + 1] > 250 && data[i + 2] > 250) whites++
+      }
+      return whites / total
+    })
+  await expect.poll(dissolvedRatio).toBeGreaterThan(0.35)
+  expect(await dissolvedRatio()).toBeLessThan(0.65)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.gradientOverlay?.[0].blendMode).toBe('subtract')
+  expect(layer?.effects?.solidFill?.[0].blendMode).toBe('dissolve')
+})

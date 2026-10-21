@@ -1,4 +1,5 @@
 import { blendCorrection } from './adjustmentMath'
+import { dissolveHash } from './blendModes'
 import type { RgbaPixelData } from './bevel'
 import type { BlendMode } from '../types'
 
@@ -26,7 +27,14 @@ export function applyOverlayBlendToPixels(
     const contentAlpha = content.data[offset + 3]
     const fillAlpha = fill.data[offset + 3]
     if (!contentAlpha || !fillAlpha) continue
-    const amount = (fillAlpha / 255) * strengthScale
+    let amount = (fillAlpha / 255) * strengthScale
+    if (mode === 'dissolve') {
+      const pixelIndex = offset / 4
+      amount =
+        dissolveHash(pixelIndex % content.width, Math.floor(pixelIndex / content.width)) < amount
+          ? 1
+          : 0
+    }
     if (amount <= 0) continue
     const r = content.data[offset] / 255
     const g = content.data[offset + 1] / 255

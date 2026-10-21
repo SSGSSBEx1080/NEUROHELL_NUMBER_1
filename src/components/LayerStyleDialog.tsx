@@ -86,20 +86,30 @@ import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
 type Tab = ListKey | 'glow' | 'innerGlow' | 'satin' | 'pattern' | 'bevel' | 'blendIf' | 'library'
-const BEVEL_BLEND_MODES: [BlendMode, string][] = [
+const EFFECT_BLEND_MODES: [BlendMode, string][] = [
   ['source-over', 'Обычный'],
-  ['multiply', 'Умножение'],
-  ['screen', 'Экран'],
-  ['overlay', 'Перекрытие'],
+  ['dissolve', 'Растворение'],
   ['darken', 'Темнее'],
+  ['multiply', 'Умножение'],
+  ['color-burn', 'Затемнение основы'],
+  ['linear-burn', 'Линейное затемнение'],
+  ['darker-color', 'Тёмный цвет'],
   ['lighten', 'Светлее'],
+  ['screen', 'Экран'],
   ['color-dodge', 'Осветление основы'],
   ['lighter', 'Линейное осветление (сложение)'],
-  ['color-burn', 'Затемнение основы'],
-  ['hard-light', 'Жёсткий свет'],
+  ['lighter-color', 'Светлый цвет'],
+  ['overlay', 'Перекрытие'],
   ['soft-light', 'Мягкий свет'],
+  ['hard-light', 'Жёсткий свет'],
+  ['vivid-light', 'Яркий свет'],
+  ['linear-light', 'Линейный свет'],
+  ['pin-light', 'Точечный свет'],
+  ['hard-mix', 'Жёсткое смешивание'],
   ['difference', 'Разница'],
   ['exclusion', 'Исключение'],
+  ['subtract', 'Вычитание'],
+  ['divide', 'Разделение'],
   ['hue', 'Цветовой тон'],
   ['saturation', 'Насыщенность'],
   ['color', 'Цветность'],
@@ -177,7 +187,7 @@ function EffectBlendModeSelect({
       value={value || 'source-over'}
       onChange={(e) => onChange(e.target.value as BlendMode)}
     >
-      {BEVEL_BLEND_MODES.map(([mode, text]) => (
+      {EFFECT_BLEND_MODES.map(([mode, text]) => (
         <option key={mode} value={mode}>
           {text}
         </option>
@@ -1094,7 +1104,7 @@ export function LayerStyleDialog({
                 value={styles.satin.blendMode}
                 onChange={(e) => patchSingle('satin', { blendMode: e.target.value, enabled: true })}
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>
@@ -1423,7 +1433,7 @@ export function LayerStyleDialog({
                   patchSingle('bevel', { highlightBlendMode: e.target.value, enabled: true })
                 }
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>
@@ -1448,7 +1458,7 @@ export function LayerStyleDialog({
                   patchSingle('bevel', { shadowBlendMode: e.target.value, enabled: true })
                 }
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>

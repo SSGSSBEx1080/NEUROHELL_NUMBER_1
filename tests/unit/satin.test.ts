@@ -80,6 +80,14 @@ describe('satin pixels and parsing', () => {
     expect(pixel(output, 20, 4)).toEqual([0, 0, 0, 0])
   })
 
+  it('applies pixel-only Subtract in the Satin mask', () => {
+    const base = square()
+    const output = clone(base)
+    applySatinToPixels(output, base, base, effect({ color: '#ff8040', blendMode: 'subtract' }))
+    expect(pixel(output, 20, 10)).toEqual([0, 0, 64, 255])
+    expect(pixel(output, 20, 20)).toEqual([128, 128, 128, 255])
+  })
+
   it('validates persisted satin values', () => {
     const styles = normalizeStyles({
       satin: {

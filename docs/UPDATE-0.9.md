@@ -603,3 +603,18 @@ desktop security 12/12, полный production browser 153/153, независ�
 psd-tools interop — 35 fixture-кейсов, format:check и git diff --check.
 Photoshop и XnConvert по-прежнему не запускались; Electron smoke остаётся
 проверкой Windows CI.
+25. **Попиксельные режимы внутри внутренних эффектов — готово.** Для
+    наложений цвета, градиента и узора, Satin и блика/тени Bevel & Emboss
+    теперь доступен тот же полный набор из 27 режимов, что у слоёв.
+    Нормализатор стилей больше не отбрасывает Dissolve, Linear Burn,
+    Darker/Lighter Color, Vivid/Linear/Pin Light, Hard Mix, Subtract и
+    Divide; PSD-импорт/экспорт уже имел нативные имена этих режимов.
+    Девять формульных режимов идут через общую попиксельную математику,
+    а Dissolve в overlays, Satin и Bevel выбирает целый исходный или
+    фоновый пиксель детерминированным хэшем координат, а не смешивает их
+    как Normal. Граница не расширена молча: у Drop/Inner Shadow, Glow и
+    Stroke по-прежнему нет редактируемого режима смешивания с фоном
+    документа — их локальная модель остаётся Normal/Multiply/Screen, и
+    это не заявлено как Adobe FX-паритет. Проверки этапа: unit 425/425 и
+    styles-ultra 13/13, включая Subtract/Dissolve в overlays с нативным
+    PSD-экспортом.

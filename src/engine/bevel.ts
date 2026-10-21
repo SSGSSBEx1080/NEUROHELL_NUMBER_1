@@ -1,4 +1,5 @@
 import { blendCorrection } from './adjustmentMath'
+import { dissolveHash } from './blendModes'
 import { buildContourAlphaLut, isLinearEffectContour } from './contours'
 import { rgbFromHex } from './gradientRamp'
 import type { BevelEffectStyle, BevelTechniqueKind } from '../types'
@@ -312,6 +313,10 @@ export function applyBevelToPixels(
         highlightAmount = clamp01(shaped * 2 - 1) * clamp01(effect.highlightOpacity)
         shadowAmount = clamp01(1 - shaped * 2) * clamp01(effect.shadowOpacity)
       }
+      if (effect.highlightBlendMode === 'dissolve')
+        highlightAmount = dissolveHash(x, y) < highlightAmount ? 1 : 0
+      if (effect.shadowBlendMode === 'dissolve')
+        shadowAmount = dissolveHash(x, y) < shadowAmount ? 1 : 0
       const sourceIndex = inside ? i : (nearest?.[i] ?? -1)
       if (sourceIndex < 0) continue
       if (inside && highlightAmount <= 0.0001 && shadowAmount <= 0.0001) continue
