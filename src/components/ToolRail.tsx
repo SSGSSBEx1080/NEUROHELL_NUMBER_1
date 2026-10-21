@@ -28,6 +28,12 @@ import {
   Spline,
   Blend,
   ChevronRight,
+  Sun,
+  Moon,
+  Droplet,
+  Droplets,
+  Triangle,
+  Pointer,
 } from 'lucide-react'
 import type { Tool } from '../types'
 const groups = [
@@ -50,6 +56,16 @@ const groups = [
     { id: 'repair-box', name: 'Восстановление прямоугольника', icon: SquareDashed, key: 'J' },
   ],
   [{ id: 'clone', name: 'Штамп', icon: Stamp, key: 'S' }],
+  [
+    { id: 'dodge', name: 'Осветление', icon: Sun, key: 'O' },
+    { id: 'burn', name: 'Затемнение', icon: Moon, key: 'O' },
+    { id: 'sponge', name: 'Губка', icon: Droplets, key: 'O' },
+  ],
+  [
+    { id: 'blur-brush', name: 'Размытие', icon: Droplet, key: 'R' },
+    { id: 'sharpen-brush', name: 'Резкость', icon: Triangle, key: 'R' },
+    { id: 'smudge', name: 'Палец', icon: Pointer, key: 'R' },
+  ],
   [
     { id: 'eraser', name: 'Ластик', icon: Eraser, key: 'E' },
     { id: 'wand', name: 'Волшебный ластик', icon: WandSparkles, key: 'E' },

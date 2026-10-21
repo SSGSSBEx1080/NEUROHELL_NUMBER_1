@@ -207,3 +207,47 @@ test('gradient is an undoable layer; preferences and a user font persist locally
   )
   expect(count).toBe(1)
 })
+
+test('retouch brushes edit raster pixels: burn darkens highlights, sponge desaturates, smudge drags colour', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await image(page)
+  const before = await pixel(page, 200, 60)
+  expect(before).toEqual([255, 255, 255, 255])
+  await page.getByRole('button', { name: 'Осветление', exact: true }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Затемнение' }).click()
+  await expect(page.locator('[data-tool=burn]')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByLabel('Размер', { exact: true }).fill('30')
+  await page.getByLabel('Экспозиция', { exact: true }).fill('100')
+  await page.getByLabel('Диапазон тонов').selectOption('highlights')
+  await points(page, [
+    [190, 60],
+    [210, 60],
+  ])
+  await expect.poll(async () => (await pixel(page, 200, 60))[0]).toBeLessThan(240)
+  // Sponge (desaturate by default) pulls the red square toward gray.
+  await page.keyboard.press('Shift+o')
+  await expect(page.locator('[data-tool=sponge]')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByLabel('Сила', { exact: true }).fill('100')
+  await points(page, [
+    [55, 60],
+    [65, 60],
+  ])
+  const sponged = await pixel(page, 60, 60)
+  expect(sponged[0] - sponged[1]).toBeLessThan(200)
+  // Smudge drags the (now desaturated) square edge into the white field:
+  // pure red desaturates to its BT.709 luma ~55, so the streak is gray.
+  await page.getByRole('button', { name: 'Размытие', exact: true }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Палец' }).click()
+  await page.getByLabel('Сила', { exact: true }).fill('100')
+  await points(page, [
+    [78, 60],
+    [96, 60],
+  ])
+  const smudged = await pixel(page, 90, 60)
+  expect(smudged[0]).toBeLessThan(150)
+  expect(Math.abs(smudged[0] - smudged[1])).toBeLessThanOrEqual(2)
+  expect(smudged[3]).toBe(255)
+})

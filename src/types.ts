@@ -32,6 +32,12 @@ export type Tool =
   | 'repair-brush'
   | 'repair'
   | 'repair-box'
+  | 'dodge'
+  | 'burn'
+  | 'sponge'
+  | 'blur-brush'
+  | 'sharpen-brush'
+  | 'smudge'
 export type LayerKind = 'image' | 'text' | 'shape' | 'group' | 'adjustment'
 export type BlendMode =
   | 'source-over'
@@ -222,6 +228,10 @@ export interface ToolSettings {
   shapeFill: boolean
   brushHardness?: number
   brushSpacing?: number
+  /** Dodge/burn/sponge/blur/sharpen/smudge brushes (retouch.ts). */
+  retouchStrength?: number
+  retouchRange?: 'shadows' | 'midtones' | 'highlights'
+  spongeMode?: 'saturate' | 'desaturate'
   feather?: number
   selectionMode?: SelectionMode
   selectionTolerance?: number

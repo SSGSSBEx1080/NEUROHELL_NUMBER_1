@@ -1,5 +1,6 @@
 import { usePathTool } from './hooks/usePathTool'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
+import { isRetouchTool } from './engine/retouch'
 import { insertFilteredCopy } from './engine/filterLayers'
 import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
 import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
@@ -2660,6 +2661,61 @@ export default function App() {
                 ) : tool === 'brush' ? (
                   <span className="tool-instruction">Alt+клик — взять цвет с холста</span>
                 ) : null}
+              </>
+            ) : isRetouchTool(tool) ? (
+              <>
+                <SliderField
+                  label="Размер"
+                  value={settings.brushSize}
+                  min={1}
+                  max={500}
+                  suffix="px"
+                  onChange={(brushSize) => setSettings({ brushSize })}
+                />
+                <SliderField
+                  label="Жёсткость"
+                  value={settings.brushHardness ?? 100}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushHardness) => setSettings({ brushHardness })}
+                />
+                <SliderField
+                  label={tool === 'dodge' || tool === 'burn' ? 'Экспозиция' : 'Сила'}
+                  value={settings.retouchStrength ?? 30}
+                  min={1}
+                  max={100}
+                  suffix="%"
+                  onChange={(retouchStrength) => setSettings({ retouchStrength })}
+                />
+                {(tool === 'dodge' || tool === 'burn') && (
+                  <Select
+                    aria-label="Диапазон тонов"
+                    value={settings.retouchRange || 'midtones'}
+                    onChange={(e) =>
+                      setSettings({
+                        retouchRange: e.target.value as 'shadows' | 'midtones' | 'highlights',
+                      })
+                    }
+                  >
+                    <option value="shadows">Тени</option>
+                    <option value="midtones">Средние тона</option>
+                    <option value="highlights">Света</option>
+                  </Select>
+                )}
+                {tool === 'sponge' && (
+                  <Select
+                    aria-label="Режим губки"
+                    value={settings.spongeMode || 'desaturate'}
+                    onChange={(e) =>
+                      setSettings({ spongeMode: e.target.value as 'saturate' | 'desaturate' })
+                    }
+                  >
+                    <option value="desaturate">Обесцветить</option>
+                    <option value="saturate">Насытить</option>
+                  </Select>
+                )}
+                <span className="tool-instruction">По пикселям текущего растрового слоя</span>
               </>
             ) : tool === 'magic-wand' ? (
               <>

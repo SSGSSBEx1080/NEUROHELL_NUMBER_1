@@ -27,7 +27,8 @@ import {
   gestureSelectionMode,
   selectionCoverage,
 } from '../engine/selection'
-import { brushStamp, strokeStamps } from '../engine/brush'
+import { brushStamp, retouchStroke, strokeStamps } from '../engine/brush'
+import { isRetouchTool, retouchNames } from '../engine/retouch'
 import {
   applyGradientStops,
   gradientRgbaCss,
@@ -147,6 +148,7 @@ type Drag =
       tool: Tool
       stamp: HTMLCanvasElement
       selection?: HTMLCanvasElement
+      selectionAlpha?: Uint8ClampedArray
       clone?: { canvas: HTMLCanvasElement; offset: Point }
       mask?: Layer['mask']
     }
@@ -580,16 +582,27 @@ export function CanvasStage({
           x: (local.x * d.canvas.width) / d.layer.width,
           y: (local.y * d.canvas.height) / d.layer.height,
         }
-    strokeStamps(
-      d.canvas.getContext('2d')!,
-      d.last,
-      next,
-      d.stamp,
-      settings,
-      d.tool === 'eraser',
-      d.selection,
-      d.clone,
-    )
+    if (isRetouchTool(d.tool))
+      retouchStroke(
+        d.canvas.getContext('2d', { willReadFrequently: true })!,
+        d.last,
+        next,
+        settings.brushSize * (d.canvas.width / d.layer.width),
+        d.tool,
+        settings,
+        d.selectionAlpha,
+      )
+    else
+      strokeStamps(
+        d.canvas.getContext('2d')!,
+        d.last,
+        next,
+        d.stamp,
+        settings,
+        d.tool === 'eraser',
+        d.selection,
+        d.clone,
+      )
     d.last = next
     paintScheduler.current.request(() => {
       if (drag.current !== d) return
@@ -901,7 +914,7 @@ export function CanvasStage({
       sampleColorAt(p, true)
       drag.current = { type: 'sample-color' }
     } else if (tool === 'wand' || tool === 'bucket') onPixelAction(tool, p)
-    else if (tool === 'brush' || tool === 'eraser' || tool === 'clone') {
+    else if (tool === 'brush' || tool === 'eraser' || tool === 'clone' || isRetouchTool(tool)) {
       const maskMode = settings.editMask && !!selected?.mask
       if (
         (selected?.smart || selected?.kind === 'group' || selected?.kind === 'adjustment') &&
@@ -910,6 +923,8 @@ export function CanvasStage({
         return onToast('Открой содержимое смарт-объекта или выбери растровый слой')
       if (tool === 'clone' && (!selected || selected.kind !== 'image'))
         return onToast('Штамп работает на выбранном растровом слое. Alt+клик задаёт источник.')
+      if (isRetouchTool(tool) && (!selected || selected.kind !== 'image' || maskMode))
+        return onToast('Ретушь работает по пикселям выбранного растрового слоя, а не по маске.')
       if (selected && !selected.visible) {
         onToast('Слой скрыт. Включи его видимость перед рисованием.')
         return
@@ -998,6 +1013,17 @@ export function CanvasStage({
           x: (clone.current.point.x - local.x) * sx,
           y: ((clone.current.point.y - local.y) * buffer.height) / layer.height,
         }
+      const selectionCanvas = selection
+        ? selectionMask(selection, buffer.width, buffer.height, layer, targetMask)
+        : undefined
+      let selectionAlpha: Uint8ClampedArray | undefined
+      if (selectionCanvas && isRetouchTool(tool)) {
+        const rgba = selectionCanvas
+          .getContext('2d')!
+          .getImageData(0, 0, buffer.width, buffer.height).data
+        selectionAlpha = new Uint8ClampedArray(buffer.width * buffer.height)
+        for (let i = 0; i < selectionAlpha.length; i++) selectionAlpha[i] = rgba[i * 4 + 3]
+      }
       const d: Extract<Drag, { type: 'paint' }> = {
         type: 'paint',
         layer,
@@ -1007,9 +1033,8 @@ export function CanvasStage({
         last,
         mask: targetMask,
         stamp: brushStamp(settings.brushSize * sx, settings.color, settings.brushHardness ?? 100),
-        selection: selection
-          ? selectionMask(selection, buffer.width, buffer.height, layer, targetMask)
-          : undefined,
+        selection: selectionCanvas,
+        selectionAlpha,
         clone:
           tool === 'clone' && clone.current
             ? { canvas: clone.current.canvas, offset: clone.current.offset! }
@@ -1023,7 +1048,13 @@ export function CanvasStage({
   const pointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = pointFrom(e)
     if (!drag.current && pathController.move(p, e)) return
-    if (tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'repair-brush') {
+    if (
+      tool === 'brush' ||
+      tool === 'eraser' ||
+      tool === 'clone' ||
+      tool === 'repair-brush' ||
+      isRetouchTool(tool)
+    ) {
       // Cursor state at frame rate, not per pointer event: fast strokes must
       // not re-render the whole stage for every hardware sample.
       cursorPoint.current = p
@@ -1563,7 +1594,13 @@ export function CanvasStage({
         editor.patchLayer(d.layer.id, next, '', true)
         overrides.current.delete(d.layer.id)
         editor.finish(
-          d.tool === 'eraser' ? 'Ластик' : d.tool === 'clone' ? 'Штамп' : 'Рисование кистью',
+          d.tool === 'eraser'
+            ? 'Ластик'
+            : d.tool === 'clone'
+              ? 'Штамп'
+              : isRetouchTool(d.tool)
+                ? retouchNames[d.tool]
+                : 'Рисование кистью',
         )
         redraw()
       })
@@ -1959,7 +1996,8 @@ export function CanvasStage({
             (tool === 'brush' ||
               tool === 'eraser' ||
               tool === 'clone' ||
-              tool === 'repair-brush') && (
+              tool === 'repair-brush' ||
+              isRetouchTool(tool)) && (
               <>
                 {altSampling && tool === 'brush' ? (
                   <g stroke="#fffd" strokeWidth={1 / scale}>
