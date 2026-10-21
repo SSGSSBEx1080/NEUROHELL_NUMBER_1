@@ -3246,7 +3246,7 @@ kbd {
   max-height: 220px;
   line-height: 1.6;
 }
-.options-bar .tool-options .number-field {
+.options-bar .tool-options > .number-field {
   min-width: 100px;
 }
 .options-bar .tool-options {
@@ -3254,7 +3254,8 @@ kbd {
   scrollbar-width: none;
 }
 .options-bar .tool-options .tool-instruction {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .canvas-overlay .marching-ants {
   pointer-events: none;
