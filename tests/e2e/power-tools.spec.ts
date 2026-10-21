@@ -204,7 +204,7 @@ test('filter preview is cached; selection-limited copy retains the hidden source
   await expect(page.locator('.layer-row')).toHaveCount(1)
   expect(await pixels(page)).toEqual(before)
 })
-test('all six raster filters run, noise preview is deterministic and cancelling never creates a layer', async ({
+test('all raster filters run, noise preview is deterministic and cancelling never creates a layer', async ({
   page,
 }) => {
   await ready(page)
@@ -222,6 +222,7 @@ test('all six raster filters run, noise preview is deterministic and cancelling 
     'motion',
     'threshold',
     'emboss',
+    'radial',
   ]) {
     await page.getByLabel('Растровый фильтр').selectOption(type)
     await expect(
@@ -248,6 +249,53 @@ test('all six raster filters run, noise preview is deterministic and cancelling 
   await page.getByRole('button', { name: 'Отмена', exact: true }).click()
   await expect(page.locator('.layer-row')).toHaveCount(1)
   expect(await pixels(page)).toEqual(before)
+})
+test('radial blur exposes spin/zoom and centre controls and applies only to a copy', async ({
+  page,
+}) => {
+  await ready(page)
+  await open(page, await source(page))
+  const original = readPsd(await save(page), { useImageData: true }),
+    before = await pixels(page)
+  await menu(page, 'Фильтры', 'Растровые фильтры на копии…')
+  await page.getByLabel('Растровый фильтр').selectOption('radial')
+  await expect(page.getByLabel('Метод радиального размытия')).toHaveValue('spin')
+  await page.getByLabel('Количество размытия', { exact: true }).fill('90')
+  await page.getByLabel('Центр X, %', { exact: true }).fill('25')
+  await page.getByLabel('Центр Y, %', { exact: true }).fill('75')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  const spinPreview = await page
+    .getByTestId('filter-after')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return c.toDataURL()
+    })
+  const sourcePreview = await page
+    .getByTestId('filter-before')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return c.toDataURL()
+    })
+  expect(spinPreview).not.toBe(sourcePreview)
+  await page.getByLabel('Метод радиального размытия').selectOption('zoom')
+  await page.getByLabel('Количество размытия', { exact: true }).fill('100')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  expect(await pixels(page)).toEqual(before)
+  await page.getByRole('button', { name: 'Применить на копии', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Original · Радиальное размытие' }),
+  ).toHaveCount(1)
+  expect(await pixels(page)).not.toEqual(before)
+  const psd = readPsd(await save(page), { useImageData: true })
+  expect(psd.children).toHaveLength(2)
+  expect(psd.children![0].hidden).toBe(true)
+  expect(psd.children![0].imageData?.data).toEqual(original.children![0].imageData?.data)
+  const alpha = (data: ArrayLike<number>) => [...data].filter((_, i) => i % 4 === 3)
+  expect(alpha(psd.children![1].imageData!.data)).toEqual(
+    alpha(original.children![0].imageData!.data),
+  )
 })
 test('filtering a smart object makes an explicit raster copy and preserves its original native embedded PSD', async ({
   page,

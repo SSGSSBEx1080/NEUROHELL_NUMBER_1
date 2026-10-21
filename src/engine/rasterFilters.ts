@@ -15,6 +15,13 @@ export type RasterFilter =
   | { type: 'motion'; angle: number; distance: number }
   | { type: 'threshold'; level: number }
   | { type: 'emboss'; angle: number; amount: number }
+  | {
+      type: 'radial'
+      method: 'spin' | 'zoom'
+      amount: number
+      centerX: number
+      centerY: number
+    }
 export type RasterFilterKind = RasterFilter['type']
 export const rasterFilterNames: Record<RasterFilterKind, string> = {
   unsharp: 'Контурная резкость',
@@ -27,6 +34,7 @@ export const rasterFilterNames: Record<RasterFilterKind, string> = {
   motion: 'Размытие в движении',
   threshold: 'Порог',
   emboss: 'Тиснение',
+  radial: 'Радиальное размытие',
 }
 export const MAX_FILTER_PIXELS = 8_388_608
 export interface RasterFilterRequest {
@@ -58,6 +66,8 @@ export function defaultRasterFilter(type: RasterFilterKind): RasterFilter {
       return { type, level: 128 }
     case 'emboss':
       return { type, angle: 135, amount: 100 }
+    case 'radial':
+      return { type, method: 'spin', amount: 10, centerX: 50, centerY: 50 }
   }
 }
 const clamp = (v: number, min = 0, max = 255) => Math.max(min, Math.min(max, v))
@@ -80,6 +90,12 @@ export function parseRasterFilter(input: unknown): RasterFilter {
       out[key] = value
       continue
     }
+    if (key === 'method') {
+      if (value !== 'spin' && value !== 'zoom')
+        throw new Error('Неизвестный метод радиального размытия')
+      out[key] = value
+      continue
+    }
     const min =
         key === 'angle'
           ? -180
@@ -91,27 +107,29 @@ export function parseRasterFilter(input: unknown): RasterFilter {
               ? 1
               : 0,
       max =
-        key === 'angle'
-          ? 180
-          : key === 'distance'
-            ? 200
-            : key === 'radius'
-              ? v.type === 'median'
-                ? 5
-                : v.type === 'gaussian'
-                  ? 100
-                  : 30
-              : key === 'amount'
-                ? v.type === 'unsharp' || v.type === 'emboss'
-                  ? 500
-                  : 100
-                : key === 'size'
-                  ? 128
-                  : key === 'strength'
-                    ? 5
-                    : key === 'seed'
-                      ? 2147483647
-                      : 255
+        key === 'centerX' || key === 'centerY'
+          ? 100
+          : key === 'angle'
+            ? 180
+            : key === 'distance'
+              ? 200
+              : key === 'radius'
+                ? v.type === 'median'
+                  ? 5
+                  : v.type === 'gaussian'
+                    ? 100
+                    : 30
+                : key === 'amount'
+                  ? v.type === 'unsharp' || v.type === 'emboss'
+                    ? 500
+                    : 100
+                  : key === 'size'
+                    ? 128
+                    : key === 'strength'
+                      ? 5
+                      : key === 'seed'
+                        ? 2147483647
+                        : 255
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
       throw new Error(`Параметр фильтра ${key}: ${min}–${max}`)
     out[key] =
@@ -258,6 +276,111 @@ function motion(
       }
     }
 }
+function radialBlur(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  f: Extract<RasterFilter, { type: 'radial' }>,
+) {
+  if (f.amount <= 0) return
+  const cx = (f.centerX / 100) * (w - 1),
+    cy = (f.centerY / 100) * (h - 1),
+    // Keep the full-size worker responsive: roughly one sample per pixel of
+    // travel, but never an unbounded fan-out on an 8 MP layer. Photoshop
+    // does not publish an exact Amount mapping; Spin is treated as total
+    // degrees and Zoom as ±25% of the centre distance at Amount 100.
+    maxSteps = Math.max(1, Math.min(48, Math.floor(160_000_000 / Math.max(1, w * h)))),
+    totalAngle = (f.amount * Math.PI) / 180,
+    zoomSpan = f.amount / 200,
+    cosStart = Math.cos(-totalAngle / 2),
+    sinStart = Math.sin(-totalAngle / 2)
+  const samplePremultiplied = (sx: number, sy: number, acc: Float64Array) => {
+    const x = clamp(sx, 0, w - 1),
+      y = clamp(sy, 0, h - 1),
+      x0 = Math.floor(x),
+      y0 = Math.floor(y),
+      x1 = Math.min(w - 1, x0 + 1),
+      y1 = Math.min(h - 1, y0 + 1),
+      fx = x - x0,
+      fy = y - y0
+    const w00 = (1 - fx) * (1 - fy),
+      w10 = fx * (1 - fy),
+      w01 = (1 - fx) * fy,
+      w11 = fx * fy
+    if (w00) {
+      const i = (y0 * w + x0) * 4,
+        a = p[i + 3] * w00
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w10) {
+      const i = (y0 * w + x1) * 4,
+        a = p[i + 3] * w10
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w01) {
+      const i = (y1 * w + x0) * 4,
+        a = p[i + 3] * w01
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w11) {
+      const i = (y1 * w + x1) * 4,
+        a = p[i + 3] * w11
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+  }
+  const acc = new Float64Array(4)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      if (!p[o + 3]) continue
+      const dx = x - cx,
+        dy = y - cy,
+        radius = Math.hypot(dx, dy)
+      acc.fill(0)
+      if (radius < 0.001) {
+        samplePremultiplied(x, y, acc)
+      } else if (f.method === 'spin') {
+        const steps = Math.max(1, Math.min(maxSteps, Math.ceil(radius * totalAngle))),
+          stepAngle = steps > 1 ? totalAngle / (steps - 1) : 0,
+          cosStep = Math.cos(stepAngle),
+          sinStep = Math.sin(stepAngle)
+        let vx = dx * cosStart - dy * sinStart,
+          vy = dx * sinStart + dy * cosStart
+        for (let i = 0; i < steps; i++) {
+          samplePremultiplied(cx + vx, cy + vy, acc)
+          const nextX = vx * cosStep - vy * sinStep
+          vy = vx * sinStep + vy * cosStep
+          vx = nextX
+        }
+      } else {
+        const steps = Math.max(1, Math.min(maxSteps, Math.ceil(radius * zoomSpan))),
+          startScale = 1 - zoomSpan / 2,
+          stepScale = steps > 1 ? zoomSpan / (steps - 1) : 0
+        for (let i = 0; i < steps; i++) {
+          const scale = startScale + stepScale * i
+          samplePremultiplied(cx + dx * scale, cy + dy * scale, acc)
+        }
+      }
+      if (acc[3] > 0) {
+        out[o] = clamp(acc[0] / acc[3])
+        out[o + 1] = clamp(acc[1] / acc[3])
+        out[o + 2] = clamp(acc[2] / acc[3])
+      }
+    }
+}
 function median(p: Uint8ClampedArray, out: Uint8ClampedArray, w: number, h: number, r: number) {
   for (let y = 0; y < h; y++) {
     const hist = [new Int32Array(256), new Int32Array(256), new Int32Array(256)],
@@ -359,6 +482,7 @@ export function processRasterFilter(request: RasterFilterRequest): Uint8ClampedA
       }
   } else if (f.type === 'gaussian') gaussian(p, out, w, h, f.radius)
   else if (f.type === 'motion') motion(p, out, w, h, f.angle, f.distance)
+  else if (f.type === 'radial') radialBlur(p, out, w, h, f)
   else if (f.type === 'threshold') {
     for (let i = 0; i < p.length; i += 4)
       if (p[i + 3]) {

@@ -215,6 +215,21 @@ export function RasterFilterDialog({
             </>
           )}
           {filter.type === 'threshold' && control('level', 'Уровень порога', 1, 255)}
+          {filter.type === 'radial' && (
+            <>
+              <Select
+                aria-label="Метод радиального размытия"
+                value={filter.method}
+                onChange={(e) => patch({ method: e.target.value })}
+              >
+                <option value="spin">Вращение (Spin)</option>
+                <option value="zoom">Масштаб (Zoom)</option>
+              </Select>
+              {control('amount', 'Количество размытия', 0, 100, 0.1)}
+              {control('centerX', 'Центр X, %', 0, 100, 0.1)}
+              {control('centerY', 'Центр Y, %', 0, 100, 0.1)}
+            </>
+          )}
           {filter.type === 'emboss' && (
             <>
               {control('angle', 'Угол света, °', -180, 180)}
@@ -259,6 +274,12 @@ export function RasterFilterDialog({
           Скрыть оригинал, чтобы не удваивать полупрозрачность
         </label>
       </fieldset>
+      {filter.type === 'radial' && (
+        <p className="panel-note">
+          Независимая шкала: Spin — общая дуга в градусах, Zoom — до ±25% расстояния до центра при
+          100. Adobe точное соответствие Amount не публикует.
+        </p>
+      )}
       <p className="panel-note">
         До 8 Мп / 4096 px на слой, до 20 секунд на расчёт. Алгоритмы RGB/8 независимы от Adobe.
         Прозрачные RGB не загрязняют сглаживание; alpha остаётся исходной. Исходный smart object

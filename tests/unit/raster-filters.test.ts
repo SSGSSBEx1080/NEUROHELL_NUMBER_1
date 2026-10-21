@@ -76,6 +76,39 @@ describe('bounded deterministic raster filters', () => {
     })
     expect(vertical[(4 * w + 3) * 4]).toBeLessThanOrEqual(2)
   })
+  it('radial spin blurs along circles while zoom stays on radial lines', () => {
+    const w = 21,
+      h = 21,
+      edge = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        edge[i] = edge[i + 1] = edge[i + 2] = x < 10 ? 0 : 255
+        edge[i + 3] = 255
+      }
+    const at = (pixels: Uint8ClampedArray, x: number, y: number) => pixels[(y * w + x) * 4]
+    const spin = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'radial', method: 'spin', amount: 90, centerX: 50, centerY: 50 },
+    })
+    const zoom = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'radial', method: 'zoom', amount: 100, centerX: 50, centerY: 50 },
+    })
+    // North of the centre, a spin arc crosses the vertical edge; the zoom
+    // samples stay on the white x=10 radial line.
+    expect(at(spin, 10, 2)).toBeGreaterThan(70)
+    expect(at(spin, 10, 2)).toBeLessThan(185)
+    expect(at(zoom, 10, 2)).toBeGreaterThan(250)
+    expect(at(spin, 10, 10)).toBe(255)
+    expect(at(zoom, 10, 10)).toBe(255)
+    expect(() => parseRasterFilter({ type: 'radial', method: 'twirl' })).toThrow()
+    expect(() => parseRasterFilter({ type: 'radial', centerX: 101 })).toThrow()
+  })
   it('threshold splits by BT.709 luma and emboss is flat on flat areas', () => {
     const pixels = new Uint8ClampedArray([
       255, 0, 0, 255, 0, 0, 255, 255, 200, 200, 200, 255, 10, 10, 10, 255,
