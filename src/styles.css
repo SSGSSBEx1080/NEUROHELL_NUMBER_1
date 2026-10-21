@@ -5975,3 +5975,119 @@ canvas {
   transform: none;
   padding-right: 4px;
 }
+
+/* Stage 24: sampled tips, ABR import and brush dynamics. */
+.options-bar .brush-presets-open {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.brush-presets-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 18px;
+  align-items: start;
+}
+.brush-dynamics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+.brush-angle-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+.brush-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+.brush-save-row,
+.brush-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  margin-top: 14px;
+}
+.brush-save-row input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.brush-presets-browser h3 {
+  margin: 16px 0 8px;
+}
+.brush-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+.brush-preset-card {
+  min-width: 0;
+  border: 1px solid var(--line, #4b3d59);
+  border-radius: 7px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.brush-preset-apply {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+}
+.brush-preset-preview {
+  display: grid;
+  place-items: center;
+  height: 58px;
+  overflow: hidden;
+  border-radius: 5px;
+  background:
+    linear-gradient(45deg, #5c5264 25%, transparent 25%),
+    linear-gradient(-45deg, #5c5264 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #5c5264 75%),
+    linear-gradient(-45deg, transparent 75%, #5c5264 75%), #766c80;
+  background-size: 12px 12px;
+  background-position:
+    0 0,
+    0 6px,
+    6px -6px,
+    -6px 0;
+}
+.brush-preset-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: invert(1);
+}
+.brush-preset-round-preview {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #151018;
+}
+.brush-preset-name {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  font-weight: 600;
+}
+.brush-preset-card small {
+  color: #b9a8c6;
+  font-size: 9px;
+}
+.brush-preset-card > .compact-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 6px;
+}
+@media (max-width: 900px) {
+  .brush-presets-layout {
+    grid-template-columns: 1fr;
+  }
+}

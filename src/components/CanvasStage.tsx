@@ -27,7 +27,15 @@ import {
   gestureSelectionMode,
   selectionCoverage,
 } from '../engine/selection'
-import { brushStamp, retouchStroke, strokeStamps } from '../engine/brush'
+import {
+  brushStamp,
+  createBrushStrokeState,
+  retouchStroke,
+  sampledBrushStamp,
+  strokeStamps,
+  type BrushShapeDynamics,
+  type BrushStrokeState,
+} from '../engine/brush'
 import { isRetouchTool, retouchNames } from '../engine/retouch'
 import {
   applyGradientStops,
@@ -67,6 +75,7 @@ import {
   isPrepared,
   rasterizeLayer,
   loadImage,
+  getImage,
   clearRenderCaches,
   cacheImage,
   validateRasterBudget,
@@ -158,6 +167,8 @@ type Drag =
       /** Pulled-string smoothing state in canvas-grid coordinates. */
       smoothed?: Point
       lastRaw?: Point
+      /** Deterministic within one stroke so segments share one dynamics sequence. */
+      brushState?: BrushStrokeState
     }
 
 const getRect = (a: Point, b: Point): Rect => ({
@@ -214,6 +225,9 @@ export function CanvasStage({
   const repairMask = useRef<HTMLCanvasElement>(null)
   const drag = useRef<Drag | null>(null)
   const activePointer = useRef<number | null>(null)
+  const pointerGesture = useRef(0)
+  const activeGesture = useRef(0)
+  const releasedGesture = useRef<number | null>(null)
   const selectionGesture = useRef<{ base: Selection | null; mode: SelectionMode } | null>(null)
   const overrides = useRef(new Map<string, HTMLCanvasElement>())
   const [size, setSize] = useState({ width: 900, height: 700 })
@@ -587,8 +601,11 @@ export function CanvasStage({
     }
     // Pen pressure scales stamp size (default) and/or alpha across the
     // segment. Mouse input reports no pen flag, so its behaviour is fixed.
-    const scaleFor = (pr: number) =>
-        settings.pressureSize === false ? 1 : Math.max(0.05, Math.min(1, pr)),
+    const minimumDiameter = Math.min(1, Math.max(0, (settings.brushMinimumDiameter ?? 0) / 100)),
+      scaleFor = (pr: number) =>
+        settings.pressureSize === false
+          ? 1
+          : Math.max(0.05, minimumDiameter + Math.min(1, Math.max(0, pr)) * (1 - minimumDiameter)),
       alphaFor = (pr: number) => (settings.pressureOpacity ? Math.max(0.05, Math.min(1, pr)) : 1),
       dynamics =
         d.pen && (d.tool === 'brush' || d.tool === 'eraser')
@@ -598,7 +615,47 @@ export function CanvasStage({
               fromAlpha: alphaFor(d.prevPressure ?? d.pressure ?? 1),
               toAlpha: alphaFor(d.pressure ?? 1),
             }
-          : undefined
+          : undefined,
+      needsShape =
+        (d.tool === 'brush' || d.tool === 'eraser') &&
+        (!!settings.brushTip ||
+          !!settings.brushAngle ||
+          (settings.brushRoundness ?? 100) !== 100 ||
+          !!settings.brushFlipX ||
+          !!settings.brushFlipY ||
+          !!settings.brushSizeJitter ||
+          !!settings.brushOpacityJitter ||
+          !!settings.brushAngleJitter ||
+          !!settings.brushRoundnessJitter ||
+          !!settings.brushFlipXJitter ||
+          !!settings.brushFlipYJitter ||
+          !!settings.brushScatter ||
+          (settings.brushScatterCount ?? 1) > 1 ||
+          !!settings.brushCountJitter ||
+          (settings.brushAngleControl && settings.brushAngleControl !== 'off')),
+      shape: BrushShapeDynamics | undefined = needsShape
+        ? {
+            angle: settings.brushAngle ?? 0,
+            roundness: (settings.brushRoundness ?? 100) / 100,
+            flipX: !!settings.brushFlipX,
+            flipY: !!settings.brushFlipY,
+            sizeJitter: (settings.brushSizeJitter ?? 0) / 100,
+            opacityJitter: (settings.brushOpacityJitter ?? 0) / 100,
+            angleJitter: (settings.brushAngleJitter ?? 0) / 100,
+            roundnessJitter: (settings.brushRoundnessJitter ?? 0) / 100,
+            minimumDiameter,
+            minimumRoundness: (settings.brushMinimumRoundness ?? 25) / 100,
+            minimumOpacity: (settings.brushMinimumOpacity ?? 0) / 100,
+            angleControl: settings.brushAngleControl ?? 'off',
+            flipXJitter: !!settings.brushFlipXJitter,
+            flipYJitter: !!settings.brushFlipYJitter,
+            scatter: (settings.brushScatter ?? 0) / 100,
+            bothAxes: !!settings.brushScatterBothAxes,
+            count: settings.brushScatterCount ?? 1,
+            countJitter: (settings.brushCountJitter ?? 0) / 100,
+            state: d.brushState,
+          }
+        : undefined
     strokeStamps(
       d.canvas.getContext('2d')!,
       from,
@@ -609,6 +666,7 @@ export function CanvasStage({
       d.selection,
       d.clone,
       dynamics,
+      shape,
     )
   }
   const paintSegment = (d: Extract<Drag, { type: 'paint' }>, p: Point) => {
@@ -652,6 +710,68 @@ export function CanvasStage({
       redraw()
     })
   }
+  const finishPaintDrag = (d: Extract<Drag, { type: 'paint' }>) => {
+    // Smoothing catch-up: finish the stroke at the real pointer position.
+    if (d.smoothed && d.lastRaw && (d.lastRaw.x !== d.last.x || d.lastRaw.y !== d.last.y)) {
+      drawPaintSegment(d, d.last, d.lastRaw)
+      d.last = d.lastRaw
+      d.smoothed = d.lastRaw
+    }
+    // No busy overlay for a routine stroke: the live canvas stays on screen
+    // via the override while PNG encoding finishes in the background. The
+    // next pointer gesture silently waits for this commit (see pointerDown).
+    void queuePaintCommit(async () => {
+      if (d.mask) {
+        try {
+          const bitmap = await encodeBitmap(d.layer, d.canvas)
+          validateRasterBudget({
+            ...editor.documentRef.current,
+            layers: editor.documentRef.current.layers.map((l) =>
+              l.id === d.layer.id ? { ...l, mask: { ...d.mask!, src: bitmap.src! } } : l,
+            ),
+          })
+          editor.patchLayer(d.layer.id, { mask: { ...d.mask, src: bitmap.src! } }, '', true)
+          editor.finish('Рисование по маске')
+        } catch {
+          editor.change(() => d.before, '', true)
+          onToast('Не удалось сохранить маску')
+        }
+        return
+      }
+      const next = await encodeBitmap(d.layer, d.canvas).catch(() => null)
+      if (!next) {
+        editor.change(() => d.before, '', true)
+        overrides.current.clear()
+        redraw()
+        onToast('Не удалось сохранить мазок')
+        return
+      }
+      try {
+        validateRasterBudget({
+          ...editor.documentRef.current,
+          layers: editor.documentRef.current.layers.map((l) => (l.id === d.layer.id ? next : l)),
+        })
+      } catch (error) {
+        editor.change(() => d.before, '', true)
+        overrides.current.clear()
+        redraw()
+        onToast(error instanceof Error ? error.message : 'Превышен лимит растров')
+        return
+      }
+      editor.patchLayer(d.layer.id, next, '', true)
+      overrides.current.delete(d.layer.id)
+      editor.finish(
+        d.tool === 'eraser'
+          ? 'Ластик'
+          : d.tool === 'clone'
+            ? 'Штамп'
+            : isRetouchTool(d.tool)
+              ? retouchNames[d.tool]
+              : 'Рисование кистью',
+      )
+      redraw()
+    })
+  }
   const pointerDown = async (e: React.PointerEvent<HTMLDivElement>) => {
     if (busy || isInput(e.target) || (e.target as HTMLElement).closest('button')) return
     if (e.button !== 0 && e.button !== 1) return
@@ -661,6 +781,12 @@ export function CanvasStage({
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
     activePointer.current = e.pointerId
+    const gesture = ++pointerGesture.current
+    activeGesture.current = gesture
+    releasedGesture.current = null
+    const gestureUsable = () =>
+      activeGesture.current === gesture &&
+      (activePointer.current === e.pointerId || releasedGesture.current === gesture)
     // A previous stroke may still be encoding in the background. Never start a
     // new gesture from the pre-stroke document: wait silently for its commit.
     await paintCommit.current
@@ -1015,7 +1141,7 @@ export function CanvasStage({
           onToast('Не удалось подготовить слой')
           return
         }
-        if (activePointer.current !== e.pointerId) return
+        if (!gestureUsable()) return
         if (layer.kind !== 'image' && !maskMode) {
           layer = bitmapLayer(layer, buffer)
           editor.patchLayer(layer.id, layer, '', true)
@@ -1031,7 +1157,7 @@ export function CanvasStage({
         buffer.height = Math.max(1, Math.min(4096, Math.round(targetMask.height)))
         buffer.getContext('2d')!.drawImage(image, 0, 0, buffer.width, buffer.height)
       }
-      if (activePointer.current !== e.pointerId) return
+      if (!gestureUsable()) return
       const raw = localPoint(layer, p),
         local = targetMask
           ? {
@@ -1062,6 +1188,21 @@ export function CanvasStage({
         selectionAlpha = new Uint8ClampedArray(buffer.width * buffer.height)
         for (let i = 0; i < selectionAlpha.length; i++) selectionAlpha[i] = rgba[i * 4 + 3]
       }
+      let stamp = brushStamp(settings.brushSize * sx, settings.color, settings.brushHardness ?? 100)
+      if (settings.brushTip && tool !== 'clone') {
+        const cachedTip = getImage(settings.brushTip.src)
+        if (cachedTip) stamp = sampledBrushStamp(cachedTip, settings.brushSize * sx, settings.color)
+        else {
+          try {
+            const tipImage = await loadImage(settings.brushTip.src)
+            if (!gestureUsable()) return
+            stamp = sampledBrushStamp(tipImage, settings.brushSize * sx, settings.color)
+          } catch {
+            onToast('Наконечник кисти не загрузился — использована круглая кисть.')
+          }
+        }
+      }
+      if (!gestureUsable()) return
       const d: Extract<Drag, { type: 'paint' }> = {
         type: 'paint',
         layer,
@@ -1070,7 +1211,8 @@ export function CanvasStage({
         tool,
         last,
         mask: targetMask,
-        stamp: brushStamp(settings.brushSize * sx, settings.color, settings.brushHardness ?? 100),
+        stamp,
+        brushState: createBrushStrokeState(),
         selection: selectionCanvas,
         selectionAlpha,
         pen: e.pointerType === 'pen',
@@ -1083,6 +1225,14 @@ export function CanvasStage({
       drag.current = d
       if (!targetMask) overrides.current.set(layer.id, buffer)
       paintSegment(d, p)
+      if (releasedGesture.current === gesture) {
+        // A very short click can release before async layer/tip preparation
+        // creates the drag. It is still one intentional dab: commit it now
+        // instead of leaving a phantom drag for the next pointer-up.
+        drag.current = null
+        releasedGesture.current = null
+        finishPaintDrag(d)
+      }
     }
   }
   const pointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1452,6 +1602,7 @@ export function CanvasStage({
   }
   const pointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
     paintScheduler.current.cancel()
+    const pointerWasActive = activePointer.current === e.pointerId
     activePointer.current = null
     const d = drag.current
     drag.current = null
@@ -1459,7 +1610,10 @@ export function CanvasStage({
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId)
     if (pathController.up()) return
-    if (!d) return
+    if (!d) {
+      if (pointerWasActive) releasedGesture.current = activeGesture.current
+      return
+    }
     if (d.type === 'sample-color') {
       setAltSampling(false)
       return
@@ -1595,66 +1749,7 @@ export function CanvasStage({
       return
     }
     if (d.type === 'paint') {
-      // Smoothing catch-up: finish the stroke at the real pointer position.
-      if (d.smoothed && d.lastRaw && (d.lastRaw.x !== d.last.x || d.lastRaw.y !== d.last.y)) {
-        drawPaintSegment(d, d.last, d.lastRaw)
-        d.last = d.lastRaw
-        d.smoothed = d.lastRaw
-      }
-      // No busy overlay for a routine stroke: the live canvas stays on screen
-      // via the override while PNG encoding finishes in the background. The
-      // next pointer gesture silently waits for this commit (see pointerDown).
-      void queuePaintCommit(async () => {
-        if (d.mask) {
-          try {
-            const bitmap = await encodeBitmap(d.layer, d.canvas)
-            validateRasterBudget({
-              ...editor.documentRef.current,
-              layers: editor.documentRef.current.layers.map((l) =>
-                l.id === d.layer.id ? { ...l, mask: { ...d.mask!, src: bitmap.src! } } : l,
-              ),
-            })
-            editor.patchLayer(d.layer.id, { mask: { ...d.mask, src: bitmap.src! } }, '', true)
-            editor.finish('Рисование по маске')
-          } catch {
-            editor.change(() => d.before, '', true)
-            onToast('Не удалось сохранить маску')
-          }
-          return
-        }
-        const next = await encodeBitmap(d.layer, d.canvas).catch(() => null)
-        if (!next) {
-          editor.change(() => d.before, '', true)
-          overrides.current.clear()
-          redraw()
-          onToast('Не удалось сохранить мазок')
-          return
-        }
-        try {
-          validateRasterBudget({
-            ...editor.documentRef.current,
-            layers: editor.documentRef.current.layers.map((l) => (l.id === d.layer.id ? next : l)),
-          })
-        } catch (error) {
-          editor.change(() => d.before, '', true)
-          overrides.current.clear()
-          redraw()
-          onToast(error instanceof Error ? error.message : 'Превышен лимит растров')
-          return
-        }
-        editor.patchLayer(d.layer.id, next, '', true)
-        overrides.current.delete(d.layer.id)
-        editor.finish(
-          d.tool === 'eraser'
-            ? 'Ластик'
-            : d.tool === 'clone'
-              ? 'Штамп'
-              : isRetouchTool(d.tool)
-                ? retouchNames[d.tool]
-                : 'Рисование кистью',
-        )
-        redraw()
-      })
+      finishPaintDrag(d)
     } else if (d.type === 'shape') {
       const layer = editor.documentRef.current.layers.find((l) => l.id === d.id)!
       if (layer.width < 4 && layer.height < 4)
@@ -1675,6 +1770,8 @@ export function CanvasStage({
       )
   }
   const cancelPointer = () => {
+    activeGesture.current = ++pointerGesture.current
+    releasedGesture.current = null
     pathController.cancelGesture()
     paintScheduler.current.cancel()
     setAltSampling(false)

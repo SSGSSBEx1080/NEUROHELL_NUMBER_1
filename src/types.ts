@@ -233,6 +233,29 @@ export interface ToolSettings {
   /** Pen pressure drives brush size (default on) / opacity (default off). */
   pressureSize?: boolean
   pressureOpacity?: boolean
+  /** Sampled tip; undefined is the computed round tip. */
+  brushTip?: BrushTipDefinition
+  /** Brush shape: angle in degrees, roundness/flips, and minimum pressure diameter %. */
+  brushAngle?: number
+  brushRoundness?: number
+  brushFlipX?: boolean
+  brushFlipY?: boolean
+  brushMinimumDiameter?: number
+  brushMinimumRoundness?: number
+  brushMinimumOpacity?: number
+  /** Shape/transfer dynamics, all percentages unless noted. */
+  brushSizeJitter?: number
+  brushOpacityJitter?: number
+  brushAngleJitter?: number
+  brushRoundnessJitter?: number
+  brushAngleControl?: 'off' | 'direction' | 'initial'
+  brushFlipXJitter?: boolean
+  brushFlipYJitter?: boolean
+  /** Scattering: amount is % of diameter; count is dabs per spacing step. */
+  brushScatter?: number
+  brushScatterBothAxes?: boolean
+  brushScatterCount?: number
+  brushCountJitter?: number
   /** Dodge/burn/sponge/blur/sharpen/smudge brushes (retouch.ts). */
   retouchStrength?: number
   retouchRange?: 'shadows' | 'midtones' | 'highlights'
@@ -247,6 +270,14 @@ export interface ToolSettings {
   gradientType?: 'linear' | 'radial' | 'reflected' | 'angle'
   /** Selected tool gradient; undefined means the live foreground → background ramp. */
   gradient?: import('./engine/gradientRamp').GradientDefinition
+}
+/** Serializable sampled brush tip. `src` is a PNG whose alpha channel is the dab mask. */
+export interface BrushTipDefinition {
+  id: string
+  name: string
+  width: number
+  height: number
+  src: string
 }
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
   brightness: 0,

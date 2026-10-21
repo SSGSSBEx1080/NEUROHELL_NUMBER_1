@@ -57,6 +57,9 @@ const FrequencyDialog = lazy(() =>
 const PinWarpDialog = lazy(() =>
   import('./components/PinWarpDialog').then((m) => ({ default: m.PinWarpDialog })),
 )
+const BrushPresetsDialog = lazy(() =>
+  import('./components/BrushPresetsDialog').then((m) => ({ default: m.BrushPresetsDialog })),
+)
 const CommandPalette = lazy(() =>
   import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
@@ -318,6 +321,7 @@ export default function App() {
     | 'liquify'
     | 'frequency'
     | 'pin-warp'
+    | 'brush-presets'
     | 'gradient-tool'
     | 'batch'
     | null
@@ -2708,6 +2712,15 @@ export default function App() {
                     <option value="off">Нажим выкл</option>
                   </Select>
                 )}
+                <button
+                  type="button"
+                  className="compact-button brush-presets-open"
+                  aria-label={`Кисти, наконечники и динамика. Текущий наконечник: ${settings.brushTip?.name || 'круглый'}`}
+                  title={`Наконечник: ${settings.brushTip?.name || 'круглый'} · ABR, пресеты и динамика`}
+                  onClick={() => setModal('brush-presets')}
+                >
+                  Кисти…
+                </button>
                 {tool === 'clone' ? (
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
                 ) : tool === 'brush' ? (
@@ -3582,6 +3595,9 @@ export default function App() {
               closeModal()
             }}
           />
+        )}
+        {modal === 'brush-presets' && (
+          <BrushPresetsDialog settings={settings} onSettings={setSettings} onClose={closeModal} />
         )}
         {modal === 'arrange' && (
           <ArrangeDialog
