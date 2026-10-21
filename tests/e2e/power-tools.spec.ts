@@ -211,7 +211,18 @@ test('all six raster filters run, noise preview is deterministic and cancelling 
   await open(page, await source(page))
   const before = await pixels(page)
   await menu(page, 'Фильтры', 'Растровые фильтры на копии…')
-  for (const type of ['unsharp', 'highpass', 'median', 'noise', 'mosaic', 'edges']) {
+  for (const type of [
+    'unsharp',
+    'highpass',
+    'median',
+    'noise',
+    'mosaic',
+    'edges',
+    'gaussian',
+    'motion',
+    'threshold',
+    'emboss',
+  ]) {
     await page.getByLabel('Растровый фильтр').selectOption(type)
     await expect(
       page.getByRole('button', { name: 'Применить на копии', exact: true }),
@@ -400,4 +411,43 @@ test('liquify forward warp drags the edge on an explicit copy and leaves the ori
   // edge stays at x=60 so x=70 remains white.
   expect(after[moved]).toBeLessThan(60)
   expect(after[corner]).toBe(255)
+})
+
+test('frequency separation creates low/high layers that reconstruct the original', async ({
+  page,
+}) => {
+  await ready(page)
+  const photo = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4
+        p.data[i] = (xx * 2 + yy) % 256
+        p.data[i + 1] = (xx + yy * 3) % 256
+        p.data[i + 2] = xx < 60 ? 40 : 210
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const doc = newDocument(120, 80, 'Частотка', 'transparent')
+  doc.layers = [makeLayer({ kind: 'image', name: 'Фото', src: photo, width: 120, height: 80 })]
+  await open(page, doc)
+  const before = await pixels(page)
+  await menu(page, 'Фильтры', 'Частотное разложение…')
+  await page.getByLabel('Радиус разделения', { exact: true }).fill('4')
+  await page.getByRole('button', { name: 'Создать два слоя', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(3)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Низкие частоты' })).toHaveCount(1)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Высокие частоты' })).toHaveCount(1)
+  await expect(page.getByLabel('Режим наложения')).toHaveValue('linear-light')
+  const after = await pixels(page)
+  let worst = 0
+  for (let i = 0; i < before.length; i++) worst = Math.max(worst, Math.abs(before[i] - after[i]))
+  expect(worst).toBeLessThanOrEqual(3)
 })

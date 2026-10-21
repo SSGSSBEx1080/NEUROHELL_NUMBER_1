@@ -11,6 +11,10 @@ export type RasterFilter =
     }
   | { type: 'mosaic'; size: number }
   | { type: 'edges'; strength: number }
+  | { type: 'gaussian'; radius: number }
+  | { type: 'motion'; angle: number; distance: number }
+  | { type: 'threshold'; level: number }
+  | { type: 'emboss'; angle: number; amount: number }
 export type RasterFilterKind = RasterFilter['type']
 export const rasterFilterNames: Record<RasterFilterKind, string> = {
   unsharp: 'Контурная резкость',
@@ -19,6 +23,10 @@ export const rasterFilterNames: Record<RasterFilterKind, string> = {
   noise: 'Добавить шум',
   mosaic: 'Мозаика',
   edges: 'Контуры (Собель)',
+  gaussian: 'Гауссово размытие',
+  motion: 'Размытие в движении',
+  threshold: 'Порог',
+  emboss: 'Тиснение',
 }
 export const MAX_FILTER_PIXELS = 8_388_608
 export interface RasterFilterRequest {
@@ -42,6 +50,14 @@ export function defaultRasterFilter(type: RasterFilterKind): RasterFilter {
       return { type, size: 12 }
     case 'edges':
       return { type, strength: 1 }
+    case 'gaussian':
+      return { type, radius: 5 }
+    case 'motion':
+      return { type, angle: 0, distance: 20 }
+    case 'threshold':
+      return { type, level: 128 }
+    case 'emboss':
+      return { type, angle: 135, amount: 100 }
   }
 }
 const clamp = (v: number, min = 0, max = 255) => Math.max(min, Math.min(max, v))
@@ -65,33 +81,45 @@ export function parseRasterFilter(input: unknown): RasterFilter {
       continue
     }
     const min =
-        key === 'radius'
-          ? v.type === 'median'
-            ? 1
-            : 0.1
-          : key === 'size' || key === 'seed'
-            ? 1
-            : 0,
+        key === 'angle'
+          ? -180
+          : key === 'radius'
+            ? v.type === 'median'
+              ? 1
+              : 0.1
+            : key === 'size' || key === 'seed' || key === 'distance' || key === 'level'
+              ? 1
+              : 0,
       max =
-        key === 'radius'
-          ? v.type === 'median'
-            ? 5
-            : 30
-          : key === 'amount'
-            ? v.type === 'unsharp'
-              ? 500
-              : 100
-            : key === 'size'
-              ? 128
-              : key === 'strength'
+        key === 'angle'
+          ? 180
+          : key === 'distance'
+            ? 200
+            : key === 'radius'
+              ? v.type === 'median'
                 ? 5
-                : key === 'seed'
-                  ? 2147483647
-                  : 255
+                : v.type === 'gaussian'
+                  ? 100
+                  : 30
+              : key === 'amount'
+                ? v.type === 'unsharp' || v.type === 'emboss'
+                  ? 500
+                  : 100
+                : key === 'size'
+                  ? 128
+                  : key === 'strength'
+                    ? 5
+                    : key === 'seed'
+                      ? 2147483647
+                      : 255
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
       throw new Error(`Параметр фильтра ${key}: ${min}–${max}`)
     out[key] =
-      key === 'size' || key === 'seed' || (key === 'radius' && v.type === 'median')
+      key === 'size' ||
+      key === 'seed' ||
+      key === 'distance' ||
+      key === 'level' ||
+      (key === 'radius' && v.type === 'median')
         ? Math.round(value)
         : value
   }
@@ -156,6 +184,79 @@ function frequency(
               : original
       }
   }
+}
+/** Premultiplied gaussian low-pass; alpha channel of `out` stays original. */
+function gaussian(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radius: number,
+) {
+  const work = new Float32Array(w * h),
+    temp = new Float32Array(w * h),
+    radii = gaussianRadii(radius)
+  const blur = () => {
+    for (const r of radii) blurPlane(work, temp, w, h, r)
+  }
+  for (let i = 0; i < work.length; i++) work[i] = p[i * 4 + 3] / 255
+  blur()
+  const alpha = work.slice()
+  for (let c = 0; c < 3; c++) {
+    for (let i = 0; i < work.length; i++) work[i] = (p[i * 4 + c] * p[i * 4 + 3]) / 255
+    blur()
+    for (let i = 0; i < work.length; i++)
+      if (p[i * 4 + 3]) out[i * 4 + c] = clamp(alpha[i] > 1e-7 ? work[i] / alpha[i] : p[i * 4 + c])
+  }
+}
+function motion(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  angle: number,
+  distance: number,
+) {
+  const rad = (angle * Math.PI) / 180,
+    ux = Math.cos(rad),
+    uy = Math.sin(rad),
+    offsets: [number, number][] = []
+  const seen = new Set<string>()
+  for (let t = -distance / 2; t <= distance / 2; t++) {
+    const dx = Math.round(ux * t),
+      dy = Math.round(uy * t),
+      key = dx + ',' + dy
+    if (!seen.has(key)) {
+      seen.add(key)
+      offsets.push([dx, dy])
+    }
+  }
+  if (w * h * offsets.length > 3e8)
+    throw new Error('Слишком большая дистанция для этого слоя. Уменьши дистанцию или слой.')
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      if (!p[o + 3]) continue
+      let pr = 0,
+        pg = 0,
+        pb = 0,
+        pa = 0
+      for (const [dx, dy] of offsets) {
+        const i = (clamp(y + dy, 0, h - 1) * w + clamp(x + dx, 0, w - 1)) * 4,
+          a = p[i + 3] / 255
+        pr += p[i] * a
+        pg += p[i + 1] * a
+        pb += p[i + 2] * a
+        pa += p[i + 3]
+      }
+      const mean = pa / offsets.length
+      if (mean > 0) {
+        const denom = (mean / 255) * offsets.length
+        out[o] = clamp(pr / denom)
+        out[o + 1] = clamp(pg / denom)
+        out[o + 2] = clamp(pb / denom)
+      }
+    }
 }
 function median(p: Uint8ClampedArray, out: Uint8ClampedArray, w: number, h: number, r: number) {
   for (let y = 0; y < h; y++) {
@@ -256,6 +357,29 @@ export function processRasterFilter(request: RasterFilterRequest): Uint8ClampedA
         const mono = f.monochrome ? noise() : 0
         for (let c = 0; c < 3; c++) out[i + c] = clamp(p[i + c] + (f.monochrome ? mono : noise()))
       }
+  } else if (f.type === 'gaussian') gaussian(p, out, w, h, f.radius)
+  else if (f.type === 'motion') motion(p, out, w, h, f.angle, f.distance)
+  else if (f.type === 'threshold') {
+    for (let i = 0; i < p.length; i += 4)
+      if (p[i + 3]) {
+        const v = p[i] * 0.2126 + p[i + 1] * 0.7152 + p[i + 2] * 0.0722 >= f.level ? 255 : 0
+        out[i] = out[i + 1] = out[i + 2] = v
+      }
+  } else if (f.type === 'emboss') {
+    const rad = (f.angle * Math.PI) / 180,
+      dx = Math.round(Math.cos(rad)),
+      dy = Math.round(Math.sin(rad)),
+      lumaAt = (x: number, y: number) => {
+        const i = (clamp(y, 0, h - 1) * w + clamp(x, 0, w - 1)) * 4
+        return p[i + 3] ? p[i] * 0.2126 + p[i + 1] * 0.7152 + p[i + 2] * 0.0722 : 128
+      }
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        if (!p[i + 3]) continue
+        const v = clamp(128 + ((lumaAt(x + dx, y + dy) - lumaAt(x - dx, y - dy)) * f.amount) / 100)
+        out[i] = out[i + 1] = out[i + 2] = v
+      }
   } else {
     const luminance = (x: number, y: number, fallback: number) => {
       const i = (clamp(y, 0, h - 1) * w + clamp(x, 0, w - 1)) * 4
@@ -286,5 +410,18 @@ export function processRasterFilter(request: RasterFilterRequest): Uint8ClampedA
     for (let i = 0; i < p.length; i += 4)
       for (let c = 0; c < 3; c++)
         out[i + c] = Math.round(p[i + c] + ((out[i + c] - p[i + c]) * mask[i / 4]) / 255)
+  return out
+}
+
+/**
+ * High-frequency layer for frequency separation: 128 + (original − low)/2.
+ * Composited over the low layer with Linear Light it reconstructs the
+ * original exactly (Linear Light doubles the stored half-scale delta),
+ * matching Photoshop's Apply Image scale 2 / offset 128 recipe.
+ */
+export function frequencyDetail(p: Uint8ClampedArray, low: Uint8ClampedArray): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(p)
+  for (let i = 0; i < p.length; i += 4)
+    if (p[i + 3]) for (let c = 0; c < 3; c++) out[i + c] = clamp(128 + (p[i + c] - low[i + c]) / 2)
   return out
 }

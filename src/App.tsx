@@ -51,6 +51,9 @@ const RasterFilterDialog = lazy(() =>
 const LiquifyDialog = lazy(() =>
   import('./components/LiquifyDialog').then((m) => ({ default: m.LiquifyDialog })),
 )
+const FrequencyDialog = lazy(() =>
+  import('./components/FrequencyDialog').then((m) => ({ default: m.FrequencyDialog })),
+)
 const CommandPalette = lazy(() =>
   import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
@@ -310,6 +313,7 @@ export default function App() {
     | 'commands'
     | 'raster-filter'
     | 'liquify'
+    | 'frequency'
     | 'gradient-tool'
     | 'batch'
     | null
@@ -2247,6 +2251,11 @@ export default function App() {
       disabled: !canFilter,
     },
     {
+      label: 'Частотное разложение…',
+      action: () => setModal('frequency'),
+      disabled: !canFilter,
+    },
+    {
       label: 'Последний растровый фильтр…',
       shortcut: 'Ctrl Alt F',
       action: () => setModal('raster-filter'),
@@ -3488,6 +3497,25 @@ export default function App() {
               const next = insertFilteredCopy(doc, selectedId, copy, hide)
               editor.change(() => next, 'Пластика на растровой копии')
               setSelectedId(copy.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'frequency' && selectedId && (
+          <FrequencyDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(low, high, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой разложение заново.')
+              const withLow = insertFilteredCopy(doc, selectedId, low, hide)
+              const next = insertFilteredCopy(withLow, low.id, high, false)
+              editor.change(() => next, 'Частотное разложение')
+              setSelectedId(high.id)
               setSettings({ editMask: false, quickMask: false })
               setTool('move')
               closeModal()

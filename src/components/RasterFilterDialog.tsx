@@ -207,6 +207,20 @@ export function RasterFilterDialog({
           {filter.type === 'median' && control('radius', 'Радиус медианы', 1, 5)}
           {filter.type === 'mosaic' && control('size', 'Размер ячейки', 1, 128)}
           {filter.type === 'edges' && control('strength', 'Сила контуров', 0, 5, 0.1)}
+          {filter.type === 'gaussian' && control('radius', 'Радиус размытия', 0.1, 100, 0.1)}
+          {filter.type === 'motion' && (
+            <>
+              {control('angle', 'Угол движения, °', -180, 180)}
+              {control('distance', 'Дистанция, px', 1, 200)}
+            </>
+          )}
+          {filter.type === 'threshold' && control('level', 'Уровень порога', 1, 255)}
+          {filter.type === 'emboss' && (
+            <>
+              {control('angle', 'Угол света, °', -180, 180)}
+              {control('amount', 'Глубина тиснения, %', 0, 500)}
+            </>
+          )}
           {filter.type === 'noise' && (
             <>
               {control('amount', 'Количество шума, %', 0, 100, 0.1)}
