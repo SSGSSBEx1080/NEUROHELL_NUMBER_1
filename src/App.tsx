@@ -54,6 +54,9 @@ const LiquifyDialog = lazy(() =>
 const FrequencyDialog = lazy(() =>
   import('./components/FrequencyDialog').then((m) => ({ default: m.FrequencyDialog })),
 )
+const PinWarpDialog = lazy(() =>
+  import('./components/PinWarpDialog').then((m) => ({ default: m.PinWarpDialog })),
+)
 const CommandPalette = lazy(() =>
   import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
@@ -314,6 +317,7 @@ export default function App() {
     | 'raster-filter'
     | 'liquify'
     | 'frequency'
+    | 'pin-warp'
     | 'gradient-tool'
     | 'batch'
     | null
@@ -2256,6 +2260,11 @@ export default function App() {
       disabled: !canFilter,
     },
     {
+      label: 'Деформация по точкам на копии…',
+      action: () => setModal('pin-warp'),
+      disabled: !canFilter,
+    },
+    {
       label: 'Последний растровый фильтр…',
       shortcut: 'Ctrl Alt F',
       action: () => setModal('raster-filter'),
@@ -3550,6 +3559,24 @@ export default function App() {
               const next = insertFilteredCopy(withLow, low.id, high, false)
               editor.change(() => next, 'Частотное разложение')
               setSelectedId(high.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'pin-warp' && selectedId && (
+          <PinWarpDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(copy, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой деформацию заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Деформация по точкам на копии')
+              setSelectedId(copy.id)
               setSettings({ editMask: false, quickMask: false })
               setTool('move')
               closeModal()

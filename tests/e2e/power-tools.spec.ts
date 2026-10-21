@@ -451,3 +451,49 @@ test('frequency separation creates low/high layers that reconstruct the original
   for (let i = 0; i < before.length; i++) worst = Math.max(worst, Math.abs(before[i] - after[i]))
   expect(worst).toBeLessThanOrEqual(3)
 })
+
+test('pin warp drags a local region on an explicit copy without moving distant pixels', async ({
+  page,
+}) => {
+  await ready(page)
+  const src = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4,
+          v = xx < 60 ? 0 : 255
+        p.data[i] = p.data[i + 1] = p.data[i + 2] = v
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const doc = newDocument(120, 80, 'Точки', 'transparent')
+  doc.layers = [makeLayer({ kind: 'image', name: 'Край', src, width: 120, height: 80 })]
+  await open(page, doc)
+  await menu(page, 'Фильтры', 'Деформация по точкам на копии…')
+  await page.getByLabel('Радиус влияния', { exact: true }).fill('32')
+  const box = await page.getByTestId('pin-warp-canvas').boundingBox()
+  const sx = box!.width / 120,
+    sy = box!.height / 80
+  await page.mouse.move(box!.x + 48 * sx, box!.y + 40 * sy)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + 78 * sx, box!.y + 40 * sy, { steps: 10 })
+  await page.mouse.up()
+  await expect(page.getByRole('button', { name: 'Применить копию', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Применить копию', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Край · Деформация по точкам' }),
+  ).toHaveCount(1)
+  const after = await pixels(page),
+    moved = (40 * 120 + 70) * 4,
+    distant = (2 * 120 + 70) * 4
+  expect(after[moved]).toBeLessThan(60)
+  expect(after[distant]).toBe(255)
+})
