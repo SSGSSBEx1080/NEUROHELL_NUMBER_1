@@ -15,6 +15,7 @@ import {
   prepareDocumentPatterns,
 } from './patterns'
 import { applyBlendIf, isBlendIfActive } from './blendIf'
+import { compositePixelBlend, isPixelBlendMode } from './blendModes'
 import { applyTextAntiAliasToPixels, textAntiAliasMode } from './textAntiAlias'
 import { textDecorationMetrics } from './textDecorations'
 import {
@@ -262,7 +263,11 @@ export function renderLayer(
   ctx.imageSmoothingQuality = 'high'
   if (!flat) {
     ctx.globalAlpha = layer.opacity
-    ctx.globalCompositeOperation = layer.blendMode
+    // Pixel-blend modes are composited by renderDocument against a backdrop
+    // snapshot; a direct renderLayer call has no backdrop to blend with.
+    ctx.globalCompositeOperation = isPixelBlendMode(layer.blendMode)
+      ? 'source-over'
+      : layer.blendMode
   }
   if (layer.warp && (override || layer.kind !== 'image' || (layer.src && images.has(layer.src)))) {
     renderWarped(
@@ -413,23 +418,54 @@ export function renderDocument(
         const c = surface()
         try {
           draw(c.getContext('2d')!, layer.id, depth + 1)
-          renderLayer(
-            out,
-            { ...layer, kind: 'image', x: 0, y: 0, width: doc.width, height: doc.height },
-            c,
-          )
+          if (isPixelBlendMode(layer.blendMode)) {
+            const flat = surface()
+            try {
+              renderLayer(
+                flat.getContext('2d')!,
+                {
+                  ...layer,
+                  kind: 'image',
+                  x: 0,
+                  y: 0,
+                  width: doc.width,
+                  height: doc.height,
+                  opacity: 1,
+                  blendMode: 'source-over',
+                },
+                c,
+              )
+              compositeSurfaceMode(flat, out, layer)
+            } finally {
+              release(flat)
+            }
+          } else
+            renderLayer(
+              out,
+              { ...layer, kind: 'image', x: 0, y: 0, width: doc.width, height: doc.height },
+              c,
+            )
         } finally {
           release(c)
         }
       } else {
         const override = overrides?.get(layer.id)
-        renderLayer(
-          out,
-          override
-            ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false }
-            : layer,
-          override,
-        )
+        const effective = override
+          ? { ...layer, adjustments: { ...DEFAULT_ADJUSTMENTS }, flipX: false, flipY: false }
+          : layer
+        if (isPixelBlendMode(effective.blendMode)) {
+          const surf = surface()
+          try {
+            renderLayer(
+              surf.getContext('2d')!,
+              { ...effective, opacity: 1, blendMode: 'source-over' },
+              override,
+            )
+            compositeSurfaceMode(surf, out, effective)
+          } finally {
+            release(surf)
+          }
+        } else renderLayer(out, effective, override)
       }
     }
     // Blend If: paint the layer flat into a surface, modulate its alpha by its
@@ -454,6 +490,42 @@ export function renderDocument(
         release(back)
       }
     }
+    // Composite a flat doc-grid surface onto the target. Canvas-native modes
+    // draw directly; Photoshop modes Canvas cannot express blend per pixel
+    // against a snapshot of the backdrop and replace the doc rect with the
+    // merged result (`copy`), so semi-transparent results never double-blend.
+    const compositeSurfaceMode = (
+      surf: HTMLCanvasElement,
+      target: CanvasRenderingContext2D,
+      layer: Layer,
+    ) => {
+      if (!isPixelBlendMode(layer.blendMode)) {
+        target.save()
+        target.globalAlpha = layer.opacity
+        target.globalCompositeOperation = layer.blendMode
+        target.drawImage(surf, 0, 0, doc.width, doc.height)
+        target.restore()
+        return
+      }
+      const back = surface()
+      try {
+        const bx = back.getContext('2d', { willReadFrequently: true })!
+        bx.drawImage(target.canvas, 0, 0, doc.width, doc.height)
+        const under = bx.getImageData(0, 0, width, height),
+          image = surf
+            .getContext('2d', { willReadFrequently: true })!
+            .getImageData(0, 0, width, height)
+        compositePixelBlend(under.data, image.data, layer.blendMode, layer.opacity, width)
+        bx.putImageData(under, 0, 0)
+        target.save()
+        target.globalAlpha = 1
+        target.globalCompositeOperation = 'copy'
+        target.drawImage(back, 0, 0, doc.width, doc.height)
+        target.restore()
+      } finally {
+        release(back)
+      }
+    }
     const paintBlendIf = (layer: Layer, target: CanvasRenderingContext2D) => {
       const surf = surface()
       try {
@@ -461,12 +533,8 @@ export function renderDocument(
           { ...layer, opacity: 1, blendMode: 'source-over', blendIf: undefined },
           surf.getContext('2d')!,
         )
-        applyRanges(surf, target, layer.blendIf!)
-        target.save()
-        target.globalAlpha = layer.opacity
-        target.globalCompositeOperation = layer.blendMode
-        target.drawImage(surf, 0, 0, doc.width, doc.height)
-        target.restore()
+        if (isBlendIfActive(layer.blendIf)) applyRanges(surf, target, layer.blendIf!)
+        compositeSurfaceMode(surf, target, layer)
       } finally {
         release(surf)
       }
@@ -488,7 +556,8 @@ export function renderDocument(
         continue
       }
       if (end === i + 1) {
-        if (isBlendIfActive(layer.blendIf)) paintBlendIf(layer, target)
+        if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
+          paintBlendIf(layer, target)
         else paint(layer, target)
         continue
       }
@@ -509,11 +578,7 @@ export function renderDocument(
         x.globalCompositeOperation = 'destination-in'
         x.drawImage(base, 0, 0, doc.width, doc.height)
         if (isBlendIfActive(layer.blendIf)) applyRanges(group, target, layer.blendIf!)
-        target.save()
-        target.globalAlpha = layer.opacity
-        target.globalCompositeOperation = layer.blendMode
-        target.drawImage(group, 0, 0, doc.width, doc.height)
-        target.restore()
+        compositeSurfaceMode(group, target, layer)
       } finally {
         release(base)
         if (group) release(group)

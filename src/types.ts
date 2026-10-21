@@ -51,6 +51,17 @@ export type BlendMode =
   | 'color'
   | 'luminosity'
   | 'lighter'
+  // Photoshop modes Canvas2D cannot express; composited per pixel (blendModes.ts).
+  | 'dissolve'
+  | 'linear-burn'
+  | 'darker-color'
+  | 'lighter-color'
+  | 'vivid-light'
+  | 'linear-light'
+  | 'pin-light'
+  | 'hard-mix'
+  | 'subtract'
+  | 'divide'
 export interface Adjustments {
   brightness: number
   contrast: number

@@ -210,6 +210,16 @@ const blends = new Set([
   'color',
   'luminosity',
   'lighter',
+  'dissolve',
+  'linear-burn',
+  'darker-color',
+  'lighter-color',
+  'vivid-light',
+  'linear-light',
+  'pin-light',
+  'hard-mix',
+  'subtract',
+  'divide',
 ])
 const validFont = (value: unknown) =>
   typeof value === 'string' && value.length <= 160 && !/[\x00-\x1f\";{}<>]/.test(value)

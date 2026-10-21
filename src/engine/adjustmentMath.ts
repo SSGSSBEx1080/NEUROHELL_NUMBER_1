@@ -1,3 +1,4 @@
+import { blendColor, isPixelBlendMode } from './blendModes'
 import { sampleCube } from './colorLut'
 import { gradientColor, rgbFromHex } from './gradientRamp'
 import type { BlendMode } from '../types'
@@ -214,6 +215,13 @@ export function compileCorrection(a: Correction): Transform {
 /** W3C compositing blend functions, used without increasing the backdrop alpha. */
 export function blendCorrection(mode: BlendMode, r: number, g: number, b: number, out: number[]) {
   if (mode === 'source-over') return
+  if (isPixelBlendMode(mode)) {
+    // Dissolve on a correction has no per-pixel coordinates here; it degrades
+    // to the normal opacity mix instead of speckle. Layer rendering dissolves.
+    if (mode === 'dissolve') return
+    blendColor(mode, [r, g, b], out, out)
+    return
+  }
   if (mode === 'hue' || mode === 'saturation' || mode === 'color' || mode === 'luminosity') {
     const l = lum(r, g, b),
       saturation = Math.max(r, g, b) - Math.min(r, g, b)

@@ -296,3 +296,82 @@ test('PSD adjustment layer with pixel+vector masks keeps its correction through 
   expect(saved.imageData!.data[(16 * d.width + 32) * 4]).toBe(155)
   expect(saved.imageData!.data[(16 * d.width + 8) * 4]).toBe(100)
 })
+
+test('PSD exotic blend modes (vivid light, subtract) render per-pixel and round-trip natively', async ({
+  page,
+}) => {
+  const width = 32,
+    height = 16,
+    solid = (r: number, g: number, b: number) => {
+      const data = new Uint8ClampedArray(width * height * 4)
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = r
+        data[i + 1] = g
+        data[i + 2] = b
+        data[i + 3] = 255
+      }
+      return { width, height, data }
+    }
+  const buffer = Buffer.from(
+    writePsd({
+      width,
+      height,
+      imageData: solid(255, 53, 0),
+      children: [
+        {
+          name: 'База',
+          left: 0,
+          top: 0,
+          right: width,
+          bottom: height,
+          imageData: solid(128, 128, 128),
+        },
+        {
+          name: 'Верх',
+          left: 0,
+          top: 0,
+          right: width,
+          bottom: height,
+          blendMode: 'vivid light',
+          imageData: solid(200, 80, 40),
+        },
+      ],
+    }),
+  )
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page.getByLabel('Открыть изображение или проект').setInputFiles({
+    name: 'vivid.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer,
+  })
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const profileOpen = page.getByRole('button', { name: 'Открыть', exact: true })
+  if (await profileOpen.isVisible()) await profileOpen.click()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const sample = () =>
+    page.getByTestId('editor-canvas').evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return [...c.getContext('2d')!.getImageData(8, 8, 1, 1).data]
+    })
+  // Force a working recomposite; vivid light over mid gray: dodge red to
+  // white, burn green to ~53, blue to 0. Before this stage the mode fell back
+  // to Normal and the pixel stayed the raw [200,80,40].
+  await page.getByRole('button', { name: 'Добавить пустой слой', exact: true }).click()
+  await expect.poll(async () => (await sample())[0]).toBe(255)
+  const vivid = await sample()
+  expect(Math.abs(vivid[1] - 53)).toBeLessThanOrEqual(2)
+  expect(vivid[2]).toBe(0)
+  await page.locator('.layer-row').filter({ hasText: 'Верх' }).click()
+  await page.getByLabel('Режим наложения').selectOption('subtract')
+  await expect.poll(() => sample()).toEqual([0, 48, 88, 255])
+  const download = page.waitForEvent('download')
+  await page.keyboard.press('Control+s')
+  const exported = await readFile((await (await download).path())!)
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  const saved = readPsd(exported, { useImageData: true, skipThumbnail: true })
+  expect(flatten(saved.children || []).find((l) => l.name === 'Верх')!.blendMode).toBe('subtract')
+  expect([...saved.imageData!.data.slice((8 * width + 8) * 4, (8 * width + 8) * 4 + 4)]).toEqual([
+    0, 48, 88, 255,
+  ])
+})

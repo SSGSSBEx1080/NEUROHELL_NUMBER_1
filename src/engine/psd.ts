@@ -131,6 +131,16 @@ const toCanvas: Record<string, BlendMode> = {
   color: 'color',
   luminosity: 'luminosity',
   'linear dodge': 'lighter',
+  dissolve: 'dissolve',
+  'linear burn': 'linear-burn',
+  'darker color': 'darker-color',
+  'lighter color': 'lighter-color',
+  'vivid light': 'vivid-light',
+  'linear light': 'linear-light',
+  'pin light': 'pin-light',
+  'hard mix': 'hard-mix',
+  subtract: 'subtract',
+  divide: 'divide',
 }
 const toPsd: Record<BlendMode, PsdLayer['blendMode']> = {
   'source-over': 'normal',
@@ -150,6 +160,16 @@ const toPsd: Record<BlendMode, PsdLayer['blendMode']> = {
   color: 'color',
   luminosity: 'luminosity',
   lighter: 'linear dodge',
+  dissolve: 'dissolve',
+  'linear-burn': 'linear burn',
+  'darker-color': 'darker color',
+  'lighter-color': 'lighter color',
+  'vivid-light': 'vivid light',
+  'linear-light': 'linear light',
+  'pin-light': 'pin light',
+  'hard-mix': 'hard mix',
+  subtract: 'subtract',
+  divide: 'divide',
 }
 type PsdBevel = NonNullable<LayerEffectsInfo['bevel']>
 const bevelStyleFromPsd: Record<string, BevelEffectStyle['style']> = {
