@@ -251,3 +251,76 @@ test('retouch brushes edit raster pixels: burn darkens highlights, sponge desatu
   expect(Math.abs(smudged[0] - smudged[1])).toBeLessThanOrEqual(2)
   expect(smudged[3]).toBe(255)
 })
+
+test('brush smoothing cuts the corner while the raw stroke reaches the vertex', async ({
+  page,
+}) => {
+  await blank(page)
+  await page.keyboard.press('b')
+  await page.getByLabel('Размер', { exact: true }).fill('6')
+  const vertex = async () => (await pixel(page, 150, 40))[3]
+  await points(page, [
+    [60, 100],
+    [150, 40],
+    [240, 100],
+  ])
+  await expect.poll(vertex).toBe(255)
+  await page.keyboard.press('Control+z')
+  await expect.poll(vertex).toBe(0)
+  await page.getByLabel('Сглаживание', { exact: true }).fill('100')
+  await points(page, [
+    [60, 100],
+    [150, 40],
+    [240, 100],
+  ])
+  // The pulled-string point never reaches the sharp vertex, but the stroke
+  // still lands and catches up to the final raw point on release.
+  expect(await vertex()).toBeLessThan(255)
+  await expect.poll(async () => (await pixel(page, 238, 100))[3]).toBeGreaterThan(0)
+})
+
+test('pen pressure scales the brush dab; mouse input keeps the fixed size', async ({ page }) => {
+  await blank(page)
+  await page.keyboard.press('b')
+  await page.getByLabel('Размер', { exact: true }).fill('40')
+  const box = (await page.locator('.artboard').boundingBox())!
+  const dab = (x: number, y: number, pressure: number) =>
+    page.getByTestId('editor-canvas').evaluate(
+      (c, args) => {
+        const el = c as unknown as HTMLElement
+        // Synthetic pen pointers have no live capture target in Chrome; the
+        // stage calls setPointerCapture on its own element, so stub both.
+        ;(Element.prototype as any).setPointerCapture = () => {}
+        ;(Element.prototype as any).releasePointerCapture = () => {}
+        const fire = (type: string) =>
+          el.dispatchEvent(
+            new PointerEvent(type, {
+              pointerType: 'pen',
+              pointerId: 41,
+              isPrimary: true,
+              bubbles: true,
+              clientX: args.box.x + args.x * args.ratio,
+              clientY: args.box.y + args.y * args.ratio,
+              pressure: args.pressure,
+              buttons: type === 'pointerup' ? 0 : 1,
+            }),
+          )
+        fire('pointerdown')
+        return new Promise<void>((resolve) =>
+          setTimeout(() => {
+            fire('pointerup')
+            resolve()
+          }, 120),
+        )
+      },
+      { box: { x: box.x, y: box.y }, ratio: box.width / 300, x, y, pressure },
+    )
+  await dab(80, 100, 1)
+  await expect.poll(async () => (await pixel(page, 80, 100))[3]).toBe(255)
+  await dab(220, 100, 0.25)
+  await expect.poll(async () => (await pixel(page, 220, 100))[3]).toBe(255)
+  // 15px off-centre: inside the full-pressure radius (20), outside the
+  // light-pressure one (40 * 0.25 / 2 = 5).
+  expect((await pixel(page, 95, 100))[3]).toBe(255)
+  expect((await pixel(page, 235, 100))[3]).toBe(0)
+})

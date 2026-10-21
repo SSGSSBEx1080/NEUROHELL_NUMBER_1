@@ -151,6 +151,13 @@ type Drag =
       selectionAlpha?: Uint8ClampedArray
       clone?: { canvas: HTMLCanvasElement; offset: Point }
       mask?: Layer['mask']
+      /** Pen state: pressure dynamics apply only to real pen input. */
+      pen?: boolean
+      pressure?: number
+      prevPressure?: number
+      /** Pulled-string smoothing state in canvas-grid coordinates. */
+      smoothed?: Point
+      lastRaw?: Point
     }
 
 const getRect = (a: Point, b: Point): Rect => ({
@@ -565,6 +572,45 @@ export function CanvasStage({
           10,
         )
       : p
+  const drawPaintSegment = (d: Extract<Drag, { type: 'paint' }>, from: Point, to: Point) => {
+    if (isRetouchTool(d.tool)) {
+      retouchStroke(
+        d.canvas.getContext('2d', { willReadFrequently: true })!,
+        from,
+        to,
+        settings.brushSize * (d.canvas.width / d.layer.width),
+        d.tool,
+        settings,
+        d.selectionAlpha,
+      )
+      return
+    }
+    // Pen pressure scales stamp size (default) and/or alpha across the
+    // segment. Mouse input reports no pen flag, so its behaviour is fixed.
+    const scaleFor = (pr: number) =>
+        settings.pressureSize === false ? 1 : Math.max(0.05, Math.min(1, pr)),
+      alphaFor = (pr: number) => (settings.pressureOpacity ? Math.max(0.05, Math.min(1, pr)) : 1),
+      dynamics =
+        d.pen && (d.tool === 'brush' || d.tool === 'eraser')
+          ? {
+              fromScale: scaleFor(d.prevPressure ?? d.pressure ?? 1),
+              toScale: scaleFor(d.pressure ?? 1),
+              fromAlpha: alphaFor(d.prevPressure ?? d.pressure ?? 1),
+              toAlpha: alphaFor(d.pressure ?? 1),
+            }
+          : undefined
+    strokeStamps(
+      d.canvas.getContext('2d')!,
+      from,
+      to,
+      d.stamp,
+      settings,
+      d.tool === 'eraser',
+      d.selection,
+      d.clone,
+      dynamics,
+    )
+  }
   const paintSegment = (d: Extract<Drag, { type: 'paint' }>, p: Point) => {
     const raw = localPoint(d.layer, p),
       local = d.mask
@@ -582,28 +628,20 @@ export function CanvasStage({
           x: (local.x * d.canvas.width) / d.layer.width,
           y: (local.y * d.canvas.height) / d.layer.height,
         }
-    if (isRetouchTool(d.tool))
-      retouchStroke(
-        d.canvas.getContext('2d', { willReadFrequently: true })!,
-        d.last,
-        next,
-        settings.brushSize * (d.canvas.width / d.layer.width),
-        d.tool,
-        settings,
-        d.selectionAlpha,
-      )
-    else
-      strokeStamps(
-        d.canvas.getContext('2d')!,
-        d.last,
-        next,
-        d.stamp,
-        settings,
-        d.tool === 'eraser',
-        d.selection,
-        d.clone,
-      )
-    d.last = next
+    // Pulled-string smoothing: the painted point chases the pointer with a
+    // catch-up factor; pointerUp flushes the remainder to the raw end point.
+    let target = next
+    const smoothing = Math.min(100, Math.max(0, settings.brushSmoothing ?? 0))
+    if (smoothing > 0) {
+      const prev = d.smoothed || d.last,
+        k = 1 - (smoothing / 100) * 0.92
+      target = { x: prev.x + (next.x - prev.x) * k, y: prev.y + (next.y - prev.y) * k }
+      d.smoothed = target
+      d.lastRaw = next
+    }
+    drawPaintSegment(d, d.last, target)
+    d.last = target
+    d.prevPressure = d.pressure
     paintScheduler.current.request(() => {
       if (drag.current !== d) return
       if (d.mask) {
@@ -1035,6 +1073,8 @@ export function CanvasStage({
         stamp: brushStamp(settings.brushSize * sx, settings.color, settings.brushHardness ?? 100),
         selection: selectionCanvas,
         selectionAlpha,
+        pen: e.pointerType === 'pen',
+        pressure: e.pointerType === 'pen' ? Math.min(1, Math.max(0, e.pressure)) : 1,
         clone:
           tool === 'clone' && clone.current
             ? { canvas: clone.current.canvas, offset: clone.current.offset! }
@@ -1121,8 +1161,13 @@ export function CanvasStage({
       // Hardware samples between animation frames keep fast strokes curved
       // instead of straight chords between frame-rate points.
       const events = e.nativeEvent.getCoalescedEvents?.() || []
-      for (const event of events.length ? events : [e.nativeEvent])
+      for (const event of events.length ? events : [e.nativeEvent]) {
+        if (event.pointerType === 'pen') {
+          d.pen = true
+          d.pressure = Math.min(1, Math.max(0, event.pressure))
+        }
         paintSegment(d, pointFrom(event))
+      }
       return
     }
     if (d.type === 'lasso') {
@@ -1550,6 +1595,12 @@ export function CanvasStage({
       return
     }
     if (d.type === 'paint') {
+      // Smoothing catch-up: finish the stroke at the real pointer position.
+      if (d.smoothed && d.lastRaw && (d.lastRaw.x !== d.last.x || d.lastRaw.y !== d.last.y)) {
+        drawPaintSegment(d, d.last, d.lastRaw)
+        d.last = d.lastRaw
+        d.smoothed = d.lastRaw
+      }
       // No busy overlay for a routine stroke: the live canvas stays on screen
       // via the override while PNG encoding finishes in the background. The
       // next pointer gesture silently waits for this commit (see pointerDown).

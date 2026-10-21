@@ -228,6 +228,11 @@ export interface ToolSettings {
   shapeFill: boolean
   brushHardness?: number
   brushSpacing?: number
+  /** Pulled-string stroke smoothing 0..100 (paint tools). */
+  brushSmoothing?: number
+  /** Pen pressure drives brush size (default on) / opacity (default off). */
+  pressureSize?: boolean
+  pressureOpacity?: boolean
   /** Dodge/burn/sponge/blur/sharpen/smudge brushes (retouch.ts). */
   retouchStrength?: number
   retouchRange?: 'shadows' | 'midtones' | 'highlights'

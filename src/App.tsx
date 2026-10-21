@@ -2665,6 +2665,34 @@ export default function App() {
                   suffix="%"
                   onChange={(brushSpacing) => setSettings({ brushSpacing })}
                 />
+                <SliderField
+                  label="Сглаживание"
+                  value={settings.brushSmoothing ?? 0}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushSmoothing) => setSettings({ brushSmoothing })}
+                />
+                {tool !== 'clone' && (
+                  <>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={settings.pressureSize !== false}
+                        onChange={(e) => setSettings({ pressureSize: e.target.checked })}
+                      />
+                      Нажим → размер
+                    </label>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={!!settings.pressureOpacity}
+                        onChange={(e) => setSettings({ pressureOpacity: e.target.checked })}
+                      />
+                      Нажим → непрозрачность
+                    </label>
+                  </>
+                )}
                 {tool === 'clone' ? (
                   <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
                 ) : tool === 'brush' ? (

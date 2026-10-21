@@ -22,6 +22,12 @@ export function brushStamp(size: number, color: string, hardness: number) {
   }
   return c
 }
+export interface StrokeDynamics {
+  fromScale: number
+  toScale: number
+  fromAlpha: number
+  toAlpha: number
+}
 export function strokeStamps(
   ctx: CanvasRenderingContext2D,
   from: Point,
@@ -31,6 +37,7 @@ export function strokeStamps(
   erase: boolean,
   selection?: HTMLCanvasElement,
   clone?: { canvas: HTMLCanvasElement; offset: Point },
+  dynamics?: StrokeDynamics,
 ) {
   const distance = Math.hypot(to.x - from.x, to.y - from.y),
     step = Math.max(0.5, (stamp.width * (settings.brushSpacing || 15)) / 100)
@@ -39,13 +46,25 @@ export function strokeStamps(
   scratch.width = selection || clone ? stamp.width : 1
   scratch.height = selection || clone ? stamp.height : 1
   const s = scratch.getContext('2d')!,
-    r = stamp.width / 2
+    r = stamp.width / 2,
+    baseAlpha = settings.brushOpacity / 100
   ctx.save()
-  ctx.globalAlpha = settings.brushOpacity / 100
+  ctx.globalAlpha = baseAlpha
   ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over'
   for (let i = 1; i <= n; i++) {
-    const x = from.x + ((to.x - from.x) * i) / n - r,
-      y = from.y + ((to.y - from.y) * i) / n - r
+    // Pen-pressure dynamics interpolate stamp size/alpha across the segment;
+    // clone sampling keeps the fixed stamp geometry (dynamics not passed).
+    const t = dynamics ? i / n : 0,
+      size = dynamics
+        ? Math.max(
+            1,
+            stamp.width * (dynamics.fromScale + (dynamics.toScale - dynamics.fromScale) * t),
+          )
+        : stamp.width,
+      cx = from.x + ((to.x - from.x) * i) / n,
+      cy = from.y + ((to.y - from.y) * i) / n,
+      x = cx - (dynamics ? size / 2 : r),
+      y = cy - (dynamics ? size / 2 : r)
     let image = stamp
     if (selection || clone) {
       s.clearRect(0, 0, scratch.width, scratch.height)
@@ -61,7 +80,11 @@ export function strokeStamps(
       }
       image = scratch
     }
-    ctx.drawImage(image, x, y)
+    if (dynamics) {
+      ctx.globalAlpha =
+        baseAlpha * (dynamics.fromAlpha + (dynamics.toAlpha - dynamics.fromAlpha) * t)
+      ctx.drawImage(image, x, y, size, size)
+    } else ctx.drawImage(image, x, y)
   }
   ctx.restore()
 }
