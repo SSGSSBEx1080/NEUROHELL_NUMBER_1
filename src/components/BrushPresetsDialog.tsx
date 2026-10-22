@@ -139,9 +139,17 @@ export function BrushPresetsDialog({
 
   const importTipImage = async (file: File) => {
     setBusy(true)
-    const url = URL.createObjectURL(file)
     try {
-      const image = await loadImage(url),
+      if (file.size > 25 * 1024 * 1024)
+        throw new Error('Изображение наконечника должно быть меньше 25 МБ')
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () =>
+          reject(reader.error || new Error('Не удалось прочитать изображение наконечника'))
+        reader.readAsDataURL(file)
+      })
+      const image = await loadImage(src),
         sourceW = (image as HTMLImageElement).naturalWidth || image.width,
         sourceH = (image as HTMLImageElement).naturalHeight || image.height,
         scale = Math.min(1, 512 / Math.max(sourceW, sourceH)),
@@ -167,7 +175,6 @@ export function BrushPresetsDialog({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Изображение наконечника не загрузилось')
     } finally {
-      URL.revokeObjectURL(url)
       setBusy(false)
     }
   }

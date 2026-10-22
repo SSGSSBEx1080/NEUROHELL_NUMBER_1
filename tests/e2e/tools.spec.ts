@@ -420,3 +420,34 @@ test('ABR sampled tip paints its 255-alpha half; calligraphy and scatter dynamic
   })
   expect(offLine).toBeGreaterThan(20)
 })
+
+test('PNG brush-tip import uses black-on-white Define Brush polarity', async ({ page }) => {
+  await blank(page)
+  await image(page)
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 20
+    canvas.height = 12
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = 'white'
+    ctx.fillRect(0, 0, 20, 12)
+    ctx.fillStyle = 'black'
+    ctx.fillRect(0, 0, 10, 12)
+    return canvas.toDataURL('image/png').split(',')[1]
+  })
+  await page.keyboard.press('b')
+  await page.getByRole('button', { name: /Кисти, наконечники и динамика/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Кисти, наконечники и динамика' })).toBeVisible()
+  await page.getByLabel('Импорт изображения наконечника кисти').setInputFiles({
+    name: 'half-tip.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(png, 'base64'),
+  })
+  await expect(page.getByText('Разрешены только локальные растровые изображения')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Готово', exact: true }).click()
+  await expect(page.getByLabel('Размер', { exact: true })).toHaveValue('20')
+  const b = (await page.locator('.artboard').boundingBox())!
+  await page.mouse.click(b.x + 90, b.y + 100)
+  await expect.poll(async () => (await pixel(page, 84, 100)).slice(0, 3)).toEqual([0, 0, 0])
+  await expect.poll(async () => (await pixel(page, 96, 100)).slice(0, 3)).toEqual([255, 255, 255])
+})
