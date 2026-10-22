@@ -64,6 +64,16 @@ describe('local layout restoration', () => {
     expect(progress.at(-1)).toBe(1)
     expect(Buffer.from(repairPixels(request).pixels).equals(Buffer.from(result.pixels))).toBe(true)
   })
+  it('texture variants are reproducible for a seed and reject a non-finite seed', () => {
+    const { request } = fixture((x, y) => {
+      const v = (x * 37 + y * 17) % 211
+      return [v, 255 - v, (x + y * 3) % 199]
+    }, 'texture')
+    const first = repairPixels({ ...request, seed: 42 })
+    const again = repairPixels({ ...request, seed: 42 })
+    expect(Buffer.from(first.pixels).equals(Buffer.from(again.pixels))).toBe(true)
+    expect(() => repairPixels({ ...request, seed: Number.NaN })).toThrow(/параметры/)
+  })
   it('respects prohibited donors and does not fabricate success for impossible selections', () => {
     const { request } = fixture(() => [240, 240, 240], 'texture')
     expect(() => repairPixels({ ...request, donors: new Uint8Array(request.mask.length) })).toThrow(

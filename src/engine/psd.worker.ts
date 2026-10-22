@@ -9,11 +9,31 @@ initializeCanvas(
 self.onmessage = async (
   e: MessageEvent<
     | { operation: 'read'; buffer: ArrayBuffer }
+    | { operation: 'read-composite'; buffer: ArrayBuffer }
     | { operation: 'write'; psd: Psd; psb: boolean; project?: unknown }
   >,
 ) => {
   try {
-    if (e.data.operation === 'read') {
+    if (e.data.operation === 'read-composite') {
+      const header = validatePsdHeader(e.data.buffer)
+      if (header.width * header.height > 8_388_608) throw new Error('Карта смещения PSD: до 8 Мп.')
+      const psd = readPsd(e.data.buffer, {
+        useImageData: true,
+        skipThumbnail: true,
+        skipLayerImageData: true,
+        skipLinkedFilesData: true,
+        totalMemoryLimit: 192 * 1024 * 1024,
+      })
+      if (!psd.imageData)
+        throw new Error(
+          'В PSD карты нет сводного изображения. Сохрани карту с Maximize Compatibility.',
+        )
+      const { width, height, data } = psd.imageData
+      if (width !== header.width || height !== header.height || data.length !== width * height * 4)
+        throw new Error('Некорректное сводное изображение PSD карты')
+      const pixels = new Uint8ClampedArray(data)
+      self.postMessage({ width, height, pixels }, { transfer: [pixels.buffer] })
+    } else if (e.data.operation === 'read') {
       validatePsdHeader(e.data.buffer)
       const messages: string[] = []
       const psd = readPsd(e.data.buffer, {

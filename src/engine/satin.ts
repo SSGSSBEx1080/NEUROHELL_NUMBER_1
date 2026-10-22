@@ -1,4 +1,5 @@
 import { blendCorrection } from './adjustmentMath'
+import { dissolveHash } from './blendModes'
 import { buildContourAlphaLut, isLinearEffectContour } from './contours'
 import { rgbFromHex } from './gradientRamp'
 import type { RgbaPixelData } from './bevel'
@@ -136,7 +137,9 @@ export function applySatinToPixels(
   const satinColor = rgbFromHex(effect.color)
   const blended = [0, 0, 0]
   for (let i = 0; i < mask.length; i++) {
-    const amount = clamp01(mask[i] * effect.opacity)
+    let amount = clamp01(mask[i] * effect.opacity)
+    if (effect.blendMode === 'dissolve')
+      amount = dissolveHash(i % output.width, Math.floor(i / output.width)) < amount ? 1 : 0
     if (amount <= 0.0001) continue
     const offset = i * 4
     const baseAlpha = base.data[offset + 3] / 255

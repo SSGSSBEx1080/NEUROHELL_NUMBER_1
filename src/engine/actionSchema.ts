@@ -108,6 +108,16 @@ const enums: Record<string, readonly string[]> = {
     'color',
     'luminosity',
     'lighter',
+    'dissolve',
+    'linear-burn',
+    'darker-color',
+    'lighter-color',
+    'vivid-light',
+    'linear-light',
+    'pin-light',
+    'hard-mix',
+    'subtract',
+    'divide',
   ],
 }
 const object = (v: unknown): v is Record<string, unknown> =>

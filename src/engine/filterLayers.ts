@@ -64,13 +64,13 @@ export function insertFilteredCopy(
   validateRasterBudget(result)
   return result
 }
-export async function filteredCopy(
+export async function processedCopy(
   source: FilterSource,
   pixels: Uint8ClampedArray,
-  filter: RasterFilter,
+  suffix: string,
 ): Promise<Layer> {
   if (pixels.length !== source.canvas.width * source.canvas.height * 4)
-    throw new Error('Некорректный результат фильтра')
+    throw new Error('Некорректный результат обработки')
   const c = document.createElement('canvas')
   c.width = source.canvas.width
   c.height = source.canvas.height
@@ -88,7 +88,7 @@ export async function filteredCopy(
     src: bitmap.src,
     kind: 'image',
     id: uid(),
-    name: `${source.base.name} · ${rasterFilterNames[filter.type]}`.slice(0, 100),
+    name: `${source.base.name} · ${suffix}`.slice(0, 100),
     visible: true,
     locked: false,
     smart: undefined,
@@ -96,4 +96,11 @@ export async function filteredCopy(
     sourceText: undefined,
     correction: undefined,
   }
+}
+export async function filteredCopy(
+  source: FilterSource,
+  pixels: Uint8ClampedArray,
+  filter: RasterFilter,
+): Promise<Layer> {
+  return processedCopy(source, pixels, rasterFilterNames[filter.type])
 }

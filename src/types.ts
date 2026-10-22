@@ -29,8 +29,15 @@ export type Tool =
   | 'clone'
   | 'bucket'
   | 'gradient'
+  | 'repair-brush'
   | 'repair'
   | 'repair-box'
+  | 'dodge'
+  | 'burn'
+  | 'sponge'
+  | 'blur-brush'
+  | 'sharpen-brush'
+  | 'smudge'
 export type LayerKind = 'image' | 'text' | 'shape' | 'group' | 'adjustment'
 export type BlendMode =
   | 'source-over'
@@ -50,6 +57,17 @@ export type BlendMode =
   | 'color'
   | 'luminosity'
   | 'lighter'
+  // Photoshop modes Canvas2D cannot express; composited per pixel (blendModes.ts).
+  | 'dissolve'
+  | 'linear-burn'
+  | 'darker-color'
+  | 'lighter-color'
+  | 'vivid-light'
+  | 'linear-light'
+  | 'pin-light'
+  | 'hard-mix'
+  | 'subtract'
+  | 'divide'
 export interface Adjustments {
   brightness: number
   contrast: number
@@ -161,6 +179,12 @@ export interface DocumentColorProfile {
   /** Human-readable discarded/retagged source when colour numbers did not change. */
   assignedFrom?: string
 }
+export interface GlobalLightSettings {
+  /** PSD light angle in degrees: 0° right, 90° top, 120° top-left. */
+  angle: number
+  /** Light altitude in degrees, 0..90. Only Bevel & Emboss consumes it. */
+  altitude: number
+}
 export interface EditorDocument {
   version: 1
   id: string
@@ -171,6 +195,8 @@ export interface EditorDocument {
   layers: Layer[]
   sourceId?: string
   colorProfile?: DocumentColorProfile
+  /** Explicit document master light. Absence preserves legacy per-effect angles. */
+  globalLight?: GlobalLightSettings
   dpi?: number
   layout?: DocumentLayout
   textEntries?: TextEntry[]
@@ -202,6 +228,38 @@ export interface ToolSettings {
   shapeFill: boolean
   brushHardness?: number
   brushSpacing?: number
+  /** Pulled-string stroke smoothing 0..100 (paint tools). */
+  brushSmoothing?: number
+  /** Pen pressure drives brush size (default on) / opacity (default off). */
+  pressureSize?: boolean
+  pressureOpacity?: boolean
+  /** Sampled tip; undefined is the computed round tip. */
+  brushTip?: BrushTipDefinition
+  /** Brush shape: angle in degrees, roundness/flips, and minimum pressure diameter %. */
+  brushAngle?: number
+  brushRoundness?: number
+  brushFlipX?: boolean
+  brushFlipY?: boolean
+  brushMinimumDiameter?: number
+  brushMinimumRoundness?: number
+  brushMinimumOpacity?: number
+  /** Shape/transfer dynamics, all percentages unless noted. */
+  brushSizeJitter?: number
+  brushOpacityJitter?: number
+  brushAngleJitter?: number
+  brushRoundnessJitter?: number
+  brushAngleControl?: 'off' | 'direction' | 'initial'
+  brushFlipXJitter?: boolean
+  brushFlipYJitter?: boolean
+  /** Scattering: amount is % of diameter; count is dabs per spacing step. */
+  brushScatter?: number
+  brushScatterBothAxes?: boolean
+  brushScatterCount?: number
+  brushCountJitter?: number
+  /** Dodge/burn/sponge/blur/sharpen/smudge brushes (retouch.ts). */
+  retouchStrength?: number
+  retouchRange?: 'shadows' | 'midtones' | 'highlights'
+  spongeMode?: 'saturate' | 'desaturate'
   feather?: number
   selectionMode?: SelectionMode
   selectionTolerance?: number
@@ -212,6 +270,14 @@ export interface ToolSettings {
   gradientType?: 'linear' | 'radial' | 'reflected' | 'angle'
   /** Selected tool gradient; undefined means the live foreground → background ramp. */
   gradient?: import('./engine/gradientRamp').GradientDefinition
+}
+/** Serializable sampled brush tip. `src` is a PNG whose alpha channel is the dab mask. */
+export interface BrushTipDefinition {
+  id: string
+  name: string
+  width: number
+  height: number
+  src: string
 }
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
   brightness: 0,
@@ -287,6 +353,8 @@ export interface ShadowEffectStyle {
   opacity: number
   contour?: EffectContourDefinition
   antialiased?: boolean
+  /** Undefined/false is a local offset; true follows the document Global Light angle. */
+  useGlobalLight?: boolean
 }
 export interface GlowEffectStyle {
   enabled: boolean
@@ -421,6 +489,12 @@ export interface LayerMask extends Rect {
   density: number
   feather: number
   defaultColor: number
+  /**
+   * This raster is a PSD baked pixel+vector composite (channel -3), not the
+   * native pixel-mask component alone. Export uses it to keep or drop the
+   * native vector/real-mask pair consistently.
+   */
+  composite?: boolean
 }
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
 export interface SelectionRaster extends Rect {

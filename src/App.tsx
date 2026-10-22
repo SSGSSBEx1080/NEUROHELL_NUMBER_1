@@ -1,5 +1,6 @@
 import { usePathTool } from './hooks/usePathTool'
 import { defaultRasterFilter, type RasterFilter } from './engine/rasterFilters'
+import { isRetouchTool } from './engine/retouch'
 import { insertFilteredCopy } from './engine/filterLayers'
 import { changeLayerMask, maskOperationNames, type MaskOperation } from './engine/maskOperations'
 import { layoutOf, normalizeLayout, transformLayout, type DocumentLayout } from './engine/layout'
@@ -47,6 +48,21 @@ const ExportLutDialog = lazy(() =>
 const RasterFilterDialog = lazy(() =>
   import('./components/RasterFilterDialog').then((m) => ({ default: m.RasterFilterDialog })),
 )
+const LiquifyDialog = lazy(() =>
+  import('./components/LiquifyDialog').then((m) => ({ default: m.LiquifyDialog })),
+)
+const FrequencyDialog = lazy(() =>
+  import('./components/FrequencyDialog').then((m) => ({ default: m.FrequencyDialog })),
+)
+const PinWarpDialog = lazy(() =>
+  import('./components/PinWarpDialog').then((m) => ({ default: m.PinWarpDialog })),
+)
+const DisplaceDialog = lazy(() =>
+  import('./components/DisplaceDialog').then((m) => ({ default: m.DisplaceDialog })),
+)
+const BrushPresetsDialog = lazy(() =>
+  import('./components/BrushPresetsDialog').then((m) => ({ default: m.BrushPresetsDialog })),
+)
 const CommandPalette = lazy(() =>
   import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
@@ -91,6 +107,9 @@ const ActionsDialog = lazy(() =>
 )
 const LayerStyleDialog = lazy(() =>
   import('./components/LayerStyleDialog').then((m) => ({ default: m.LayerStyleDialog })),
+)
+const GlobalLightDialog = lazy(() =>
+  import('./components/GlobalLightDialog').then((m) => ({ default: m.GlobalLightDialog })),
 )
 const GradientToolDialog = lazy(() =>
   import('./components/GradientToolDialog').then((m) => ({ default: m.GradientToolDialog })),
@@ -165,6 +184,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   Sparkles,
+  Sun,
   SquareDashed,
   Trash2,
   Type,
@@ -187,7 +207,7 @@ import { CanvasStage } from './components/CanvasStage'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LayersPanel } from './components/LayersPanel'
 import { Dropdown, type MenuItem } from './components/Dropdown'
-import { Field, IconButton, Select } from './components/ui'
+import { IconButton, Select, SliderField } from './components/ui'
 import { useEditor } from './hooks/useEditor'
 import {
   demoDocument,
@@ -198,6 +218,13 @@ import {
   parseProject,
   uid,
 } from './engine/document'
+import {
+  countLinkedGlobalLightEffects,
+  effectiveGlobalLight,
+  normalizeGlobalLight,
+  synchronizeDocumentGlobalLight,
+  synchronizeStylesToGlobalLight,
+} from './engine/globalLight'
 import {
   encodeBitmap,
   bitmapLayer,
@@ -239,7 +266,7 @@ export default function App() {
     : undefined
   const [tool, setTool] = useState<Tool>('move')
   const [settings, updateSettings] = useState<ToolSettings>({
-    color: '#b8a8ff',
+    color: '#000000',
     secondaryColor: '#ffffff',
     brushSize: 30,
     brushOpacity: 100,
@@ -275,6 +302,7 @@ export default function App() {
     | 'help'
     | 'about'
     | 'styles'
+    | 'global-light'
     | 'actions'
     | 'color'
     | 'settings'
@@ -293,6 +321,11 @@ export default function App() {
     | 'arrange'
     | 'commands'
     | 'raster-filter'
+    | 'liquify'
+    | 'frequency'
+    | 'pin-warp'
+    | 'displace'
+    | 'brush-presets'
     | 'gradient-tool'
     | 'batch'
     | null
@@ -321,7 +354,7 @@ export default function App() {
   const [pendingDocument, setPendingDocument] = useState<EditorDocument | null>(null)
   const [busy, setBusy] = useState<string | null>('Открываем твою студию…')
   const [ready, setReady] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved')
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'pending' | 'saving' | 'error'>('saved')
   const [toast, setToast] = useState('')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [dropping, setDropping] = useState(false)
@@ -633,8 +666,14 @@ export default function App() {
   useEffect(() => {
     if (!ready || workspace.home || editor.entries[editor.index]?.document !== doc) return
     const version = ++saveVersion.current
-    setSaveStatus('saving')
+    // A brush stroke must not flash a spinner on every commit: the write is
+    // debounced, and the "saving" state appears only if the write itself is slow.
+    setSaveStatus('pending')
+    let slowTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
+      slowTimer = setTimeout(() => {
+        if (saveVersion.current === version) setSaveStatus('saving')
+      }, 400)
       saveDocument(doc)
         .then(() => {
           if (saveVersion.current === version) setSaveStatus('saved')
@@ -645,8 +684,12 @@ export default function App() {
             toastMessage('Автосохранение недоступно. Скачай проект через Ctrl+S.')
           }
         })
+        .finally(() => clearTimeout(slowTimer))
     }, preferences.autosave)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      clearTimeout(slowTimer)
+    }
   }, [doc, ready, editor.entries, editor.index, toastMessage, preferences.autosave, workspace.home])
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -1004,6 +1047,10 @@ export default function App() {
       locked: false,
       parentId: undefined,
       sourcePath: undefined,
+      styles:
+        doc.globalLight && clipboardLayer.styles
+          ? synchronizeStylesToGlobalLight(clipboardLayer.styles, doc.globalLight)
+          : clipboardLayer.styles,
       mask: clipboardLayer.mask
         ? {
             ...clipboardLayer.mask,
@@ -2063,6 +2110,11 @@ export default function App() {
       divider: true,
     },
     {
+      label: 'Глобальный свет…',
+      icon: Sun,
+      action: () => setModal('global-light'),
+    },
+    {
       label: 'Градиент инструмента…',
       icon: Blend,
       action: () => {
@@ -2203,6 +2255,26 @@ export default function App() {
     {
       label: 'Растровые фильтры на копии…',
       action: () => setModal('raster-filter'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Пластика на копии…',
+      action: () => setModal('liquify'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Смещение по карте на копии…',
+      action: () => setModal('displace'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Частотное разложение…',
+      action: () => setModal('frequency'),
+      disabled: !canFilter,
+    },
+    {
+      label: 'Деформация по точкам на копии…',
+      action: () => setModal('pin-warp'),
       disabled: !canFilter,
     },
     {
@@ -2454,7 +2526,9 @@ export default function App() {
                 ? 'Автокопия сохранена'
                 : saveStatus === 'saving'
                   ? 'Сохраняем на устройстве…'
-                  : 'Скачай проект для сохранения'}
+                  : saveStatus === 'pending'
+                    ? 'Автокопия'
+                    : 'Скачай проект для сохранения'}
             </span>
           </div>
           <div className="header-actions">
@@ -2497,6 +2571,56 @@ export default function App() {
           </div>
           <div className="vertical-divider" />
           <div className="tool-options">
+            {[
+              'brush',
+              'pen',
+              'rectangle',
+              'ellipse',
+              'polygon',
+              'star',
+              'line',
+              'text',
+              'bucket',
+              'gradient',
+              'eyedropper',
+            ].includes(tool) && (
+              <div className="tool-color-pair" role="group" aria-label="Цвета инструмента">
+                <div className="tool-color-swatches">
+                  <label className="option-color background" title="Фоновый цвет">
+                    <input
+                      type="color"
+                      aria-label="Фоновый цвет инструмента"
+                      value={settings.secondaryColor}
+                      onChange={(e) => setSettings({ secondaryColor: e.target.value })}
+                    />
+                    <span style={{ background: settings.secondaryColor }} />
+                  </label>
+                  <label
+                    className="option-color foreground"
+                    title="Основной цвет — им рисует кисть. Alt+клик по холсту возьмёт цвет из изображения"
+                  >
+                    <input
+                      type="color"
+                      aria-label="Цвет инструмента"
+                      value={settings.color}
+                      onChange={(e) => setSettings({ color: e.target.value })}
+                    />
+                    <span style={{ background: settings.color }} />
+                  </label>
+                </div>
+                <span className="tool-color-hex">{settings.color.toUpperCase()}</span>
+                <button
+                  className="swap-colors-top"
+                  title="Поменять цвета (X)"
+                  aria-label="Поменять основной и фоновый цвета"
+                  onClick={() =>
+                    setSettings({ color: settings.secondaryColor, secondaryColor: settings.color })
+                  }
+                >
+                  <ArrowLeftRight size={12} />
+                </button>
+              </div>
+            )}
             {selectionTools.includes(tool) && (
               <Select
                 aria-label="Режим выделения"
@@ -2531,7 +2655,7 @@ export default function App() {
               </>
             ) : tool === 'brush' || tool === 'eraser' || tool === 'clone' ? (
               <>
-                <Field
+                <SliderField
                   label="Размер"
                   value={settings.brushSize}
                   min={1}
@@ -2539,7 +2663,7 @@ export default function App() {
                   suffix="px"
                   onChange={(brushSize) => setSettings({ brushSize })}
                 />
-                <Field
+                <SliderField
                   label="Непр."
                   value={settings.brushOpacity}
                   min={1}
@@ -2547,7 +2671,7 @@ export default function App() {
                   suffix="%"
                   onChange={(brushOpacity) => setSettings({ brushOpacity })}
                 />
-                <Field
+                <SliderField
                   label="Жёсткость"
                   value={settings.brushHardness ?? 100}
                   min={0}
@@ -2555,7 +2679,7 @@ export default function App() {
                   suffix="%"
                   onChange={(brushHardness) => setSettings({ brushHardness })}
                 />
-                <Field
+                <SliderField
                   label="Интервал"
                   value={settings.brushSpacing || 15}
                   min={5}
@@ -2563,13 +2687,113 @@ export default function App() {
                   suffix="%"
                   onChange={(brushSpacing) => setSettings({ brushSpacing })}
                 />
-                {tool === 'clone' && (
-                  <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
+                <SliderField
+                  label="Сглаживание"
+                  value={settings.brushSmoothing ?? 0}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushSmoothing) => setSettings({ brushSmoothing })}
+                />
+                {tool !== 'clone' && (
+                  <Select
+                    aria-label="Нажим пера"
+                    value={
+                      settings.pressureSize === false && !settings.pressureOpacity
+                        ? 'off'
+                        : settings.pressureSize === false
+                          ? 'opacity'
+                          : settings.pressureOpacity
+                            ? 'both'
+                            : 'size'
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setSettings({
+                        pressureSize: v === 'size' || v === 'both',
+                        pressureOpacity: v === 'opacity' || v === 'both',
+                      })
+                    }}
+                  >
+                    <option value="size">Нажим → размер</option>
+                    <option value="both">Нажим → размер + непрозрачность</option>
+                    <option value="opacity">Нажим → непрозрачность</option>
+                    <option value="off">Нажим выкл</option>
+                  </Select>
                 )}
+                <button
+                  type="button"
+                  className="compact-button brush-presets-open"
+                  aria-label={`Кисти, наконечники и динамика. Текущий наконечник: ${settings.brushTip?.name || 'круглый'}`}
+                  title={`Наконечник: ${settings.brushTip?.name || 'круглый'} · ABR, пресеты и динамика`}
+                  onClick={() => setModal('brush-presets')}
+                >
+                  Кисти…
+                </button>
+                {tool === 'clone' ? (
+                  <span className="tool-instruction">Alt+клик — источник · текущий слой</span>
+                ) : tool === 'brush' ? (
+                  <span className="tool-instruction">Alt+клик — взять цвет с холста</span>
+                ) : null}
+              </>
+            ) : isRetouchTool(tool) ? (
+              <>
+                <SliderField
+                  label="Размер"
+                  value={settings.brushSize}
+                  min={1}
+                  max={500}
+                  suffix="px"
+                  onChange={(brushSize) => setSettings({ brushSize })}
+                />
+                <SliderField
+                  label="Жёсткость"
+                  value={settings.brushHardness ?? 100}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushHardness) => setSettings({ brushHardness })}
+                />
+                <SliderField
+                  label={tool === 'dodge' || tool === 'burn' ? 'Экспозиция' : 'Сила'}
+                  value={settings.retouchStrength ?? 30}
+                  min={1}
+                  max={100}
+                  suffix="%"
+                  onChange={(retouchStrength) => setSettings({ retouchStrength })}
+                />
+                {(tool === 'dodge' || tool === 'burn') && (
+                  <Select
+                    aria-label="Диапазон тонов"
+                    value={settings.retouchRange || 'midtones'}
+                    onChange={(e) =>
+                      setSettings({
+                        retouchRange: e.target.value as 'shadows' | 'midtones' | 'highlights',
+                      })
+                    }
+                  >
+                    <option value="shadows">Тени</option>
+                    <option value="midtones">Средние тона</option>
+                    <option value="highlights">Света</option>
+                  </Select>
+                )}
+                {tool === 'sponge' && (
+                  <Select
+                    aria-label="Режим губки"
+                    value={settings.spongeMode || 'desaturate'}
+                    onChange={(e) =>
+                      setSettings({ spongeMode: e.target.value as 'saturate' | 'desaturate' })
+                    }
+                  >
+                    <option value="desaturate">Обесцветить</option>
+                    <option value="saturate">Насытить</option>
+                  </Select>
+                )}
+                <span className="tool-instruction">По пикселям текущего растрового слоя</span>
               </>
             ) : tool === 'magic-wand' ? (
               <>
-                <Field
+                <SliderField
                   label="Допуск палочки"
                   value={settings.selectionTolerance ?? 32}
                   min={0}
@@ -2595,7 +2819,7 @@ export default function App() {
               </>
             ) : tool === 'wand' || tool === 'bucket' ? (
               <>
-                <Field
+                <SliderField
                   label="Допуск"
                   value={settings.tolerance}
                   min={1}
@@ -2611,7 +2835,7 @@ export default function App() {
               </>
             ) : selectionTools.includes(tool) ? (
               <>
-                <Field
+                <SliderField
                   label="Растушёвка"
                   value={settings.feather || 0}
                   min={0}
@@ -2623,6 +2847,28 @@ export default function App() {
                   {tool === 'polygon-lasso' || tool === 'magnetic-lasso'
                     ? 'Клики задают контур · Enter / двойной клик замыкает'
                     : 'Shift: + · Alt: − · Shift+Alt: пересечение · Ctrl+D: снять'}
+                </span>
+              </>
+            ) : tool === 'repair-brush' ? (
+              <>
+                <SliderField
+                  label="Размер"
+                  value={settings.brushSize}
+                  min={1}
+                  max={500}
+                  suffix="px"
+                  onChange={(brushSize) => setSettings({ brushSize })}
+                />
+                <SliderField
+                  label="Жёсткость"
+                  value={settings.brushHardness ?? 100}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(brushHardness) => setSettings({ brushHardness })}
+                />
+                <span className="tool-instruction">
+                  Закрась объект целиком и отпусти — сначала покажем результат · Alt убирает лишнее
                 </span>
               </>
             ) : tool === 'pen' ? (
@@ -2690,28 +2936,6 @@ export default function App() {
                               ? 'Перетаскивай холст. Ctrl + колесо — масштаб'
                               : 'Потяни на холсте. Shift — ровные пропорции'}
               </span>
-            )}
-            {[
-              'brush',
-              'pen',
-              'rectangle',
-              'ellipse',
-              'polygon',
-              'star',
-              'line',
-              'text',
-              'bucket',
-              'gradient',
-            ].includes(tool) && (
-              <label className="option-color" title="Основной цвет">
-                <input
-                  type="color"
-                  aria-label="Цвет инструмента"
-                  value={settings.color}
-                  onChange={(e) => setSettings({ color: e.target.value })}
-                />
-                <span style={{ background: settings.color }} />
-              </label>
             )}
           </div>
           <div className="options-right">
@@ -2833,7 +3057,9 @@ export default function App() {
                           <span>.psd</span>
                         </button>
                       )}
-                      <span className="document-unsaved">{saveStatus === 'saving' ? '•' : ''}</span>
+                      <span className="document-unsaved">
+                        {saveStatus === 'saving' || saveStatus === 'pending' ? '•' : ''}
+                      </span>
                       <button
                         aria-label={`Закрыть вкладку: ${doc.name}`}
                         onClick={() => workspace.requestClose(doc.id)}
@@ -3219,9 +3445,38 @@ export default function App() {
         {modal === 'styles' && selected && (
           <LayerStyleDialog
             layer={selected}
+            globalLight={effectiveGlobalLight(doc)}
+            hasExplicitGlobalLight={!!doc.globalLight}
             onClose={closeModal}
-            onApply={(styles, blendIf) => {
-              editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
+            onApply={(styles, blendIf, globalLight) => {
+              if (globalLight) {
+                const nextLight = normalizeGlobalLight(globalLight)
+                editor.change((current) => {
+                  if (isLayerLocked(current, selected.id)) return current
+                  const withStyle = {
+                    ...current,
+                    layers: current.layers.map((layer) =>
+                      layer.id === selected.id ? { ...layer, styles, blendIf } : layer,
+                    ),
+                  }
+                  return synchronizeDocumentGlobalLight(withStyle, nextLight)
+                }, 'Стиль слоя и глобальный свет')
+              } else editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'global-light' && (
+          <GlobalLightDialog
+            value={effectiveGlobalLight(doc)}
+            explicit={!!doc.globalLight}
+            linkedCount={countLinkedGlobalLightEffects(doc, true)}
+            onClose={closeModal}
+            onApply={(globalLight) => {
+              editor.change(
+                (current) => synchronizeDocumentGlobalLight(current, globalLight),
+                'Глобальный свет',
+              )
               closeModal()
             }}
           />
@@ -3294,6 +3549,82 @@ export default function App() {
               closeModal()
             }}
           />
+        )}
+        {modal === 'liquify' && selectedId && (
+          <LiquifyDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(copy, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой пластику заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Пластика на растровой копии')
+              setSelectedId(copy.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'displace' && selectedId && (
+          <DisplaceDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(copy, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой смещение заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Смещение по карте на копии')
+              setSelectedId(copy.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'frequency' && selectedId && (
+          <FrequencyDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(low, high, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой разложение заново.')
+              const withLow = insertFilteredCopy(doc, selectedId, low, hide)
+              const next = insertFilteredCopy(withLow, low.id, high, false)
+              editor.change(() => next, 'Частотное разложение')
+              setSelectedId(high.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'pin-warp' && selectedId && (
+          <PinWarpDialog
+            doc={doc}
+            id={selectedId}
+            selection={selection}
+            onClose={closeModal}
+            onApply={(copy, hide) => {
+              if (editor.documentRef.current !== doc)
+                throw new Error('Документ изменился. Открой деформацию заново.')
+              const next = insertFilteredCopy(doc, selectedId, copy, hide)
+              editor.change(() => next, 'Деформация по точкам на копии')
+              setSelectedId(copy.id)
+              setSettings({ editMask: false, quickMask: false })
+              setTool('move')
+              closeModal()
+            }}
+          />
+        )}
+        {modal === 'brush-presets' && (
+          <BrushPresetsDialog settings={settings} onSettings={setSettings} onClose={closeModal} />
         )}
         {modal === 'arrange' && (
           <ArrangeDialog

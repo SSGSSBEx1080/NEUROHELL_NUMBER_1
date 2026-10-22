@@ -37,6 +37,7 @@ import {
   readStyleClipboardBlendIf,
 } from '../engine/libraries'
 import { defaultStyles, hasStyles, styleEffectSummary } from '../engine/styles'
+import { synchronizeStylesToGlobalLight } from '../engine/globalLight'
 import { isBlendIfActive } from '../engine/blendIf'
 import { Field, IconButton, Select } from './ui'
 interface Props {
@@ -61,18 +62,28 @@ interface Props {
 }
 const modes: [BlendMode, string][] = [
   ['source-over', 'Обычный'],
-  ['multiply', 'Умножение'],
-  ['screen', 'Экран'],
-  ['overlay', 'Перекрытие'],
+  ['dissolve', 'Растворение'],
   ['darken', 'Темнее'],
+  ['multiply', 'Умножение'],
+  ['color-burn', 'Затемнение основы'],
+  ['linear-burn', 'Линейное затемнение'],
+  ['darker-color', 'Тёмный цвет'],
   ['lighten', 'Светлее'],
+  ['screen', 'Экран'],
   ['color-dodge', 'Осветление основы'],
   ['lighter', 'Линейное осветление (сложение)'],
-  ['color-burn', 'Затемнение основы'],
-  ['hard-light', 'Жёсткий свет'],
+  ['lighter-color', 'Светлый цвет'],
+  ['overlay', 'Перекрытие'],
   ['soft-light', 'Мягкий свет'],
+  ['hard-light', 'Жёсткий свет'],
+  ['vivid-light', 'Яркий свет'],
+  ['linear-light', 'Линейный свет'],
+  ['pin-light', 'Точечный свет'],
+  ['hard-mix', 'Жёсткое смешивание'],
   ['difference', 'Разница'],
   ['exclusion', 'Исключение'],
+  ['subtract', 'Вычитание'],
+  ['divide', 'Разделение'],
   ['hue', 'Цветовой тон'],
   ['saturation', 'Насыщенность'],
   ['color', 'Цветность'],
@@ -649,7 +660,12 @@ export function LayersPanel({
                 if (pasted)
                   editor.patchLayer(
                     context.id,
-                    { styles: pasted, blendIf: readStyleClipboardBlendIf() },
+                    {
+                      styles: editor.document.globalLight
+                        ? synchronizeStylesToGlobalLight(pasted, editor.document.globalLight)
+                        : pasted,
+                      blendIf: readStyleClipboardBlendIf(),
+                    },
                     'Вставка стиля слоя',
                   )
                 setContext(null)

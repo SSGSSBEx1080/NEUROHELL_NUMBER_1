@@ -36,6 +36,7 @@ export function Field({
   step = 1,
   suffix,
   disabled,
+  hideLabel,
 }: {
   label: string
   value: number
@@ -46,6 +47,7 @@ export function Field({
   step?: number
   suffix?: string
   disabled?: boolean
+  hideLabel?: boolean
 }) {
   const format = (n: number) => String(Number.isFinite(n) ? Math.round(n * 100) / 100 : 0)
   const [text, setText] = useState(() => format(value)),
@@ -88,7 +90,7 @@ export function Field({
         'Число или выражение: 1600/2, (40+12)*2, +=10. Enter — применить; Escape — отменить.'
       }
     >
-      <span>{label}</span>
+      <span className={hideLabel ? 'visually-hidden' : undefined}>{label}</span>
       <input
         aria-label={label}
         type="text"
@@ -195,6 +197,64 @@ export function Slider({
         style={{ '--range-fill': `${((value - min) / (max - min)) * 100}%` } as React.CSSProperties}
       />
     </label>
+  )
+}
+/** Compact slider paired with the exact numeric Field: drag for speed, type (or an
+ * expression) for precision. Both controls write the same value. */
+export function SliderField({
+  label,
+  value,
+  min = 0,
+  max = 100,
+  step = 1,
+  suffix = '',
+  onChange,
+  onCommit,
+  disabled,
+}: {
+  label: string
+  value: number
+  min?: number
+  max?: number
+  step?: number
+  suffix?: string
+  onChange: (n: number) => void
+  onCommit?: () => void
+  disabled?: boolean
+}) {
+  const clamped = Math.max(min, Math.min(max, Number.isFinite(value) ? value : min))
+  return (
+    <div className="slider-number-field">
+      <span className="slider-number-label">{label}</span>
+      <input
+        type="range"
+        aria-label={`${label} — ползунок`}
+        value={clamped}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onChange={(e) => onChange(+e.target.value)}
+        onPointerUp={onCommit}
+        onKeyUp={onCommit}
+        onBlur={onCommit}
+        style={
+          { '--range-fill': `${((clamped - min) / (max - min)) * 100}%` } as React.CSSProperties
+        }
+      />
+      <Field
+        label={label}
+        hideLabel
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        suffix={suffix}
+        disabled={disabled}
+        onChange={onChange}
+        onCommit={onCommit}
+      />
+    </div>
   )
 }
 export function Select({

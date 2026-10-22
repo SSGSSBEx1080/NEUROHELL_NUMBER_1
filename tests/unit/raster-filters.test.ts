@@ -2,12 +2,14 @@ import { cacheImage, getImage, pruneImageCache } from '../../src/engine/render'
 import { describe, expect, it } from 'vitest'
 import {
   defaultRasterFilter,
+  frequencyDetail,
   parseRasterFilter,
   processRasterFilter,
   rasterFilterNames,
   type RasterFilterKind,
   type RasterFilter,
 } from '../../src/engine/rasterFilters'
+import { compositePixelBlend } from '../../src/engine/blendModes'
 import { transformMaskPixels } from '../../src/engine/maskOperations'
 import { insertFilteredCopy } from '../../src/engine/filterLayers'
 import { makeLayer, newDocument } from '../../src/engine/document'
@@ -39,6 +41,123 @@ describe('bounded deterministic raster filters', () => {
       ...run({ type: 'unsharp', radius: 2, amount: 500, threshold: 0 }, pixels, 2, 1),
     ]).toEqual([...pixels])
     expect([...run({ type: 'mosaic', size: 2 }, pixels, 2, 1)]).toEqual([...pixels])
+  })
+  it('gaussian smooths a step edge and motion smears along its direction only', () => {
+    const w = 9,
+      h = 9,
+      edge = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        edge[i] = edge[i + 1] = edge[i + 2] = x < 4 ? 0 : 255
+        edge[i + 3] = 255
+      }
+    const soft = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'gaussian', radius: 2 },
+    })
+    expect(soft[(4 * w + 3) * 4]).toBeGreaterThan(30)
+    expect(soft[(4 * w + 3) * 4]).toBeLessThan(230)
+    const horizontal = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'motion', angle: 0, distance: 6 },
+    })
+    expect(horizontal[(4 * w + 3) * 4]).toBeGreaterThan(50)
+    // Vertical motion must not smear a vertical edge horizontally.
+    const vertical = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'motion', angle: 90, distance: 6 },
+    })
+    expect(vertical[(4 * w + 3) * 4]).toBeLessThanOrEqual(2)
+  })
+  it('radial spin blurs along circles while zoom stays on radial lines', () => {
+    const w = 21,
+      h = 21,
+      edge = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        edge[i] = edge[i + 1] = edge[i + 2] = x < 10 ? 0 : 255
+        edge[i + 3] = 255
+      }
+    const at = (pixels: Uint8ClampedArray, x: number, y: number) => pixels[(y * w + x) * 4]
+    const spin = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'radial', method: 'spin', amount: 90, centerX: 50, centerY: 50 },
+    })
+    const zoom = processRasterFilter({
+      width: w,
+      height: h,
+      pixels: edge,
+      filter: { type: 'radial', method: 'zoom', amount: 100, centerX: 50, centerY: 50 },
+    })
+    // North of the centre, a spin arc crosses the vertical edge; the zoom
+    // samples stay on the white x=10 radial line.
+    expect(at(spin, 10, 2)).toBeGreaterThan(70)
+    expect(at(spin, 10, 2)).toBeLessThan(185)
+    expect(at(zoom, 10, 2)).toBeGreaterThan(250)
+    expect(at(spin, 10, 10)).toBe(255)
+    expect(at(zoom, 10, 10)).toBe(255)
+    expect(() => parseRasterFilter({ type: 'radial', method: 'twirl' })).toThrow()
+    expect(() => parseRasterFilter({ type: 'radial', centerX: 101 })).toThrow()
+  })
+  it('threshold splits by BT.709 luma and emboss is flat on flat areas', () => {
+    const pixels = new Uint8ClampedArray([
+      255, 0, 0, 255, 0, 0, 255, 255, 200, 200, 200, 255, 10, 10, 10, 255,
+    ])
+    const cut = processRasterFilter({
+      width: 4,
+      height: 1,
+      pixels,
+      filter: { type: 'threshold', level: 128 },
+    })
+    expect([cut[0], cut[4], cut[8], cut[12]]).toEqual([0, 0, 255, 0])
+    const flat = new Uint8ClampedArray(4 * 4 * 4)
+    for (let i = 0; i < flat.length; i += 4) {
+      flat[i] = flat[i + 1] = flat[i + 2] = 90
+      flat[i + 3] = 255
+    }
+    const embossed = processRasterFilter({
+      width: 4,
+      height: 4,
+      pixels: flat,
+      filter: { type: 'emboss', angle: 135, amount: 100 },
+    })
+    expect(embossed[(1 * 4 + 1) * 4]).toBe(128)
+  })
+  it('frequency separation reconstructs the original through linear light', () => {
+    const w = 16,
+      h = 8,
+      pixels = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        pixels[i] = (x * 16 + y * 7) % 256
+        pixels[i + 1] = (x * 3 + y * 31) % 256
+        pixels[i + 2] = (x * 11 + y * 13) % 256
+        pixels[i + 3] = 255
+      }
+    const low = processRasterFilter({
+      width: w,
+      height: h,
+      pixels,
+      filter: { type: 'gaussian', radius: 3 },
+    })
+    const high = frequencyDetail(pixels, low),
+      backdrop = new Uint8ClampedArray(low)
+    compositePixelBlend(backdrop, high, 'linear-light', 1, w)
+    let worst = 0
+    for (let i = 0; i < pixels.length; i++)
+      if (i % 4 !== 3) worst = Math.max(worst, Math.abs(backdrop[i] - pixels[i]))
+    expect(worst).toBeLessThanOrEqual(2)
   })
   it('mosaic averages RGB weighted by alpha without changing individual alpha', () => {
     const p = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 128])

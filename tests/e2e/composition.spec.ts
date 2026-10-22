@@ -35,7 +35,10 @@ async function blank(page: Page) {
   await expect.poll(() => pixels(page)).toEqual([23, 248])
 }
 async function outline(page: Page) {
+  // J defaults to the paint-over removal brush; these older scenarios exercise
+  // the lasso subtype explicitly.
   await page.keyboard.press('j')
+  await page.keyboard.press('Shift+j')
   const b = (await page.locator('.artboard').boundingBox())!,
     scale = b.width / 300
   const path = [
@@ -83,9 +86,66 @@ test('J restores outlined lettering on a separate layer; preview, cancellation a
   await expect.poll(() => pixels(page)).toEqual([248, 248])
 })
 
+test('J brush paints over an object, previews full After, area can be refined and reset', async ({
+  page,
+}) => {
+  await blank(page)
+  await page.keyboard.press('j')
+  await expect(page.locator('[data-tool=repair-brush]')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByLabel('Размер', { exact: true }).fill('44')
+  await page.getByLabel('Размер', { exact: true }).press('Enter')
+  const b = (await page.locator('.artboard').boundingBox())!,
+    scale = b.width / 300
+  await page.mouse.move(b.x + 105 * scale, b.y + 88 * scale)
+  await page.mouse.down()
+  await page.mouse.move(b.x + 160 * scale, b.y + 88 * scale, { steps: 8 })
+  // The painted removal area is visible before the mouse is released.
+  const maskAlpha = await page
+    .getByTestId('repair-mask-overlay')
+    .evaluate((c: HTMLCanvasElement) => c.getContext('2d')!.getImageData(120, 85, 1, 1).data[3])
+  expect(maskAlpha).toBeGreaterThan(200)
+  await page.mouse.up()
+  const apply = page.getByRole('button', { name: 'Применить на новый слой', exact: true }),
+    preview = page.getByTestId('repair-preview'),
+    sample = () =>
+      preview.evaluate((c: HTMLCanvasElement) =>
+        Array.from(c.getContext('2d')!.getImageData(120, 85, 1, 1).data),
+      )
+  await expect(apply).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'После', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect.poll(async () => (await sample())[0]).toBe(248)
+  await page.getByRole('button', { name: 'До', exact: true }).click()
+  await expect.poll(async () => (await sample())[0]).toBe(23)
+  await page.getByRole('button', { name: 'После', exact: true }).click()
+  await expect.poll(async () => (await sample())[0]).toBe(248)
+  // Refine the target: Alt-paint a hole in the middle, that part must stay.
+  await page.getByRole('button', { name: 'Уточнить область', exact: true }).click()
+  const pb = (await preview.boundingBox())!
+  await page.keyboard.down('Alt')
+  await page.mouse.click(pb.x + (120 * pb.width) / 300, pb.y + (85 * pb.height) / 200)
+  await page.keyboard.up('Alt')
+  await expect(apply).toBeEnabled()
+  await page.getByRole('button', { name: 'Уточнить область', exact: true }).click()
+  await expect.poll(async () => (await sample())[0]).toBe(23)
+  await page.getByRole('button', { name: 'Сбросить правки области', exact: true }).click()
+  await expect(apply).toBeEnabled()
+  await expect.poll(async () => (await sample())[0]).toBe(248)
+  await apply.click()
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect.poll(() => pixels(page)).toEqual([248, 248])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => pixels(page)).toEqual([23, 248])
+})
+
 test('J subtype and donor protection expose real settings and safe errors', async ({ page }) => {
   await blank(page)
   await page.keyboard.press('j')
+  await expect(page.locator('[data-tool=repair-brush]')).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Shift+j')
+  await expect(page.locator('[data-tool=repair]')).toHaveAttribute('aria-pressed', 'true')
   await page.keyboard.press('Shift+j')
   await expect(page.locator('[data-tool=repair-box]')).toHaveAttribute('aria-pressed', 'true')
   await outline(page)
@@ -436,6 +496,7 @@ test('synthetic fixture completes repair and linked text placement and exports i
     })
   await expect.poll(dark).toBeGreaterThan(50)
   await page.keyboard.press('j')
+  await page.keyboard.press('Shift+j')
   const box = (await page.locator('.artboard').boundingBox())!,
     scale = box.width / 896
   await page.mouse.move(box.x + 125 * scale, box.y + 165 * scale)

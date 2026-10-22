@@ -23,6 +23,7 @@ import {
   type BlendIfRanges,
   type BlendMode,
   type EffectContourDefinition,
+  type GlobalLightSettings,
   type Layer,
   type LayerStyles,
 } from '../types'
@@ -61,6 +62,13 @@ import {
 } from '../engine/contours'
 import { defaultPatternDefinition, prepareStylePatterns } from '../engine/patterns'
 import {
+  normalizeGlobalLight,
+  shadowDistance,
+  shadowLightAngle,
+  shadowOffsetForLightAngle,
+  synchronizeStylesToGlobalLight,
+} from '../engine/globalLight'
+import {
   builtinStylePresets,
   copyStyleToClipboard,
   loadStyleLibrary,
@@ -78,20 +86,30 @@ import { ColorField, Field, Modal, Select, Slider } from './ui'
 
 type ListKey = 'strokes' | 'shadows' | 'innerShadows' | 'overlays' | 'gradients'
 type Tab = ListKey | 'glow' | 'innerGlow' | 'satin' | 'pattern' | 'bevel' | 'blendIf' | 'library'
-const BEVEL_BLEND_MODES: [BlendMode, string][] = [
+const EFFECT_BLEND_MODES: [BlendMode, string][] = [
   ['source-over', 'Обычный'],
-  ['multiply', 'Умножение'],
-  ['screen', 'Экран'],
-  ['overlay', 'Перекрытие'],
+  ['dissolve', 'Растворение'],
   ['darken', 'Темнее'],
+  ['multiply', 'Умножение'],
+  ['color-burn', 'Затемнение основы'],
+  ['linear-burn', 'Линейное затемнение'],
+  ['darker-color', 'Тёмный цвет'],
   ['lighten', 'Светлее'],
+  ['screen', 'Экран'],
   ['color-dodge', 'Осветление основы'],
   ['lighter', 'Линейное осветление (сложение)'],
-  ['color-burn', 'Затемнение основы'],
-  ['hard-light', 'Жёсткий свет'],
+  ['lighter-color', 'Светлый цвет'],
+  ['overlay', 'Перекрытие'],
   ['soft-light', 'Мягкий свет'],
+  ['hard-light', 'Жёсткий свет'],
+  ['vivid-light', 'Яркий свет'],
+  ['linear-light', 'Линейный свет'],
+  ['pin-light', 'Точечный свет'],
+  ['hard-mix', 'Жёсткое смешивание'],
   ['difference', 'Разница'],
   ['exclusion', 'Исключение'],
+  ['subtract', 'Вычитание'],
+  ['divide', 'Разделение'],
   ['hue', 'Цветовой тон'],
   ['saturation', 'Насыщенность'],
   ['color', 'Цветность'],
@@ -169,7 +187,7 @@ function EffectBlendModeSelect({
       value={value || 'source-over'}
       onChange={(e) => onChange(e.target.value as BlendMode)}
     >
-      {BEVEL_BLEND_MODES.map(([mode, text]) => (
+      {EFFECT_BLEND_MODES.map(([mode, text]) => (
         <option key={mode} value={mode}>
           {text}
         </option>
@@ -447,16 +465,29 @@ function ContourControls({
 
 export function LayerStyleDialog({
   layer,
+  globalLight,
+  hasExplicitGlobalLight,
   onClose,
   onApply,
 }: {
   layer: Layer
+  globalLight: GlobalLightSettings
+  hasExplicitGlobalLight: boolean
   onClose: () => void
-  onApply: (styles: LayerStyles, blendIf: BlendIfRanges | undefined) => void
+  onApply: (
+    styles: LayerStyles,
+    blendIf: BlendIfRanges | undefined,
+    globalLight?: GlobalLightSettings,
+  ) => void
 }) {
-  const [styles, setStyles] = useState<LayerStyles>(() =>
-    structuredClone(normalizeStyles(layer.styles) || defaultStyles()),
-  )
+  const [light, setLight] = useState<GlobalLightSettings>(() => normalizeGlobalLight(globalLight))
+  const [lightTouched, setLightTouched] = useState(false)
+  const [styles, setStyles] = useState<LayerStyles>(() => {
+    const initial = structuredClone(normalizeStyles(layer.styles) || defaultStyles())
+    return hasExplicitGlobalLight
+      ? synchronizeStylesToGlobalLight(initial, normalizeGlobalLight(globalLight)) || initial
+      : initial
+  })
   const [blendIf, setBlendIf] = useState<BlendIfRanges>(
     () => parseBlendIf(layer.blendIf) || defaultBlendIf(),
   )
@@ -539,6 +570,23 @@ export function LayerStyleDialog({
   }
   const patchSingle = (key: 'glow' | 'innerGlow' | 'pattern' | 'bevel' | 'satin', patch: object) =>
     setStyles((s) => ({ ...s, [key]: { ...s[key], ...patch } }))
+  const adoptStyles = (next: LayerStyles) => {
+    const cloned = structuredClone(next)
+    return hasExplicitGlobalLight || lightTouched
+      ? synchronizeStylesToGlobalLight(cloned, light) || cloned
+      : cloned
+  }
+  const applyDialogLight = (nextLight: GlobalLightSettings, enableBevel = false) => {
+    const normalized = normalizeGlobalLight(nextLight)
+    setLight(normalized)
+    setLightTouched(true)
+    setStyles((s) => {
+      const prepared = enableBevel
+        ? { ...s, bevel: { ...s.bevel, enabled: true, useGlobalLight: true } }
+        : s
+      return synchronizeStylesToGlobalLight(prepared, normalized) || prepared
+    })
+  }
   const factories = {
     strokes: defaultStrokeStyle,
     shadows: defaultShadowStyle,
@@ -626,7 +674,7 @@ export function LayerStyleDialog({
     else patchItem({ enabled })
   }
   const applyPreset = (preset: StylePreset) => {
-    setStyles(structuredClone(preset.styles))
+    setStyles(adoptStyles(preset.styles))
     setSelected(0)
     setMessage(`Применён стиль «${preset.name}» — нажми «Применить стиль», чтобы сохранить в слое.`)
   }
@@ -636,6 +684,64 @@ export function LayerStyleDialog({
     defaultShadowStyle()
   const overlay = styles.overlays[index] || defaultOverlayStyle()
   const gradientItem = styles.gradients[index] || defaultGradientOverlayStyle()
+  const shadowLinked = shadow.useGlobalLight === true
+  const currentShadowDistance = shadowDistance(shadow)
+  const currentShadowAngle = shadowLightAngle(shadow, light.angle)
+  const setShadowGlobalLight = (checked: boolean) => {
+    if (!checked) {
+      patchItem({ useGlobalLight: undefined, enabled: true })
+      return
+    }
+    setLightTouched(true)
+    if (!listKey) return
+    setStyles((s) => {
+      const next = {
+        ...s,
+        [listKey]: s[listKey].map((item, i) =>
+          i === index ? { ...item, useGlobalLight: true as const, enabled: true } : item,
+        ),
+      } as LayerStyles
+      return synchronizeStylesToGlobalLight(next, light) || next
+    })
+  }
+  const setShadowAngle = (angle: number) => {
+    if (shadowLinked) {
+      if (!listKey) return
+      const nextLight = normalizeGlobalLight({
+        angle,
+        altitude: styles.bevel.useGlobalLight ? styles.bevel.altitude : light.altitude,
+      })
+      setLight(nextLight)
+      setLightTouched(true)
+      setStyles((s) => {
+        const prepared = {
+          ...s,
+          [listKey]: s[listKey].map((item, i) => (i === index ? { ...item, enabled: true } : item)),
+        } as LayerStyles
+        return synchronizeStylesToGlobalLight(prepared, nextLight) || prepared
+      })
+    } else
+      patchItem({
+        ...shadowOffsetForLightAngle(currentShadowDistance, angle),
+        enabled: true,
+      })
+  }
+  const setShadowDistance = (distance: number) =>
+    patchItem({
+      ...shadowOffsetForLightAngle(distance, currentShadowAngle),
+      enabled: true,
+    })
+  const setBevelGlobalLight = (checked: boolean) => {
+    if (!checked) {
+      patchSingle('bevel', { useGlobalLight: false, enabled: true })
+      return
+    }
+    setLightTouched(true)
+    setStyles((s) => {
+      const next = { ...s, bevel: { ...s.bevel, useGlobalLight: true, enabled: true } }
+      return synchronizeStylesToGlobalLight(next, light) || next
+    })
+  }
 
   return (
     <Modal
@@ -883,12 +989,38 @@ export function LayerStyleDialog({
                 suffix=" px"
                 onChange={(blur) => patchItem({ blur, enabled: true })}
               />
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  aria-label="Использовать глобальный свет для тени"
+                  checked={shadowLinked}
+                  onChange={(e) => setShadowGlobalLight(e.target.checked)}
+                />
+                Использовать глобальный свет
+              </label>
+              <Slider
+                label="Угол тени"
+                value={currentShadowAngle}
+                min={-180}
+                max={180}
+                suffix="°"
+                onChange={setShadowAngle}
+              />
+              <Slider
+                label="Расстояние тени"
+                value={currentShadowDistance}
+                min={0}
+                max={254}
+                suffix=" px"
+                onChange={setShadowDistance}
+              />
               <div className="field-grid">
                 <Field
                   label="Сдвиг X"
                   value={shadow.x}
                   min={-STYLE_LIMITS.offset}
                   max={STYLE_LIMITS.offset}
+                  disabled={shadowLinked}
                   onChange={(x) => patchItem({ x, enabled: true })}
                 />
                 <Field
@@ -896,9 +1028,15 @@ export function LayerStyleDialog({
                   value={shadow.y}
                   min={-STYLE_LIMITS.offset}
                   max={STYLE_LIMITS.offset}
+                  disabled={shadowLinked}
                   onChange={(y) => patchItem({ y, enabled: true })}
                 />
               </div>
+              <p className="panel-note">
+                {shadowLinked
+                  ? 'Направление задаёт глобальный свет документа: X/Y вычисляются из угла и расстояния. Изменение угла здесь при применении обновит все связанные тени и фаски документа.'
+                  : 'Угол и расстояние — полярная запись тех же сдвигов X/Y только для этой тени. 90° — свет сверху, тень уходит вниз.'}
+              </p>
               <Slider
                 label="Непрозрачность тени"
                 value={shadow.opacity * 100}
@@ -966,7 +1104,7 @@ export function LayerStyleDialog({
                 value={styles.satin.blendMode}
                 onChange={(e) => patchSingle('satin', { blendMode: e.target.value, enabled: true })}
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>
@@ -1232,6 +1370,15 @@ export function LayerStyleDialog({
                 suffix=" px"
                 onChange={(soften) => patchSingle('bevel', { soften, enabled: true })}
               />
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  aria-label="Использовать глобальный свет для фаски"
+                  checked={styles.bevel.useGlobalLight}
+                  onChange={(e) => setBevelGlobalLight(e.target.checked)}
+                />
+                Использовать глобальный свет
+              </label>
               <Slider
                 label="Угол света фаски"
                 value={styles.bevel.angle}
@@ -1239,7 +1386,9 @@ export function LayerStyleDialog({
                 max={180}
                 suffix="°"
                 onChange={(angle) =>
-                  patchSingle('bevel', { angle, useGlobalLight: false, enabled: true })
+                  styles.bevel.useGlobalLight
+                    ? applyDialogLight({ angle, altitude: styles.bevel.altitude }, true)
+                    : patchSingle('bevel', { angle, enabled: true })
                 }
               />
               <Slider
@@ -1248,7 +1397,11 @@ export function LayerStyleDialog({
                 min={0}
                 max={90}
                 suffix="°"
-                onChange={(altitude) => patchSingle('bevel', { altitude, enabled: true })}
+                onChange={(altitude) =>
+                  styles.bevel.useGlobalLight
+                    ? applyDialogLight({ angle: styles.bevel.angle, altitude }, true)
+                    : patchSingle('bevel', { altitude, enabled: true })
+                }
               />
               <ContourControls
                 title="Контур глянца"
@@ -1280,7 +1433,7 @@ export function LayerStyleDialog({
                   patchSingle('bevel', { highlightBlendMode: e.target.value, enabled: true })
                 }
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>
@@ -1305,7 +1458,7 @@ export function LayerStyleDialog({
                   patchSingle('bevel', { shadowBlendMode: e.target.value, enabled: true })
                 }
               >
-                {BEVEL_BLEND_MODES.map(([mode, label]) => (
+                {EFFECT_BLEND_MODES.map(([mode, label]) => (
                   <option key={mode} value={mode}>
                     {label}
                   </option>
@@ -1325,7 +1478,7 @@ export function LayerStyleDialog({
               )}
               <p className="panel-note">
                 {styles.bevel.useGlobalLight
-                  ? 'PSD-флаг глобального света сохраняется как есть. Общедокументной синхронизации углов пока нет; ручная правка угла выше отключит флаг для этого слоя.'
+                  ? 'Фаска связана с глобальным светом документа. Изменение угла или высоты здесь задаст общий свет и при применении обновит связанные тени и фаски на всех слоях документа.'
                   : 'Угол и высота света заданы для этого слоя отдельно. 90° — свет сверху, 120° — сверху слева.'}
               </p>
             </>
@@ -1502,7 +1655,7 @@ export function LayerStyleDialog({
                   onClick={() => {
                     const pasted = readStyleClipboard()
                     if (pasted) {
-                      setStyles(pasted)
+                      setStyles(adoptStyles(pasted))
                       setBlendIf(readStyleClipboardBlendIf() || defaultBlendIf())
                       setSelected(0)
                       setMessage('Стиль вставлен в предпросмотр.')
@@ -1567,7 +1720,7 @@ export function LayerStyleDialog({
         <span>Живой предпросмотр · изменения применятся по кнопке</span>
       </div>
       <footer className="dialog-footer">
-        <button className="text-button" onClick={() => setStyles(defaultStyles())}>
+        <button className="text-button" onClick={() => setStyles(adoptStyles(defaultStyles()))}>
           <RotateCcw size={14} />
           Сбросить стили
         </button>
@@ -1583,7 +1736,13 @@ export function LayerStyleDialog({
         </button>
         <button
           className="primary-button"
-          onClick={() => onApply(normalizeStyles(styles) || styles, parseBlendIf(blendIf))}
+          onClick={() =>
+            onApply(
+              normalizeStyles(styles) || styles,
+              parseBlendIf(blendIf),
+              lightTouched ? normalizeGlobalLight(light) : undefined,
+            )
+          }
         >
           <Sparkles size={15} />
           Применить стиль

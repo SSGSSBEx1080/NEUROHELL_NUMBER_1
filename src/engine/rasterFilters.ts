@@ -11,6 +11,17 @@ export type RasterFilter =
     }
   | { type: 'mosaic'; size: number }
   | { type: 'edges'; strength: number }
+  | { type: 'gaussian'; radius: number }
+  | { type: 'motion'; angle: number; distance: number }
+  | { type: 'threshold'; level: number }
+  | { type: 'emboss'; angle: number; amount: number }
+  | {
+      type: 'radial'
+      method: 'spin' | 'zoom'
+      amount: number
+      centerX: number
+      centerY: number
+    }
 export type RasterFilterKind = RasterFilter['type']
 export const rasterFilterNames: Record<RasterFilterKind, string> = {
   unsharp: 'Контурная резкость',
@@ -19,6 +30,11 @@ export const rasterFilterNames: Record<RasterFilterKind, string> = {
   noise: 'Добавить шум',
   mosaic: 'Мозаика',
   edges: 'Контуры (Собель)',
+  gaussian: 'Гауссово размытие',
+  motion: 'Размытие в движении',
+  threshold: 'Порог',
+  emboss: 'Тиснение',
+  radial: 'Радиальное размытие',
 }
 export const MAX_FILTER_PIXELS = 8_388_608
 export interface RasterFilterRequest {
@@ -42,6 +58,16 @@ export function defaultRasterFilter(type: RasterFilterKind): RasterFilter {
       return { type, size: 12 }
     case 'edges':
       return { type, strength: 1 }
+    case 'gaussian':
+      return { type, radius: 5 }
+    case 'motion':
+      return { type, angle: 0, distance: 20 }
+    case 'threshold':
+      return { type, level: 128 }
+    case 'emboss':
+      return { type, angle: 135, amount: 100 }
+    case 'radial':
+      return { type, method: 'spin', amount: 10, centerX: 50, centerY: 50 }
   }
 }
 const clamp = (v: number, min = 0, max = 255) => Math.max(min, Math.min(max, v))
@@ -64,34 +90,54 @@ export function parseRasterFilter(input: unknown): RasterFilter {
       out[key] = value
       continue
     }
+    if (key === 'method') {
+      if (value !== 'spin' && value !== 'zoom')
+        throw new Error('Неизвестный метод радиального размытия')
+      out[key] = value
+      continue
+    }
     const min =
-        key === 'radius'
-          ? v.type === 'median'
-            ? 1
-            : 0.1
-          : key === 'size' || key === 'seed'
-            ? 1
-            : 0,
+        key === 'angle'
+          ? -180
+          : key === 'radius'
+            ? v.type === 'median'
+              ? 1
+              : 0.1
+            : key === 'size' || key === 'seed' || key === 'distance' || key === 'level'
+              ? 1
+              : 0,
       max =
-        key === 'radius'
-          ? v.type === 'median'
-            ? 5
-            : 30
-          : key === 'amount'
-            ? v.type === 'unsharp'
-              ? 500
-              : 100
-            : key === 'size'
-              ? 128
-              : key === 'strength'
-                ? 5
-                : key === 'seed'
-                  ? 2147483647
-                  : 255
+        key === 'centerX' || key === 'centerY'
+          ? 100
+          : key === 'angle'
+            ? 180
+            : key === 'distance'
+              ? 200
+              : key === 'radius'
+                ? v.type === 'median'
+                  ? 5
+                  : v.type === 'gaussian'
+                    ? 100
+                    : 30
+                : key === 'amount'
+                  ? v.type === 'unsharp' || v.type === 'emboss'
+                    ? 500
+                    : 100
+                  : key === 'size'
+                    ? 128
+                    : key === 'strength'
+                      ? 5
+                      : key === 'seed'
+                        ? 2147483647
+                        : 255
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
       throw new Error(`Параметр фильтра ${key}: ${min}–${max}`)
     out[key] =
-      key === 'size' || key === 'seed' || (key === 'radius' && v.type === 'median')
+      key === 'size' ||
+      key === 'seed' ||
+      key === 'distance' ||
+      key === 'level' ||
+      (key === 'radius' && v.type === 'median')
         ? Math.round(value)
         : value
   }
@@ -156,6 +202,184 @@ function frequency(
               : original
       }
   }
+}
+/** Premultiplied gaussian low-pass; alpha channel of `out` stays original. */
+function gaussian(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radius: number,
+) {
+  const work = new Float32Array(w * h),
+    temp = new Float32Array(w * h),
+    radii = gaussianRadii(radius)
+  const blur = () => {
+    for (const r of radii) blurPlane(work, temp, w, h, r)
+  }
+  for (let i = 0; i < work.length; i++) work[i] = p[i * 4 + 3] / 255
+  blur()
+  const alpha = work.slice()
+  for (let c = 0; c < 3; c++) {
+    for (let i = 0; i < work.length; i++) work[i] = (p[i * 4 + c] * p[i * 4 + 3]) / 255
+    blur()
+    for (let i = 0; i < work.length; i++)
+      if (p[i * 4 + 3]) out[i * 4 + c] = clamp(alpha[i] > 1e-7 ? work[i] / alpha[i] : p[i * 4 + c])
+  }
+}
+function motion(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  angle: number,
+  distance: number,
+) {
+  const rad = (angle * Math.PI) / 180,
+    ux = Math.cos(rad),
+    uy = Math.sin(rad),
+    offsets: [number, number][] = []
+  const seen = new Set<string>()
+  for (let t = -distance / 2; t <= distance / 2; t++) {
+    const dx = Math.round(ux * t),
+      dy = Math.round(uy * t),
+      key = dx + ',' + dy
+    if (!seen.has(key)) {
+      seen.add(key)
+      offsets.push([dx, dy])
+    }
+  }
+  if (w * h * offsets.length > 3e8)
+    throw new Error('Слишком большая дистанция для этого слоя. Уменьши дистанцию или слой.')
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      if (!p[o + 3]) continue
+      let pr = 0,
+        pg = 0,
+        pb = 0,
+        pa = 0
+      for (const [dx, dy] of offsets) {
+        const i = (clamp(y + dy, 0, h - 1) * w + clamp(x + dx, 0, w - 1)) * 4,
+          a = p[i + 3] / 255
+        pr += p[i] * a
+        pg += p[i + 1] * a
+        pb += p[i + 2] * a
+        pa += p[i + 3]
+      }
+      const mean = pa / offsets.length
+      if (mean > 0) {
+        const denom = (mean / 255) * offsets.length
+        out[o] = clamp(pr / denom)
+        out[o + 1] = clamp(pg / denom)
+        out[o + 2] = clamp(pb / denom)
+      }
+    }
+}
+function radialBlur(
+  p: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  f: Extract<RasterFilter, { type: 'radial' }>,
+) {
+  if (f.amount <= 0) return
+  const cx = (f.centerX / 100) * (w - 1),
+    cy = (f.centerY / 100) * (h - 1),
+    // Keep the full-size worker responsive: roughly one sample per pixel of
+    // travel, but never an unbounded fan-out on an 8 MP layer. Photoshop
+    // does not publish an exact Amount mapping; Spin is treated as total
+    // degrees and Zoom as ±25% of the centre distance at Amount 100.
+    maxSteps = Math.max(1, Math.min(48, Math.floor(160_000_000 / Math.max(1, w * h)))),
+    totalAngle = (f.amount * Math.PI) / 180,
+    zoomSpan = f.amount / 200,
+    cosStart = Math.cos(-totalAngle / 2),
+    sinStart = Math.sin(-totalAngle / 2)
+  const samplePremultiplied = (sx: number, sy: number, acc: Float64Array) => {
+    const x = clamp(sx, 0, w - 1),
+      y = clamp(sy, 0, h - 1),
+      x0 = Math.floor(x),
+      y0 = Math.floor(y),
+      x1 = Math.min(w - 1, x0 + 1),
+      y1 = Math.min(h - 1, y0 + 1),
+      fx = x - x0,
+      fy = y - y0
+    const w00 = (1 - fx) * (1 - fy),
+      w10 = fx * (1 - fy),
+      w01 = (1 - fx) * fy,
+      w11 = fx * fy
+    if (w00) {
+      const i = (y0 * w + x0) * 4,
+        a = p[i + 3] * w00
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w10) {
+      const i = (y0 * w + x1) * 4,
+        a = p[i + 3] * w10
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w01) {
+      const i = (y1 * w + x0) * 4,
+        a = p[i + 3] * w01
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+    if (w11) {
+      const i = (y1 * w + x1) * 4,
+        a = p[i + 3] * w11
+      acc[0] += p[i] * a
+      acc[1] += p[i + 1] * a
+      acc[2] += p[i + 2] * a
+      acc[3] += a
+    }
+  }
+  const acc = new Float64Array(4)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      if (!p[o + 3]) continue
+      const dx = x - cx,
+        dy = y - cy,
+        radius = Math.hypot(dx, dy)
+      acc.fill(0)
+      if (radius < 0.001) {
+        samplePremultiplied(x, y, acc)
+      } else if (f.method === 'spin') {
+        const steps = Math.max(1, Math.min(maxSteps, Math.ceil(radius * totalAngle))),
+          stepAngle = steps > 1 ? totalAngle / (steps - 1) : 0,
+          cosStep = Math.cos(stepAngle),
+          sinStep = Math.sin(stepAngle)
+        let vx = dx * cosStart - dy * sinStart,
+          vy = dx * sinStart + dy * cosStart
+        for (let i = 0; i < steps; i++) {
+          samplePremultiplied(cx + vx, cy + vy, acc)
+          const nextX = vx * cosStep - vy * sinStep
+          vy = vx * sinStep + vy * cosStep
+          vx = nextX
+        }
+      } else {
+        const steps = Math.max(1, Math.min(maxSteps, Math.ceil(radius * zoomSpan))),
+          startScale = 1 - zoomSpan / 2,
+          stepScale = steps > 1 ? zoomSpan / (steps - 1) : 0
+        for (let i = 0; i < steps; i++) {
+          const scale = startScale + stepScale * i
+          samplePremultiplied(cx + dx * scale, cy + dy * scale, acc)
+        }
+      }
+      if (acc[3] > 0) {
+        out[o] = clamp(acc[0] / acc[3])
+        out[o + 1] = clamp(acc[1] / acc[3])
+        out[o + 2] = clamp(acc[2] / acc[3])
+      }
+    }
 }
 function median(p: Uint8ClampedArray, out: Uint8ClampedArray, w: number, h: number, r: number) {
   for (let y = 0; y < h; y++) {
@@ -256,6 +480,30 @@ export function processRasterFilter(request: RasterFilterRequest): Uint8ClampedA
         const mono = f.monochrome ? noise() : 0
         for (let c = 0; c < 3; c++) out[i + c] = clamp(p[i + c] + (f.monochrome ? mono : noise()))
       }
+  } else if (f.type === 'gaussian') gaussian(p, out, w, h, f.radius)
+  else if (f.type === 'motion') motion(p, out, w, h, f.angle, f.distance)
+  else if (f.type === 'radial') radialBlur(p, out, w, h, f)
+  else if (f.type === 'threshold') {
+    for (let i = 0; i < p.length; i += 4)
+      if (p[i + 3]) {
+        const v = p[i] * 0.2126 + p[i + 1] * 0.7152 + p[i + 2] * 0.0722 >= f.level ? 255 : 0
+        out[i] = out[i + 1] = out[i + 2] = v
+      }
+  } else if (f.type === 'emboss') {
+    const rad = (f.angle * Math.PI) / 180,
+      dx = Math.round(Math.cos(rad)),
+      dy = Math.round(Math.sin(rad)),
+      lumaAt = (x: number, y: number) => {
+        const i = (clamp(y, 0, h - 1) * w + clamp(x, 0, w - 1)) * 4
+        return p[i + 3] ? p[i] * 0.2126 + p[i + 1] * 0.7152 + p[i + 2] * 0.0722 : 128
+      }
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4
+        if (!p[i + 3]) continue
+        const v = clamp(128 + ((lumaAt(x + dx, y + dy) - lumaAt(x - dx, y - dy)) * f.amount) / 100)
+        out[i] = out[i + 1] = out[i + 2] = v
+      }
   } else {
     const luminance = (x: number, y: number, fallback: number) => {
       const i = (clamp(y, 0, h - 1) * w + clamp(x, 0, w - 1)) * 4
@@ -286,5 +534,18 @@ export function processRasterFilter(request: RasterFilterRequest): Uint8ClampedA
     for (let i = 0; i < p.length; i += 4)
       for (let c = 0; c < 3; c++)
         out[i + c] = Math.round(p[i + c] + ((out[i + c] - p[i + c]) * mask[i / 4]) / 255)
+  return out
+}
+
+/**
+ * High-frequency layer for frequency separation: 128 + (original − low)/2.
+ * Composited over the low layer with Linear Light it reconstructs the
+ * original exactly (Linear Light doubles the stored half-scale delta),
+ * matching Photoshop's Apply Image scale 2 / offset 128 recipe.
+ */
+export function frequencyDetail(p: Uint8ClampedArray, low: Uint8ClampedArray): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(p)
+  for (let i = 0; i < p.length; i += 4)
+    if (p[i + 3]) for (let c = 0; c < 3; c++) out[i + c] = clamp(128 + (p[i + c] - low[i + c]) / 2)
   return out
 }

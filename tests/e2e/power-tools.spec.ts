@@ -204,14 +204,26 @@ test('filter preview is cached; selection-limited copy retains the hidden source
   await expect(page.locator('.layer-row')).toHaveCount(1)
   expect(await pixels(page)).toEqual(before)
 })
-test('all six raster filters run, noise preview is deterministic and cancelling never creates a layer', async ({
+test('all raster filters run, noise preview is deterministic and cancelling never creates a layer', async ({
   page,
 }) => {
   await ready(page)
   await open(page, await source(page))
   const before = await pixels(page)
   await menu(page, 'Фильтры', 'Растровые фильтры на копии…')
-  for (const type of ['unsharp', 'highpass', 'median', 'noise', 'mosaic', 'edges']) {
+  for (const type of [
+    'unsharp',
+    'highpass',
+    'median',
+    'noise',
+    'mosaic',
+    'edges',
+    'gaussian',
+    'motion',
+    'threshold',
+    'emboss',
+    'radial',
+  ]) {
     await page.getByLabel('Растровый фильтр').selectOption(type)
     await expect(
       page.getByRole('button', { name: 'Применить на копии', exact: true }),
@@ -236,6 +248,143 @@ test('all six raster filters run, noise preview is deterministic and cancelling 
   ).toBe(first)
   await page.getByRole('button', { name: 'Отмена', exact: true }).click()
   await expect(page.locator('.layer-row')).toHaveCount(1)
+  expect(await pixels(page)).toEqual(before)
+})
+test('radial blur exposes spin/zoom and centre controls and applies only to a copy', async ({
+  page,
+}) => {
+  await ready(page)
+  await open(page, await source(page))
+  const original = readPsd(await save(page), { useImageData: true }),
+    before = await pixels(page)
+  await menu(page, 'Фильтры', 'Растровые фильтры на копии…')
+  await page.getByLabel('Растровый фильтр').selectOption('radial')
+  await expect(page.getByLabel('Метод радиального размытия')).toHaveValue('spin')
+  await page.getByLabel('Количество размытия', { exact: true }).fill('90')
+  await page.getByLabel('Центр X, %', { exact: true }).fill('25')
+  await page.getByLabel('Центр Y, %', { exact: true }).fill('75')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  const spinPreview = await page
+    .getByTestId('filter-after')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return c.toDataURL()
+    })
+  const sourcePreview = await page
+    .getByTestId('filter-before')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      return c.toDataURL()
+    })
+  expect(spinPreview).not.toBe(sourcePreview)
+  await page.getByLabel('Метод радиального размытия').selectOption('zoom')
+  await page.getByLabel('Количество размытия', { exact: true }).fill('100')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  expect(await pixels(page)).toEqual(before)
+  await page.getByRole('button', { name: 'Применить на копии', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Original · Радиальное размытие' }),
+  ).toHaveCount(1)
+  expect(await pixels(page)).not.toEqual(before)
+  const psd = readPsd(await save(page), { useImageData: true })
+  expect(psd.children).toHaveLength(2)
+  expect(psd.children![0].hidden).toBe(true)
+  expect(psd.children![0].imageData?.data).toEqual(original.children![0].imageData?.data)
+  const alpha = (data: ArrayLike<number>) => [...data].filter((_, i) => i % 4 === 3)
+  expect(alpha(psd.children![1].imageData!.data)).toEqual(
+    alpha(original.children![0].imageData!.data),
+  )
+})
+test('displace uses an external map file, accepts a PSD composite map and only creates a copy', async ({
+  page,
+}) => {
+  await ready(page)
+  const images = await page.evaluate(() => {
+    const target = document.createElement('canvas')
+    target.width = 120
+    target.height = 80
+    const tx = target.getContext('2d')!
+    tx.fillStyle = 'black'
+    tx.fillRect(0, 0, 120, 80)
+    tx.fillStyle = 'white'
+    tx.fillRect(30, 0, 10, 80)
+    const map = document.createElement('canvas')
+    map.width = 16
+    map.height = 16
+    const mx = map.getContext('2d')!
+    mx.fillStyle = 'black'
+    mx.fillRect(0, 0, 16, 16)
+    return { target: target.toDataURL(), map: map.toDataURL().split(',')[1] }
+  })
+  const doc = newDocument(120, 80, 'Displace source', 'transparent')
+  doc.layers = [
+    makeLayer({
+      kind: 'image',
+      name: 'Displace target',
+      src: images.target,
+      width: 120,
+      height: 80,
+    }),
+  ]
+  await open(page, doc)
+  const originalBytes = await save(page),
+    original = readPsd(originalBytes, { useImageData: true }),
+    before = await pixels(page)
+  await menu(page, 'Фильтры', 'Смещение по карте на копии…')
+  await page.getByLabel('Файл карты смещения').setInputFiles({
+    name: 'black-map.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(images.map, 'base64'),
+  })
+  await expect(page.getByTestId('displace-map-preview')).toBeVisible()
+  await page.getByLabel('Вертикальный масштаб', { exact: true }).fill('0')
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeEnabled()
+  const preview = await page
+    .getByTestId('displace-after')
+    .evaluate(async (c: HTMLCanvasElement) => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      const ctx = c.getContext('2d')!
+      return {
+        moved: ctx.getImageData(47, 40, 1, 1).data[0],
+        old: ctx.getImageData(35, 40, 1, 1).data[0],
+      }
+    })
+  // A black map at horizontal scale 10 moves content 12.8 px right.
+  expect(preview.moved).toBeGreaterThan(200)
+  expect(preview.old).toBeLessThan(20)
+  expect(await pixels(page)).toEqual(before)
+  await page.getByRole('button', { name: 'Применить на копии', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Displace target · Смещение по карте' }),
+  ).toHaveCount(1)
+  const after = await pixels(page)
+  expect(after[(40 * 120 + 47) * 4]).toBeGreaterThan(200)
+  expect(after[(40 * 120 + 35) * 4]).toBeLessThan(20)
+  const psd = readPsd(await save(page), { useImageData: true })
+  expect(psd.children![0].hidden).toBe(true)
+  expect(psd.children![0].imageData?.data).toEqual(original.children![0].imageData?.data)
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.layer-row')).toHaveCount(1)
+  expect(await pixels(page)).toEqual(before)
+
+  // The PSD just saved by the editor is also a valid Maximize Compatibility map.
+  await menu(page, 'Фильтры', 'Смещение по карте на копии…')
+  await page.getByLabel('Файл карты смещения').setInputFiles({
+    name: 'composite-map.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer: originalBytes,
+  })
+  await expect(page.getByTestId('displace-map-preview')).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await page.getByLabel('Горизонтальный масштаб', { exact: true }).fill('0')
+  await page.getByLabel('Вертикальный масштаб', { exact: true }).fill('0')
+  await expect(page.getByText(/макс\. смещение 0\.0 px/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Применить на копии', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
   expect(await pixels(page)).toEqual(before)
 })
 test('filtering a smart object makes an explicit raster copy and preserves its original native embedded PSD', async ({
@@ -352,4 +501,137 @@ test('explicit rasterization includes blurred image bounds instead of clipping i
   }
   expect(worst).toBeLessThanOrEqual(2)
   await expect(page.getByLabel('Ш', { exact: true })).toHaveValue('148')
+})
+
+test('liquify forward warp drags the edge on an explicit copy and leaves the original intact', async ({
+  page,
+}) => {
+  await ready(page)
+  const src = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4,
+          v = xx < 60 ? 0 : 255
+        p.data[i] = p.data[i + 1] = p.data[i + 2] = v
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const base = newDocument(120, 80, 'Пластика', 'transparent')
+  base.layers = [makeLayer({ kind: 'image', name: 'Край', src, width: 120, height: 80 })]
+  await open(page, base)
+  await menu(page, 'Фильтры', 'Пластика на копии…')
+  await page.getByLabel('Размер кисти', { exact: true }).fill('50')
+  await page.getByLabel('Плотность', { exact: true }).fill('100')
+  const box = await page.getByTestId('liquify-canvas').boundingBox()
+  // The view scales 120x80 down; map natural (30..80, 40) through the box.
+  const sx = box!.width / 120,
+    y = box!.y + 40 * sx
+  await page.mouse.move(box!.x + 30 * sx, y)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + 85 * sx, y, { steps: 12 })
+  await page.mouse.up()
+  await expect(page.getByRole('button', { name: 'Применить копию', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Применить копию', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Край · Пластика' })).toHaveCount(1)
+  const after = await pixels(page),
+    moved = (40 * 120 + 70) * 4,
+    corner = (2 * 120 + 70) * 4
+  // Near the stroke the black half was dragged past x=70; far from it the
+  // edge stays at x=60 so x=70 remains white.
+  expect(after[moved]).toBeLessThan(60)
+  expect(after[corner]).toBe(255)
+})
+
+test('frequency separation creates low/high layers that reconstruct the original', async ({
+  page,
+}) => {
+  await ready(page)
+  const photo = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4
+        p.data[i] = (xx * 2 + yy) % 256
+        p.data[i + 1] = (xx + yy * 3) % 256
+        p.data[i + 2] = xx < 60 ? 40 : 210
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const doc = newDocument(120, 80, 'Частотка', 'transparent')
+  doc.layers = [makeLayer({ kind: 'image', name: 'Фото', src: photo, width: 120, height: 80 })]
+  await open(page, doc)
+  const before = await pixels(page)
+  await menu(page, 'Фильтры', 'Частотное разложение…')
+  await page.getByLabel('Радиус разделения', { exact: true }).fill('4')
+  await page.getByRole('button', { name: 'Создать два слоя', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(3)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Низкие частоты' })).toHaveCount(1)
+  await expect(page.locator('.layer-row').filter({ hasText: 'Высокие частоты' })).toHaveCount(1)
+  await expect(page.getByLabel('Режим наложения')).toHaveValue('linear-light')
+  const after = await pixels(page)
+  let worst = 0
+  for (let i = 0; i < before.length; i++) worst = Math.max(worst, Math.abs(before[i] - after[i]))
+  expect(worst).toBeLessThanOrEqual(3)
+})
+
+test('pin warp drags a local region on an explicit copy without moving distant pixels', async ({
+  page,
+}) => {
+  await ready(page)
+  const src = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 120
+    c.height = 80
+    const x = c.getContext('2d')!,
+      p = x.createImageData(120, 80)
+    for (let yy = 0; yy < 80; yy++)
+      for (let xx = 0; xx < 120; xx++) {
+        const i = (yy * 120 + xx) * 4,
+          v = xx < 60 ? 0 : 255
+        p.data[i] = p.data[i + 1] = p.data[i + 2] = v
+        p.data[i + 3] = 255
+      }
+    x.putImageData(p, 0, 0)
+    return c.toDataURL()
+  })
+  const doc = newDocument(120, 80, 'Точки', 'transparent')
+  doc.layers = [makeLayer({ kind: 'image', name: 'Край', src, width: 120, height: 80 })]
+  await open(page, doc)
+  await menu(page, 'Фильтры', 'Деформация по точкам на копии…')
+  await page.getByLabel('Радиус влияния', { exact: true }).fill('32')
+  const box = await page.getByTestId('pin-warp-canvas').boundingBox()
+  const sx = box!.width / 120,
+    sy = box!.height / 80
+  await page.mouse.move(box!.x + 48 * sx, box!.y + 40 * sy)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + 78 * sx, box!.y + 40 * sy, { steps: 10 })
+  await page.mouse.up()
+  await expect(page.getByRole('button', { name: 'Применить копию', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Применить копию', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('.layer-row')).toHaveCount(2)
+  await expect(
+    page.locator('.layer-row').filter({ hasText: 'Край · Деформация по точкам' }),
+  ).toHaveCount(1)
+  const after = await pixels(page),
+    moved = (40 * 120 + 70) * 4,
+    distant = (2 * 120 + 70) * 4
+  expect(after[moved]).toBeLessThan(60)
+  expect(after[distant]).toBe(255)
 })

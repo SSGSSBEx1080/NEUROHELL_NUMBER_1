@@ -22,6 +22,7 @@ export class RepairPreview {
   private after: HTMLCanvasElement
   private overlay: HTMLCanvasElement
   private result: RepairResult | null = null
+  private overlayMode: 'none' | 'donors' | 'target' = 'none'
   private dirty: { x: number; y: number; right: number; bottom: number } | null
   constructor(readonly source: Source) {
     this.original = canvas(source.width, source.height)
@@ -48,7 +49,12 @@ export class RepairPreview {
         }
       : { x: left, y: top, right, bottom }
   }
-  draw(output: HTMLCanvasElement, result: RepairResult | null, split: number, protect: boolean) {
+  draw(
+    output: HTMLCanvasElement,
+    result: RepairResult | null,
+    split: number,
+    overlay: 'none' | 'donors' | 'target',
+  ) {
     const s = this.source
     if (output.width !== s.width || output.height !== s.height) {
       output.width = s.width
@@ -71,7 +77,9 @@ export class RepairPreview {
     const ctx = output.getContext('2d')!
     ctx.clearRect(0, 0, s.width, s.height)
     ctx.drawImage(this.original, 0, 0)
-    if (protect) {
+    if (overlay !== 'none') {
+      if (overlay !== this.overlayMode) this.invalidate()
+      this.overlayMode = overlay
       const d = this.dirty
       if (d) {
         const w = d.right - d.x,
@@ -81,21 +89,26 @@ export class RepairPreview {
           for (let x = 0; x < w; x++) {
             const p = (d.y + y) * s.width + d.x + x,
               i = (y * w + x) * 4,
-              tint = s.mask[p]
-                ? target
-                : s.donors[p] && s.pixels[p * 4 + 3] >= 250
-                  ? allowed
-                  : blocked
+              tint =
+                overlay === 'target'
+                  ? target
+                  : s.mask[p]
+                    ? target
+                    : s.donors[p] && s.pixels[p * 4 + 3] >= 250
+                      ? allowed
+                      : blocked
             patch[i] = tint[0]
             patch[i + 1] = tint[1]
             patch[i + 2] = tint[2]
-            patch[i + 3] = s.pixels[p * 4 + 3] ? 77 : 0
+            patch[i + 3] =
+              overlay === 'target' ? (s.mask[p] ? 120 : 0) : s.pixels[p * 4 + 3] ? 77 : 0
           }
         this.overlay.getContext('2d')!.putImageData(new ImageData(patch, w, h), d.x, d.y)
         this.dirty = null
       }
       ctx.drawImage(this.overlay, 0, 0)
     } else {
+      this.overlayMode = 'none'
       const x = Math.round((s.width * split) / 100)
       if (result) {
         ctx.save()
@@ -105,8 +118,10 @@ export class RepairPreview {
         ctx.drawImage(this.after, 0, 0)
         ctx.restore()
       }
-      ctx.fillStyle = '#b7a2ff'
-      ctx.fillRect(x, 0, Math.max(1, s.width / 500), s.height)
+      if (split > 0 && split < 100) {
+        ctx.fillStyle = '#b7a2ff'
+        ctx.fillRect(x, 0, Math.max(1, s.width / 500), s.height)
+      }
     }
   }
   dispose() {

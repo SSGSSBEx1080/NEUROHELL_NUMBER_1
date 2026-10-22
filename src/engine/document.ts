@@ -11,6 +11,7 @@ import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
 import { parseDocumentColorProfile, workingDocumentColorProfile } from './colorProfiles'
 import { parseTextAntiAlias } from './textAntiAlias'
+import { parseGlobalLight, synchronizeStylesToGlobalLight } from './globalLight'
 import {
   DEFAULT_ADJUSTMENTS,
   MAX_DIMENSION,
@@ -35,7 +36,7 @@ export function makeLayer(overrides: Partial<Layer> = {}): Layer {
     rotation: 0,
     opacity: 1,
     blendMode: 'source-over',
-    color: '#b8a8ff',
+    color: '#000000',
     adjustments: { ...DEFAULT_ADJUSTMENTS },
     ...overrides,
   }
@@ -209,6 +210,16 @@ const blends = new Set([
   'color',
   'luminosity',
   'lighter',
+  'dissolve',
+  'linear-burn',
+  'darker-color',
+  'lighter-color',
+  'vivid-light',
+  'linear-light',
+  'pin-light',
+  'hard-mix',
+  'subtract',
+  'divide',
 ])
 const validFont = (value: unknown) =>
   typeof value === 'string' && value.length <= 160 && !/[\x00-\x1f\";{}<>]/.test(value)
@@ -350,6 +361,10 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
             },
     })
   })
+  const globalLight = parseGlobalLight(d.globalLight)
+  if (globalLight)
+    for (const layer of layers)
+      if (layer.styles) layer.styles = synchronizeStylesToGlobalLight(layer.styles, globalLight)
   const ids = new Set<string>()
   for (const l of layers) {
     if (ids.has(l.id)) l.id = uid()
@@ -379,6 +394,7 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
     })),
     sourceId: typeof d.sourceId === 'string' ? d.sourceId.slice(0, 100) : undefined,
     colorProfile: parseDocumentColorProfile(d.colorProfile),
+    globalLight,
     dpi: finite(d.dpi, 1, 1200, 72),
     version: 1,
     id: typeof d.id === 'string' ? d.id.slice(0, 100) : uid(),
@@ -411,6 +427,7 @@ function parseMask(input: unknown): Layer['mask'] {
     density: finite(m.density, 0, 1, 1),
     feather: finite(m.feather, 0, 100, 0),
     defaultColor: finite(m.defaultColor, 0, 255, 0),
+    ...(m.composite === true ? { composite: true } : {}),
   }
 }
 export function descendants(doc: EditorDocument, id: string): Set<string> {

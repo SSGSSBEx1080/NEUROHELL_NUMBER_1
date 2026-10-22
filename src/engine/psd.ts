@@ -45,6 +45,7 @@ import type {
   BlendMode,
   EffectContourDefinition,
   EditorDocument,
+  GlobalLightSettings,
   Layer,
   LayerStyles,
   PatternDefinition,
@@ -62,6 +63,17 @@ import {
 import { isBlendIfActive, parseBlendIf } from './blendIf'
 import { parseEffectContour } from './contours'
 import { textAntiAliasMode } from './textAntiAlias'
+import {
+  consistentGlobalLight,
+  globalLightFromPsdResources,
+  hasConflictingLinkedGlobalLight,
+  lightAngleDifference,
+  normalizeGlobalLight,
+  normalizeLightAltitude,
+  psdGlobalAltitudeResource,
+  psdGlobalAngleResource,
+  shadowOffsetForLightAngle,
+} from './globalLight'
 import { makeLayer, newDocument, parseProject, uid } from './document'
 import {
   cacheImage,
@@ -81,6 +93,7 @@ import {
   sameEmbeddedContent,
 } from './psdSource'
 import { validatePsdHeader } from './psdHeader'
+import { psdCompositeMask } from './psdMask'
 export interface CompatibilityReport {
   title: string
   warnings: string[]
@@ -118,6 +131,16 @@ const toCanvas: Record<string, BlendMode> = {
   color: 'color',
   luminosity: 'luminosity',
   'linear dodge': 'lighter',
+  dissolve: 'dissolve',
+  'linear burn': 'linear-burn',
+  'darker color': 'darker-color',
+  'lighter color': 'lighter-color',
+  'vivid light': 'vivid-light',
+  'linear light': 'linear-light',
+  'pin light': 'pin-light',
+  'hard mix': 'hard-mix',
+  subtract: 'subtract',
+  divide: 'divide',
 }
 const toPsd: Record<BlendMode, PsdLayer['blendMode']> = {
   'source-over': 'normal',
@@ -137,6 +160,16 @@ const toPsd: Record<BlendMode, PsdLayer['blendMode']> = {
   color: 'color',
   luminosity: 'luminosity',
   lighter: 'linear dodge',
+  dissolve: 'dissolve',
+  'linear-burn': 'linear burn',
+  'darker-color': 'darker color',
+  'lighter-color': 'lighter color',
+  'vivid-light': 'vivid light',
+  'linear-light': 'linear light',
+  'pin-light': 'pin light',
+  'hard-mix': 'hard mix',
+  subtract: 'subtract',
+  divide: 'divide',
 }
 type PsdBevel = NonNullable<LayerEffectsInfo['bevel']>
 const bevelStyleFromPsd: Record<string, BevelEffectStyle['style']> = {
@@ -185,6 +218,32 @@ export function runCodec<T>(job: object, transfers: Transferable[] = []): Promis
     }
     worker.postMessage(job, transfers)
   })
+}
+export interface PsdCompositePixels {
+  width: number
+  height: number
+  pixels: Uint8ClampedArray
+}
+/** Reads only a PSD's flattened composite for use as a displacement map. */
+export async function readPsdCompositePixels(buffer: ArrayBuffer): Promise<PsdCompositePixels> {
+  if (buffer.byteLength > 80 * 1024 * 1024) throw new Error('PSD/PSB карты: файл до 80 МБ')
+  const copy = buffer.slice(0),
+    result = await runCodec<PsdCompositePixels>({ operation: 'read-composite', buffer: copy }, [
+      copy,
+    ])
+  if (
+    !Number.isInteger(result.width) ||
+    !Number.isInteger(result.height) ||
+    result.width < 1 ||
+    result.height < 1 ||
+    result.pixels.length !== result.width * result.height * 4
+  )
+    throw new Error('Некорректное сводное изображение PSD карты')
+  return {
+    width: result.width,
+    height: result.height,
+    pixels: new Uint8ClampedArray(result.pixels),
+  }
 }
 const hex = (c?: Color, fallback = '#ffffff') =>
   !c || !('r' in c)
@@ -431,6 +490,7 @@ function importStyles(
   src: PsdLayer,
   patternDefinitions?: Map<string, PatternDefinition>,
   warn?: (message: string) => void,
+  globalLight?: GlobalLightSettings,
 ): LayerStyles | undefined {
   const f = src.effects,
     s = defaultStyles()
@@ -474,17 +534,30 @@ function importStyles(
       })
     if (strokes.length) s.strokes = strokes
     const shadowFrom = (shadow: NonNullable<typeof f.dropShadow>[number]) => {
-      const a = ((shadow.angle || 0) * Math.PI) / 180,
-        distance = (shadow.distance?.value || 0) * scale
+      const useGlobalLight = shadow.useGlobalLight === true
+      const storedAngle = Number.isFinite(shadow.angle) ? Number(shadow.angle) : 90
+      if (
+        useGlobalLight &&
+        globalLight &&
+        lightAngleDifference(globalLight.angle, storedAngle) > 0.5
+      )
+        warn?.(
+          'Глобальный угол PSD применён вместо угла, записанного в дескрипторе связанной тени.',
+        )
+      const offset = shadowOffsetForLightAngle(
+        (shadow.distance?.value || 0) * scale,
+        useGlobalLight && globalLight ? globalLight.angle : storedAngle,
+      )
       return {
         enabled: true,
         color: hex(shadow.color, '#000000'),
         opacity: shadow.opacity ?? 0.5,
         blur: Math.min(STYLE_LIMITS.blur, (shadow.size?.value || 0) * scale),
-        x: -Math.cos(a) * distance,
-        y: Math.sin(a) * distance,
+        x: offset.x,
+        y: offset.y,
         contour: contourFromPsd(shadow.contour),
         antialiased: shadow.antialiased === true,
+        useGlobalLight: useGlobalLight ? (true as const) : undefined,
       }
     }
     const shadows = (f.dropShadow || [])
@@ -582,6 +655,18 @@ function importStyles(
       // while MpgS is the separate Contour element (the bevel cross-section).
       // The gloss curve can therefore be trusted only when that element is
       // off. Never reinterpret a possible cross-section as gloss.
+      const bevelUsesGlobalLight = bevel.useGlobalLight !== false
+      const storedBevelAngle = wrapPsdAngle(bevel.angle ?? 120)
+      const storedBevelAltitude = normalizeLightAltitude(bevel.altitude ?? 30)
+      if (
+        bevelUsesGlobalLight &&
+        globalLight &&
+        (lightAngleDifference(globalLight.angle, storedBevelAngle) > 0.5 ||
+          Math.abs(globalLight.altitude - storedBevelAltitude) > 0.5)
+      )
+        warn?.(
+          'Глобальный угол и высота PSD применены к связанной фаске вместо значений её дескриптора.',
+        )
       const canImportGlossContour = bevel.useShape !== true
       if (!canImportGlossContour)
         warn?.(
@@ -595,9 +680,9 @@ function importStyles(
         direction: bevel.direction === 'down' ? 'down' : 'up',
         size: Math.min(STYLE_LIMITS.bevelSize, Math.max(0, (bevel.size?.value || 0) * scale)),
         soften: Math.min(STYLE_LIMITS.bevelSoften, Math.max(0, (bevel.soften?.value || 0) * scale)),
-        angle: wrapPsdAngle(bevel.angle ?? 120),
-        altitude: Math.min(90, Math.max(0, bevel.altitude ?? 30)),
-        useGlobalLight: bevel.useGlobalLight !== false,
+        angle: bevelUsesGlobalLight && globalLight ? globalLight.angle : storedBevelAngle,
+        altitude: bevelUsesGlobalLight && globalLight ? globalLight.altitude : storedBevelAltitude,
+        useGlobalLight: bevelUsesGlobalLight,
         highlightColor: hex(bevel.highlightColor, '#ffffff'),
         highlightBlendMode: highlightBlendMode || 'screen',
         highlightOpacity: bevel.highlightOpacity ?? 0.75,
@@ -692,7 +777,7 @@ function exportStyles(
     angle: (Math.atan2(shadow.y, -shadow.x) * 180) / Math.PI,
     opacity: shadow.opacity,
     blendMode: 'multiply' as const,
-    useGlobalLight: false,
+    useGlobalLight: shadow.useGlobalLight === true,
     antialiased: shadow.antialiased === true,
     contour: contourToPsd(shadow.contour),
   })
@@ -940,6 +1025,7 @@ export async function importPsd(
       'Это старый PSD ФШ777 без проверки целостности XMP. Для защиты от устаревших внутренних данных сохрани новую копию в текущей версии.',
     )
   let doc = newDocument(psd.width, psd.height, name.replace(/\.(psd|psb)$/i, ''), 'transparent')
+  const globalLight = globalLightFromPsdResources(psd.imageResources)
   if (project) {
     const own = parseProject(project)
     if (own.width !== psd.width || own.height !== psd.height)
@@ -973,11 +1059,17 @@ export async function importPsd(
           isolated: src.blendMode !== 'pass through',
           clipping: src.clipping,
           sourceText: src.text?.text?.replace(/\r\n?/g, '\n'),
-          styles: importStyles(src, patternDefinitions, (message) => warnings.add(message)),
+          styles: importStyles(
+            src,
+            patternDefinitions,
+            (message) => warnings.add(message),
+            globalLight,
+          ),
           blendIf: importBlendIf(src),
         })
+        const compositeMask = psdCompositeMask(src)
         const correction =
-          !group && !src.vectorMask && !src.realMask && !src.effects
+          !group && !src.effects && ((!src.vectorMask && !src.realMask) || !!compositeMask)
             ? importAdjustment(src.adjustment)
             : undefined
         if (correction)
@@ -1089,7 +1181,27 @@ export async function importPsd(
           warnings.add(
             'Часть векторных фигур использует неподдерживаемую заливку или логические операции контуров: исходная структура сохраняется, предпросмотр растровый.',
           )
-        if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
+        const useCompositeMask = !!compositeMask && !editableShape
+        if (useCompositeMask) {
+          const m = compositeMask!.data,
+            data = m.imageData!
+          layer.mask = {
+            src: imageSource(data),
+            x: (m.left || 0) + (m.positionRelativeToLayer ? src.left || 0 : 0),
+            y: (m.top || 0) + (m.positionRelativeToLayer ? src.top || 0 : 0),
+            width: data.width,
+            height: data.height,
+            enabled: compositeMask!.enabled,
+            linked: true,
+            defaultColor: m.defaultColor ?? 0,
+            density: 1,
+            feather: 0,
+            composite: true,
+          }
+          warnings.add(
+            'Слой с пиксельной и векторной масками: редактор использует запечённую общую маску PSD (канал -3), поэтому видимое покрытие совпадает после пересчёта. Исходная пара масок сохраняется при экспорте, пока общую маску не изменят.',
+          )
+        } else if (src.mask?.imageData && !(editableShape && src.mask.fromVectorData)) {
           const m = src.mask,
             data = m.imageData!
           layer.mask = {
@@ -1116,8 +1228,8 @@ export async function importPsd(
             'Сложный, вертикальный или неоднородно оформленный текст сохранён с исходными native-данными и пиксельным предпросмотром. «Извлечь текст» создаст редактируемую упрощённую копию; оригинал остаётся в PSD.',
           )
         if (
-          (src.vectorMask && !editableShape) ||
-          src.realMask ||
+          (src.vectorMask && !editableShape && !useCompositeMask) ||
+          (src.realMask && !useCompositeMask) ||
           !toCanvas[src.blendMode || 'normal']
         )
           warnings.add(
@@ -1141,6 +1253,7 @@ export async function importPsd(
         'Декодер сообщил о неподдерживаемых метаданных. Неизменённый оригинал сохраняется целиком; после правок неизвестные блоки могут быть потеряны.',
       )
   }
+  if (globalLight) doc.globalLight = globalLight
   if (!doc.layout && psd.imageResources?.gridAndGuidesInformation) {
     const information = psd.imageResources.gridAndGuidesInformation
     doc.layout = normalizeLayout({
@@ -1601,24 +1714,36 @@ export async function exportPsd(
           old = before?.mask
         const unchangedMask =
           preserved &&
-          raw?.mask &&
+          (raw?.mask || (old?.composite && raw?.realMask)) &&
           old &&
           sameVisual({ ...m, x: 0, y: 0, enabled: true }, { ...old, x: 0, y: 0, enabled: true }) &&
           Math.abs(m.x - old.x - (layer.x - before!.x)) < 0.001 &&
           Math.abs(m.y - old.y - (layer.y - before!.y)) < 0.001
+        if (!unchangedMask && old?.composite) {
+          // The editor mask is the baked pixel+vector product. Once it is
+          // edited, writing it as the sole raster mask is exact; keeping the
+          // stale native vector/real pair would apply the old vector half again.
+          out.realMask = undefined
+          out.vectorMask = undefined
+        }
         if (unchangedMask) {
-          const sourceMask = raw!.mask!,
-            dx = m.x - old!.x + (sourceMask.positionRelativeToLayer ? before!.x : 0),
-            dy = m.y - old!.y + (sourceMask.positionRelativeToLayer ? before!.y : 0)
-          out.mask = {
-            ...sourceMask,
-            disabled: !m.enabled,
-            positionRelativeToLayer: false,
-            left: (sourceMask.left || 0) + dx,
-            top: (sourceMask.top || 0) + dy,
-            right: (sourceMask.right || 0) + dx,
-            bottom: (sourceMask.bottom || 0) + dy,
+          const translateMask = (sourceMask: NonNullable<PsdLayer['mask']>) => {
+            const dx = m.x - old!.x + (sourceMask.positionRelativeToLayer ? before!.x : 0),
+              dy = m.y - old!.y + (sourceMask.positionRelativeToLayer ? before!.y : 0)
+            return {
+              ...sourceMask,
+              disabled: !m.enabled,
+              positionRelativeToLayer: false,
+              left: (sourceMask.left || 0) + dx,
+              top: (sourceMask.top || 0) + dy,
+              right: (sourceMask.right || 0) + dx,
+              bottom: (sourceMask.bottom || 0) + dy,
+            }
           }
+          if (raw!.mask) out.mask = translateMask(raw!.mask)
+          if (raw!.realMask) out.realMask = translateMask(raw!.realMask)
+          if (old?.composite && out.vectorMask)
+            out.vectorMask = { ...out.vectorMask, disable: !m.enabled }
         } else if (out.imageData && (layer.rotation || layer.warp || layer.flipX || layer.flipY)) {
           // PSD raster masks live in document coordinates, unlike our editable local
           // transform. Derive coverage from the same rendered pixels, not an unrotated
@@ -1682,7 +1807,13 @@ export async function exportPsd(
             imageData: c.getContext('2d')!.getImageData(0, 0, c.width, c.height),
           }
         }
-      } else out.mask = undefined
+      } else {
+        out.mask = undefined
+        if (before?.mask?.composite) {
+          out.realMask = undefined
+          out.vectorMask = undefined
+        }
+      }
       if (layer.smart && !preserved) {
         const nested = await exportPsd(layer.smart, false, depth + 1),
           id = uid()
@@ -1746,6 +1877,13 @@ export async function exportPsd(
     })
   }
   children.push(...(await build(undefined, [], children.length)))
+  const exportGlobalLight = doc.globalLight
+    ? normalizeGlobalLight(doc.globalLight)
+    : consistentGlobalLight(doc)
+  if (!doc.globalLight && !exportGlobalLight && hasConflictingLinkedGlobalLight(doc))
+    notes.push(
+      'Глобальный свет документа не записан в ресурсы PSD 1037/1049: включённые связанные тени/фаски старого документа используют разные углы или высоты, поэтому единого честного значения нет. Углы и флаги эффектов сохранены в их дескрипторах; задай «Глобальный свет…», чтобы синхронизировать документ.',
+    )
   const portable = {
     ...doc,
     sourceId: undefined,
@@ -1786,6 +1924,10 @@ export async function exportPsd(
         heightUnit: 'Inches',
       },
       iccUntaggedProfile: doc.colorProfile?.status === 'untagged',
+      globalAngle: exportGlobalLight ? psdGlobalAngleResource(exportGlobalLight.angle) : undefined,
+      globalAltitude: exportGlobalLight
+        ? psdGlobalAltitudeResource(exportGlobalLight.altitude)
+        : undefined,
     },
   }
   if (doc.layout && (!original || !sameNativeLayout(doc.layout, source?.baseline.layout))) {

@@ -699,3 +699,191 @@ test('gradient tool paints the selected library gradient with real alpha', async
   await expect.poll(async () => (await pixel(page, 150, 100))[3]).toBeLessThan(170)
   await expect.poll(async () => (await pixel(page, 265, 100))[3]).toBeLessThan(25)
 })
+
+test('Global Light relights linked shadow and Bevel document-wide, leaves unlinked shadow, and exports PSD resources', async ({
+  page,
+}) => {
+  await ready(page)
+  await blank(page)
+
+  // A: a linked drop shadow plus a linked Bevel. Linking the shadow snaps its
+  // 18 px distance to the effective 120° master and materializes that master.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [50, 45], [125, 115])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  const controls = page.locator('.style-controls')
+  await page.getByRole('button', { name: 'Тень', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('0')
+  await controls.getByRole('slider', { name: 'Непрозрачность тени' }).fill('100')
+  await controls.getByRole('slider', { name: 'Расстояние тени' }).fill('18')
+  await page.getByRole('checkbox', { name: 'Использовать глобальный свет для тени' }).check()
+  await expect(controls.getByRole('slider', { name: 'Угол тени' })).toHaveValue('120')
+  await expect(controls.getByLabel('Сдвиг X', { exact: true })).toBeDisabled()
+  await expect(controls.getByLabel('Сдвиг Y', { exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размер фаски' }).fill('16')
+  await expect(
+    page.getByRole('checkbox', { name: 'Использовать глобальный свет для фаски' }),
+  ).toBeChecked()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // B: the same 18 px shadow distance, deliberately not linked.
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [190, 45], [265, 115])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Тень', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await controls.getByRole('slider', { name: 'Размытие тени' }).fill('0')
+  await controls.getByRole('slider', { name: 'Непрозрачность тени' }).fill('100')
+  await controls.getByRole('slider', { name: 'Угол тени' }).fill('90')
+  await controls.getByRole('slider', { name: 'Расстояние тени' }).fill('18')
+  await expect(
+    page.getByRole('checkbox', { name: 'Использовать глобальный свет для тени' }),
+  ).not.toBeChecked()
+  await expect(controls.getByLabel('Сдвиг X', { exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+
+  // 120° puts A's shadow bottom-right and lights A's top/left bevel slopes.
+  await expect.poll(async () => (await pixel(page, 88, 124))[3]).toBe(255)
+  await expect.poll(async () => (await pixel(page, 40, 80))[3]).toBe(0)
+  await expect.poll(async () => (await pixel(page, 228, 124))[3]).toBe(255)
+  await expect.poll(async () => (await pixel(page, 180, 80))[3]).toBe(0)
+  await expect
+    .poll(async () => (await pixel(page, 58, 80))[0] - (await pixel(page, 117, 80))[0])
+    .toBeGreaterThan(25)
+
+  await page.getByRole('button', { name: 'Слой', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Глобальный свет…', exact: true }).click()
+  await expect(page.getByTestId('global-light-dialog')).toBeVisible()
+  await expect(page.getByRole('slider', { name: 'Угол глобального света' })).toHaveValue('120')
+  await expect(page.getByRole('slider', { name: 'Высота глобального света' })).toHaveValue('30')
+  await page.getByRole('slider', { name: 'Угол глобального света' }).fill('0')
+  await page.getByRole('slider', { name: 'Высота глобального света' }).fill('60')
+  await page.screenshot({ path: 'test-results/global-light-dialog.png' })
+  await page.getByRole('button', { name: 'Применить глобальный свет', exact: true }).click()
+
+  // 0° is light from the right: only A's linked shadow moves left, and A's
+  // right bevel slope becomes the bright one. B's unlinked shadow stays down.
+  await expect.poll(async () => (await pixel(page, 40, 80))[3]).toBe(255)
+  await expect.poll(async () => (await pixel(page, 88, 124))[3]).toBe(0)
+  await expect.poll(async () => (await pixel(page, 228, 124))[3]).toBe(255)
+  await expect.poll(async () => (await pixel(page, 180, 80))[3]).toBe(0)
+  await expect
+    .poll(async () => (await pixel(page, 117, 80))[0] - (await pixel(page, 58, 80))[0])
+    .toBeGreaterThan(20)
+
+  await page.keyboard.press('Control+z')
+  await expect.poll(async () => (await pixel(page, 40, 80))[3]).toBe(0)
+  await expect.poll(async () => (await pixel(page, 88, 124))[3]).toBe(255)
+  await page.keyboard.press('Control+Shift+z')
+  await expect.poll(async () => (await pixel(page, 40, 80))[3]).toBe(255)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  expect(parsed.imageResources?.globalAngle).toBe(0)
+  expect(parsed.imageResources?.globalAltitude).toBe(60)
+  const shadowLayers = (parsed.children || []).filter((l) => l.effects?.dropShadow?.length)
+  expect(shadowLayers).toHaveLength(2)
+  const linked = shadowLayers.find((l) => l.effects?.dropShadow?.[0].useGlobalLight === true)
+  const unlinked = shadowLayers.find((l) => l.effects?.dropShadow?.[0].useGlobalLight === false)
+  expect(linked?.effects?.dropShadow?.[0].angle).toBeCloseTo(0, 1)
+  expect(linked?.effects?.dropShadow?.[0].distance?.value).toBeCloseTo(18, 1)
+  expect(linked?.effects?.bevel).toMatchObject({ useGlobalLight: true, angle: 0, altitude: 60 })
+  expect(unlinked?.effects?.dropShadow?.[0].angle).toBeCloseTo(90, 1)
+  expect(unlinked?.effects?.dropShadow?.[0].distance?.value).toBeCloseTo(18, 1)
+
+  parsed.imageResources = { ...parsed.imageResources, xmpMetadata: undefined }
+  const withoutXmp = readPsd(writePsd(parsed), { useImageData: true, skipThumbnail: true })
+  expect(withoutXmp.imageResources?.globalAngle).toBe(0)
+  expect(withoutXmp.imageResources?.globalAltitude).toBe(60)
+  expect(
+    (withoutXmp.children || []).some((l) => l.effects?.dropShadow?.[0].useGlobalLight === true),
+  ).toBe(true)
+})
+
+test('real effects.psd opens with resource Global Light 132/30 over stored linked 120° descriptors', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+  await page
+    .getByLabel('Открыть изображение или проект')
+    .setInputFiles('tests/fixtures/psd/effects.psd')
+  await expect(page.getByRole('button', { name: 'Отчёт импорта', exact: true })).toBeVisible()
+  await expect(page.locator('.busy-overlay')).toBeHidden()
+
+  await page.getByRole('button', { name: 'Слой', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Глобальный свет…', exact: true }).click()
+  await expect(page.getByTestId('global-light-dialog')).toBeVisible()
+  await expect(page.getByRole('slider', { name: 'Угол глобального света' })).toHaveValue('132')
+  await expect(page.getByRole('slider', { name: 'Высота глобального света' })).toHaveValue('30')
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+
+  await page.locator('.layer-row').filter({ hasText: 'drop shadow' }).click()
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Тень', exact: true }).click()
+  await expect(
+    page.getByRole('checkbox', { name: 'Использовать глобальный свет для тени' }),
+  ).toBeChecked()
+  await expect(page.getByRole('slider', { name: 'Угол тени' })).toHaveValue('132')
+  await expect(page.getByLabel('Сдвиг X', { exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
+
+  await page.locator('.layer-row').filter({ hasText: 'bevel' }).click()
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Фаска и тиснение', exact: true }).click()
+  await expect(
+    page.getByRole('checkbox', { name: 'Использовать глобальный свет для фаски' }),
+  ).toBeChecked()
+  await expect(page.getByRole('slider', { name: 'Угол света фаски' })).toHaveValue('132')
+  await expect(page.getByRole('slider', { name: 'Высота света фаски' })).toHaveValue('30')
+  await page.getByRole('button', { name: 'Закрыть окно', exact: true }).click()
+})
+
+test('pixel-only FX blend modes render in overlays and export natively', async ({ page }) => {
+  await ready(page)
+  await blank(page)
+  await page.getByRole('button', { name: 'Прямоугольник', exact: true }).click()
+  await drag(page, [60, 50], [240, 150])
+  await page.getByLabel('Цвет фигуры').fill('#808080')
+
+  await page.getByRole('button', { name: 'Стиль слоя', exact: false }).click()
+  await page.getByRole('button', { name: 'Градиент', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Стиль градиента наложения').selectOption('radial')
+  await page.getByLabel('Режим наложения градиента').selectOption('subtract')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  // The radial centre is (182,163,255); Subtract from #808080 clips to black.
+  await expect.poll(async () => await pixel(page, 150, 100)).toEqual([0, 0, 0, 255])
+
+  await page.locator('.style-open-button').click()
+  await page.getByRole('button', { name: 'Наложение цвета', exact: false }).click()
+  await page.getByRole('checkbox', { name: 'Включить эффект' }).check()
+  await page.getByLabel('Цвет наложения').fill('#ffffff')
+  await page.getByLabel('Режим наложения цвета').selectOption('dissolve')
+  await page.getByRole('slider', { name: 'Непрозрачность цвета' }).fill('50')
+  await page.getByRole('button', { name: 'Применить стиль', exact: true }).click()
+  const dissolvedRatio = () =>
+    page.locator('[data-testid=editor-canvas]').evaluate((c: HTMLCanvasElement) => {
+      const data = c.getContext('2d')!.getImageData(130, 85, 40, 30).data
+      let whites = 0,
+        total = 0
+      for (let i = 0; i < data.length; i += 4) {
+        total++
+        if (data[i] > 250 && data[i + 1] > 250 && data[i + 2] > 250) whites++
+      }
+      return whites / total
+    })
+  await expect.poll(dissolvedRatio).toBeGreaterThan(0.35)
+  expect(await dissolvedRatio()).toBeLessThan(0.65)
+
+  const bytes = await exportPsd(page)
+  const parsed = readPsd(bytes, { useImageData: true, skipThumbnail: true })
+  const layer = (parsed.children || []).find((l) => l.effects?.gradientOverlay?.length)
+  expect(layer?.effects?.gradientOverlay?.[0].blendMode).toBe('subtract')
+  expect(layer?.effects?.solidFill?.[0].blendMode).toBe('dissolve')
+})
