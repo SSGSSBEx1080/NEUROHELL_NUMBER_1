@@ -621,7 +621,11 @@ export function renderDocument(
     // because its This-Layer ranges are defined on the combined result.
     const paintBackdropEffects = (layer: Layer, target: CanvasRenderingContext2D) => {
       const plan = backdropEffectPlan(layer.styles)
-      if (!plan) {
+      // A warp in this renderer (and in PSD export, a placed transform)
+      // resamples the whole styled surface once. Warping decomposed
+      // components separately changes their resampled shared edges, so a
+      // warped layer keeps the local styled composition.
+      if (!plan || layer.warp) {
         paint(layer, target)
         return
       }
