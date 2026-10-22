@@ -8,6 +8,11 @@ import { exportVectorShape, importVectorShape, translateNativeVector } from './p
 import { rasterBounds, rectPoints, worldBounds } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { inspectNativeLayers, type PsdExportReport } from './psdReport'
+import {
+  parsePsdLayerRecords,
+  patchPsdDeepKnockout,
+  type PsdLayerRecordInfo,
+} from './psdLayerRecords'
 import { DEFAULT_ADJUSTMENTS, MAX_STYLE_INSTANCES } from '../types'
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import {
@@ -46,6 +51,7 @@ import type {
   EffectContourDefinition,
   EditorDocument,
   GlobalLightSettings,
+  KnockoutMode,
   Layer,
   LayerStyles,
   PatternDefinition,
@@ -61,6 +67,7 @@ import {
   registerPatternTile,
 } from './patterns'
 import { isBlendIfActive, parseBlendIf } from './blendIf'
+import { parseKnockout } from './knockout'
 import { parseEffectContour } from './contours'
 import { textAntiAliasMode } from './textAntiAlias'
 import {
@@ -967,6 +974,90 @@ function exportBlendIf(ranges: BlendIfRanges | undefined): PsdBlendingRanges | u
     ranges: [pair('red'), pair('green'), pair('blue')],
   }
 }
+interface RawPsdLayerInfo {
+  byLayer: Map<PsdLayer, PsdLayerRecordInfo>
+  backgroundLayer?: PsdLayer
+}
+/**
+ * Match raw layer records to ag-psd's decoded tree. Flattening replicates
+ * ag-psd's own writer (group end, children, group header) and is accepted
+ * only when every section-divider type lines up; otherwise unique native
+ * layer ids are the fallback. Never map a Deep byte by name alone.
+ */
+function rawPsdLayerInfo(psd: Psd, original: ArrayBuffer): RawPsdLayerInfo {
+  let records: PsdLayerRecordInfo[]
+  try {
+    records = parsePsdLayerRecords(original)
+  } catch {
+    return { byLayer: new Map() }
+  }
+  const flat: (PsdLayer | null)[] = []
+  const flatten = (items: PsdLayer[] = []) => {
+    for (const item of items) {
+      if (item.children) {
+        flat.push(null)
+        flatten(item.children)
+        flat.push(item)
+      } else flat.push(item)
+    }
+  }
+  flatten(psd.children)
+  const byLayer = new Map<PsdLayer, PsdLayerRecordInfo>()
+  const orderMatches =
+    flat.length === records.length &&
+    flat.every((item, index) => {
+      const type = records[index].sectionDividerType
+      if (item === null) return type === 3
+      if (item.children) return type === 1 || type === 2
+      return type === undefined || type === 0
+    })
+  if (orderMatches) {
+    flat.forEach((item, index) => {
+      if (item) byLayer.set(item, records[index])
+    })
+  } else {
+    const counts = new Map<number, number>()
+    for (const record of records)
+      if (record.id !== undefined) counts.set(record.id, (counts.get(record.id) || 0) + 1)
+    const byId = new Map<number, PsdLayerRecordInfo>()
+    for (const record of records)
+      if (record.id !== undefined && counts.get(record.id) === 1) byId.set(record.id, record)
+    for (const item of flat) {
+      if (!item || typeof item.id !== 'number') continue
+      const record = byId.get(item.id)
+      if (record) byLayer.set(item, record)
+    }
+  }
+  const first = records[0]
+  const backgroundLayer =
+    first &&
+    flat[0] &&
+    !first.hasTransparencyChannel &&
+    (first.sectionDividerType === undefined || first.sectionDividerType === 0)
+      ? flat[0]
+      : undefined
+  return { byLayer, backgroundLayer }
+}
+function knockoutFromPsd(
+  src: PsdLayer,
+  record: PsdLayerRecordInfo | undefined,
+  warn: (message: string) => void,
+): KnockoutMode | undefined {
+  if (record?.knockoutByte !== undefined) {
+    if (record.knockoutByte === 1) return 'shallow'
+    if (record.knockoutByte === 2) return 'deep'
+    if (record.knockoutByte === 0) return undefined
+    warn(
+      `PSD: неизвестное значение Knockout ${record.knockoutByte}; слой интерпретирован как Shallow. Исходный файл не перезаписывай без копии.`,
+    )
+    return 'shallow'
+  }
+  if (!src.knockout) return undefined
+  warn(
+    'PSD: глубину включённого Knockout не удалось сопоставить с raw-записью слоя; она интерпретирована как Shallow. Проверь результат перед перезаписью оригинала.',
+  )
+  return 'shallow'
+}
 export const __psdStyleCodecForTests = {
   importStyles,
   exportStyles,
@@ -974,6 +1065,8 @@ export const __psdStyleCodecForTests = {
   gradientToPsd,
   importBlendIf,
   exportBlendIf,
+  rawPsdLayerInfo,
+  knockoutFromPsd,
   patternInfoFromPixels,
 }
 interface EmbeddedImport {
@@ -1035,6 +1128,7 @@ export async function importPsd(
       'Восстановлены редактируемые данные ФШ777 из стандартного XMP-блока. Файл также содержит обычные PSD-слои и объединённое изображение.',
     )
   } else {
+    const rawInfo = rawPsdLayerInfo(psd, original)
     const patternDefinitions = collectPsdPatternDefinitions(psd)
     const visit = async (items: PsdLayer[], parentId?: string, path: number[] = []) => {
       for (const [index, src] of items.entries()) {
@@ -1066,6 +1160,10 @@ export async function importPsd(
             globalLight,
           ),
           blendIf: importBlendIf(src),
+          knockout: knockoutFromPsd(src, rawInfo.byLayer.get(src), (message) =>
+            warnings.add(message),
+          ),
+          background: src === rawInfo.backgroundLayer,
         })
         const compositeMask = psdCompositeMask(src)
         const correction =
@@ -1216,6 +1314,20 @@ export async function importPsd(
             density: m.userMaskDensity ?? 1,
             feather: m.userMaskFeather || 0,
           }
+        }
+        if (layer.kind === 'adjustment') {
+          if (src.knockout)
+            warnings.add(
+              'PSD: Knockout на корректирующем слое не воспроизводится после правок, потому что у коррекции нет собственной формы. Неизменённый оригинал сохраняется побайтно.',
+            )
+          layer.knockout = undefined
+        }
+        if (layer.kind !== 'image' || layer.smart) layer.background = undefined
+        if (layer.background) {
+          layer.knockout = undefined
+          warnings.add(
+            'PSD: нижний слой без канала прозрачности открыт как настоящий Background — стопор Deep Knockout, а не обычный непрозрачный слой.',
+          )
         }
         doc.layers.push(layer)
         if (group) await visit(src.children!, layer.id, sourcePath)
@@ -1436,6 +1548,8 @@ function unchangedContent(a: Layer, b?: Layer) {
     blendMode: 'source-over',
     mask: undefined,
     styles: undefined,
+    knockout: undefined,
+    background: undefined,
     clipping: false,
   })
   return sameVisual(clean(a), clean(b))
@@ -1528,6 +1642,23 @@ export async function exportPsd(
   let editableContents = 0
   const paths = new Map<string, number[]>(),
     linkedFiles = [...(original?.linkedFiles || [])]
+  // Native PSD layer ids are the stable address used to rewrite Deep
+  // Knockout after ag-psd has written its boolean Shallow marker.
+  const usedPsdIds = new Set<number>(),
+    deepPsdLayerIds: number[] = []
+  const allocatePsdId = (preferred?: number) => {
+    let id =
+      preferred !== undefined &&
+      Number.isInteger(preferred) &&
+      preferred >= 1 &&
+      preferred <= 0xffffffff &&
+      !usedPsdIds.has(preferred)
+        ? preferred
+        : 1
+    while (usedPsdIds.has(id)) id++
+    usedPsdIds.add(id)
+    return id
+  }
   const patternRegistry = createPsdPatternRegistry(original)
   await patternRegistry.build(doc)
   if (collectPatternDefinitions(doc).length)
@@ -1648,6 +1779,10 @@ export async function exportPsd(
                       }
                     : undefined,
                 sourcePath: undefined,
+                // Advanced blending against the outer document stays on the
+                // placed layer; it must not be applied again inside contents.
+                knockout: undefined,
+                background: undefined,
                 src: undefined,
                 smart: undefined,
               },
@@ -1709,6 +1844,11 @@ export async function exportPsd(
       }
       if (!preserved || !sameVisual(layer.blendIf, before?.blendIf))
         out.blendingRanges = exportBlendIf(layer.blendIf)
+      out.id = allocatePsdId(before ? raw?.id : undefined)
+      const knockout =
+        layer.kind === 'adjustment' || layer.background ? undefined : parseKnockout(layer.knockout)
+      out.knockout = knockout ? true : undefined
+      if (knockout === 'deep') deepPsdLayerIds.push(out.id)
       if (layer.mask && !embeddedAppearance) {
         const m = layer.mask,
           old = before?.mask
@@ -1870,6 +2010,7 @@ export async function exportPsd(
     ctx.fillStyle = doc.background
     ctx.fillRect(0, 0, c.width, c.height)
     children.push({
+      id: allocatePsdId(),
       name: 'Фон холста',
       imageData: ctx.getImageData(0, 0, c.width, c.height),
       left: 0,
@@ -1877,6 +2018,25 @@ export async function exportPsd(
     })
   }
   children.push(...(await build(undefined, [], children.length)))
+  const bottomLayer = doc.layers.find((l) => !l.parentId)
+  const flaggedBackground =
+    bottomLayer?.background && bottomLayer.kind === 'image' && !bottomLayer.smart
+      ? bottomLayer
+      : undefined
+  const nativeBackground =
+    doc.background !== 'transparent' || !!(flaggedBackground && !flaggedBackground.mask)
+  if (flaggedBackground?.mask)
+    notes.push(
+      'PSD: Background-слой с маской нельзя записать как настоящий Background без канала прозрачности; в пересобранном файле он останется обычным нижним слоем, поэтому Deep в другом редакторе может пройти сквозь него.',
+    )
+  if (flaggedBackground && doc.background !== 'transparent')
+    notes.push(
+      'PSD: в документе одновременно есть цвет холста и отдельный Background-слой. В PSD настоящим Background записан цвет холста, а отмеченный слой остался обычным поверх него; для экспорта именно его как Background сделай холст прозрачным.',
+    )
+  if (doc.layers.some((l) => l.kind !== 'adjustment' && parseKnockout(l.knockout)))
+    notes.push(
+      'Knockout записан нативно в PSD (knko: Shallow=1, Deep=2). Merged-изображение пересчитано движком ФШ777; Adobe может иначе сгладить края и эффекты у границы формы.',
+    )
   const exportGlobalLight = doc.globalLight
     ? normalizeGlobalLight(doc.globalLight)
     : consistentGlobalLight(doc)
@@ -1968,6 +2128,7 @@ export async function exportPsd(
     psd,
     psb,
     project: portable,
+    noBackground: !nativeBackground,
   })
   let bytes =
     source && appearanceUnchanged
@@ -1978,6 +2139,20 @@ export async function exportPsd(
       bytes,
       doc.colorProfile?.status === 'untagged' ? undefined : buildIccProfile(WORKING_RGB_PROFILE),
     )
+  if (deepPsdLayerIds.length) bytes = patchPsdDeepKnockout(bytes, deepPsdLayerIds)
+  if (nativeBackground) {
+    try {
+      const first = parsePsdLayerRecords(bytes)[0]
+      if (!first || first.hasTransparencyChannel)
+        summary.warnings.push(
+          'PSD: нижний Background не удалось записать без канала прозрачности (в слое есть прозрачные пиксели или маска), поэтому другой редактор может не считать его стопором Deep Knockout.',
+        )
+    } catch {
+      summary.warnings.push(
+        'PSD: не удалось проверить канал прозрачности нижнего Background после записи; проверь Deep Knockout в принимающем редакторе.',
+      )
+    }
+  }
   if (bytes.byteLength > 80 * 1024 * 1024)
     throw new Error(
       'PSD превышает 80 МБ — лимит повторного открытия. Уменьши изображения или объедини слои.',

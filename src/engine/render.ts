@@ -15,6 +15,7 @@ import {
   prepareDocumentPatterns,
 } from './patterns'
 import { applyBlendIf, isBlendIfActive } from './blendIf'
+import { parseKnockout, punchKnockoutPixels } from './knockout'
 import { compositePixelBlend, isPixelBlendMode } from './blendModes'
 import { applyTextAntiAliasToPixels, textAntiAliasMode } from './textAntiAlias'
 import { textDecorationMetrics } from './textDecorations'
@@ -379,6 +380,23 @@ export function renderDocument(
       1,
       Math.min(4096, Math.ceil(doc.height * Math.hypot(transform.c, transform.d))),
     )
+  // A sibling-list frame is needed only when a knockout in its subtree can
+  // ask for the backdrop that existed before that list started. Mark every
+  // ancestor list so Deep can also be inherited across pass-through groups.
+  const layersById = new Map(doc.layers.map((layer) => [layer.id, layer]))
+  const knockoutFrames = new Set<string>()
+  for (const layer of doc.layers) {
+    if (layer.kind === 'adjustment' || layer.opacity <= 0 || !parseKnockout(layer.knockout))
+      continue
+    let parentKey = layer.parentId || ''
+    const seen = new Set<string>()
+    for (;;) {
+      knockoutFrames.add(parentKey)
+      if (!parentKey || seen.has(parentKey)) break
+      seen.add(parentKey)
+      parentKey = layersById.get(parentKey)?.parentId || ''
+    }
+  }
   let allocated = 0
   const surface = () => {
     const bytes = width * height * 4
@@ -397,9 +415,33 @@ export function renderDocument(
     allocated -= c.width * c.height * 4
     c.width = c.height = 1
   }
-  const draw = (target: CanvasRenderingContext2D, parentId?: string, depth = 0) => {
+  const draw = (
+    target: CanvasRenderingContext2D,
+    parentId?: string,
+    depth = 0,
+    inheritedDeep?: HTMLCanvasElement,
+  ) => {
     if (depth > 12) throw new Error('Превышена поддерживаемая вложенность групп')
     const siblings = doc.layers.filter((l) => l.parentId === parentId)
+    const copyTargetInto = (canvas: HTMLCanvasElement, source: CanvasRenderingContext2D) => {
+      const x = canvas.getContext('2d')!
+      x.save()
+      x.setTransform(1, 0, 0, 1, 0, 0)
+      x.clearRect(0, 0, width, height)
+      x.restore()
+      x.drawImage(source.canvas, 0, 0, doc.width, doc.height)
+    }
+    let ownBoundary: HTMLCanvasElement | undefined
+    let frame: { shallow: HTMLCanvasElement; deep: HTMLCanvasElement; root: boolean } | undefined
+    if (knockoutFrames.has(parentId || '')) {
+      ownBoundary = surface()
+      copyTargetInto(ownBoundary, target)
+      frame = {
+        shallow: ownBoundary,
+        deep: inheritedDeep || ownBoundary,
+        root: parentId === undefined && depth === 0,
+      }
+    }
     const paint = (layer: Layer, out: CanvasRenderingContext2D) => {
       if (layer.kind === 'adjustment') {
         renderCorrection(out, layer, layer.mask ? images.get(layer.mask.src) : undefined)
@@ -412,7 +454,9 @@ export function renderDocument(
           !hasStyles(layer.styles) &&
           Object.values(layer.adjustments).every((v) => v === 0)
         ) {
-          draw(out, layer.id, depth + 1)
+          // A truly pass-through group is not a Deep boundary. Its Shallow
+          // frame is captured by the nested draw from the current target.
+          draw(out, layer.id, depth + 1, frame?.deep)
           return
         }
         const c = surface()
@@ -539,51 +583,171 @@ export function renderDocument(
         release(surf)
       }
     }
-    for (let i = 0; i < siblings.length; i++) {
-      const layer = siblings[i]
-      if (layer.clipping) continue // Orphan clipping layers have no visible base.
-      let end = i + 1
-      while (siblings[end]?.clipping) end++
-      if (!layer.visible || layer.id === hideId) {
-        i = end - 1
-        continue
+    const boundaryFor = (layer: Layer) =>
+      !frame ? undefined : layer.knockout === 'deep' ? frame.deep : frame.shallow
+    const punchTarget = (
+      target: CanvasRenderingContext2D,
+      boundary: HTMLCanvasElement,
+      shape: HTMLCanvasElement,
+      layer: Layer,
+    ) => {
+      const back = surface()
+      try {
+        const bx = back.getContext('2d', { willReadFrequently: true })!
+        bx.drawImage(target.canvas, 0, 0, doc.width, doc.height)
+        const current = bx.getImageData(0, 0, width, height)
+        const boundaryPixels = boundary
+          .getContext('2d', { willReadFrequently: true })!
+          .getImageData(0, 0, width, height)
+        const shapePixels = shape
+          .getContext('2d', { willReadFrequently: true })!
+          .getImageData(0, 0, width, height)
+        punchKnockoutPixels(current.data, boundaryPixels.data, shapePixels.data, {
+          opacity: layer.opacity,
+          fillOpacity: layer.styles?.fillOpacity ?? 1,
+          normalBlend: layer.blendMode === 'source-over',
+        })
+        bx.putImageData(current, 0, 0)
+        target.save()
+        target.globalAlpha = 1
+        target.globalCompositeOperation = 'copy'
+        target.drawImage(back, 0, 0, doc.width, doc.height)
+        target.restore()
+      } finally {
+        release(back)
       }
-      // A non-clipped adjustment is not a clipping base. Following clipped layers
-      // have no pixel alpha to clip to; Photoshop likewise treats it as an empty base.
-      if (layer.kind === 'adjustment') {
-        paint(layer, target)
-        i = end - 1
-        continue
-      }
-      if (end === i + 1) {
+    }
+    const paintKnockoutShape = (layer: Layer, out: CanvasRenderingContext2D) =>
+      paint(
+        {
+          ...layer,
+          opacity: 1,
+          blendMode: 'source-over',
+          blendIf: undefined,
+          knockout: undefined,
+          // Knockout follows the layer's own pre-Fill coverage. Exterior
+          // effects are not part of that shape; the real paint below still
+          // draws them over both the punched area and untouched backdrop.
+          styles: undefined,
+        },
+        out,
+      )
+    const paintKnockout = (
+      layer: Layer,
+      target: CanvasRenderingContext2D,
+      boundary?: HTMLCanvasElement,
+    ) => {
+      if (!boundary || layer.opacity <= 0 || !parseKnockout(layer.knockout)) {
         if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
           paintBlendIf(layer, target)
         else paint(layer, target)
-        continue
+        return
       }
-      // A clipping stack shares the base alpha and base opacity. Normalizing before
-      // blending avoids applying that alpha twice at semi-transparent edges.
-      const base = surface()
-      let group: HTMLCanvasElement | undefined
+      const shape = surface()
       try {
-        paint({ ...layer, opacity: 1, blendMode: 'source-over' }, base.getContext('2d')!)
-        group = surface()
-        const x = group.getContext('2d', { willReadFrequently: true })!
-        x.drawImage(base, 0, 0, doc.width, doc.height)
-        const pixels = x.getImageData(0, 0, width, height)
-        for (let p = 3; p < pixels.data.length; p += 4) if (pixels.data[p]) pixels.data[p] = 255
-        x.putImageData(pixels, 0, 0)
-        for (let j = i + 1; j < end; j++)
-          if (siblings[j].visible && siblings[j].id !== hideId) paint(siblings[j], x)
-        x.globalCompositeOperation = 'destination-in'
-        x.drawImage(base, 0, 0, doc.width, doc.height)
-        if (isBlendIfActive(layer.blendIf)) applyRanges(group, target, layer.blendIf!)
-        compositeSurfaceMode(group, target, layer)
+        paintKnockoutShape(layer, shape.getContext('2d')!)
+        punchTarget(target, boundary, shape, layer)
+        if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
+          paintBlendIf(layer, target)
+        else paint(layer, target)
       } finally {
-        release(base)
-        if (group) release(group)
+        release(shape)
       }
-      i = end - 1
+    }
+    try {
+      for (let i = 0; i < siblings.length; i++) {
+        const layer = siblings[i]
+        if (layer.clipping) continue // Orphan clipping layers have no visible base.
+        let end = i + 1
+        while (siblings[end]?.clipping) end++
+        if (!layer.visible || layer.id === hideId) {
+          i = end - 1
+          continue
+        }
+        // A non-clipped adjustment is not a clipping base. Following clipped layers
+        // have no pixel alpha to clip to; Photoshop likewise treats it as an empty base.
+        if (layer.kind === 'adjustment') {
+          paint(layer, target)
+          i = end - 1
+          continue
+        }
+        if (end === i + 1) {
+          if (parseKnockout(layer.knockout)) paintKnockout(layer, target, boundaryFor(layer))
+          else if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
+            paintBlendIf(layer, target)
+          else paint(layer, target)
+          // A flagged PSD Background is the document backdrop itself. Refresh
+          // the root boundary only after that actual bottom layer has painted;
+          // an ordinary opaque bottom layer remains punchable.
+          if (frame?.root && layer.background && siblings[0] === layer)
+            copyTargetInto(frame.shallow, target)
+          continue
+        }
+        // A clipping stack shares the base alpha and base opacity. Normalizing before
+        // blending avoids applying that alpha twice at semi-transparent edges.
+        const base = surface()
+        let group: HTMLCanvasElement | undefined
+        let clipBoundary: HTMLCanvasElement | undefined
+        try {
+          paint({ ...layer, opacity: 1, blendMode: 'source-over' }, base.getContext('2d')!)
+          group = surface()
+          const x = group.getContext('2d', { willReadFrequently: true })!
+          x.drawImage(base, 0, 0, doc.width, doc.height)
+          const pixels = x.getImageData(0, 0, width, height)
+          for (let p = 3; p < pixels.data.length; p += 4) if (pixels.data[p]) pixels.data[p] = 255
+          x.putImageData(pixels, 0, 0)
+          if (
+            siblings
+              .slice(i + 1, end)
+              .some(
+                (l) =>
+                  l.visible &&
+                  l.id !== hideId &&
+                  l.kind !== 'adjustment' &&
+                  parseKnockout(l.knockout),
+              )
+          ) {
+            clipBoundary = surface()
+            copyTargetInto(clipBoundary, x)
+          }
+          if (frame?.root && layer.background && siblings[0] === layer) {
+            // For later Deep layers the backdrop is this Background base alone,
+            // not the clipped content that will be painted into it.
+            copyTargetInto(frame.shallow, target)
+            compositeSurfaceMode(base, frame.shallow.getContext('2d')!, layer)
+          }
+          for (let j = i + 1; j < end; j++) {
+            const clipped = siblings[j]
+            if (!clipped.visible || clipped.id === hideId) continue
+            // This renderer always blends clipped layers as a group. That
+            // grouped clipping boundary stops both Shallow and Deep at the
+            // normalized base, matching Photoshop's default advanced option.
+            if (clipped.kind !== 'adjustment' && parseKnockout(clipped.knockout) && clipBoundary)
+              paintKnockout(clipped, x, clipBoundary)
+            else paint(clipped, x)
+          }
+          x.globalCompositeOperation = 'destination-in'
+          x.drawImage(base, 0, 0, doc.width, doc.height)
+          if (parseKnockout(layer.knockout) && frame) {
+            const shape = surface()
+            try {
+              paintKnockoutShape(layer, shape.getContext('2d')!)
+              punchTarget(target, boundaryFor(layer)!, shape, layer)
+            } finally {
+              release(shape)
+            }
+          }
+          if (isBlendIfActive(layer.blendIf)) applyRanges(group, target, layer.blendIf!)
+          compositeSurfaceMode(group, target, layer)
+        } finally {
+          release(base)
+          if (group) release(group)
+          if (clipBoundary) release(clipBoundary)
+        }
+        i = end - 1
+      }
+    } finally {
+      if (ownBoundary) release(ownBoundary)
     }
   }
   draw(ctx)

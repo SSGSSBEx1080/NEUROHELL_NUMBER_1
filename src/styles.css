@@ -1482,6 +1482,9 @@ kbd {
 .layer-row.selected .layer-name {
   color: #e9d9f5;
 }
+.layer-name.background-layer {
+  font-style: italic;
+}
 .layer-lock {
   padding: 0;
   color: #766380;

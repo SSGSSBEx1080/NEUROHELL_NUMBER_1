@@ -35,6 +35,7 @@ import {
   copyStyleToClipboard,
   readStyleClipboard,
   readStyleClipboardBlendIf,
+  readStyleClipboardKnockout,
 } from '../engine/libraries'
 import { defaultStyles, hasStyles, styleEffectSummary } from '../engine/styles'
 import { synchronizeStylesToGlobalLight } from '../engine/globalLight'
@@ -140,6 +141,7 @@ export function LayersPanel({
     contextRef = useRef<HTMLDivElement>(null)
   const layer = editor.document.layers.find((l) => l.id === selectedId),
     contextual = editor.document.layers.find((l) => l.id === context?.id),
+    bottomTopLevel = editor.document.layers.find((l) => !l.parentId),
     rows = visibleLayerRows(editor.document)
   const rename = (l: Layer) => {
     setRenaming(l.id)
@@ -475,16 +477,26 @@ export function LayersPanel({
                     }}
                   />
                 ) : (
-                  <span className="layer-name" onDoubleClick={() => rename(l)} title={l.name}>
+                  <span
+                    className={`layer-name ${l.background ? 'background-layer' : ''}`}
+                    onDoubleClick={() => rename(l)}
+                    title={l.background ? `${l.name} · Background (стопор Deep Knockout)` : l.name}
+                  >
                     {l.name}
                   </span>
                 )}
-                {(hasStyles(l.styles) || isBlendIfActive(l.blendIf)) && (
+                {(hasStyles(l.styles) || isBlendIfActive(l.blendIf) || l.knockout) && (
                   <button
                     className="layer-fx-mark"
                     aria-label={`Стиль слоя: ${l.name}`}
                     title={
-                      [styleEffectSummary(l.styles), isBlendIfActive(l.blendIf) ? 'Blend If' : '']
+                      [
+                        styleEffectSummary(l.styles),
+                        isBlendIfActive(l.blendIf) ? 'Blend If' : '',
+                        l.knockout
+                          ? `Knockout: ${l.knockout === 'deep' ? 'глубокое' : 'мелкое'}`
+                          : '',
+                      ]
                         .filter(Boolean)
                         .join(' · ') || 'Эффекты слоя'
                     }
@@ -642,9 +654,17 @@ export function LayersPanel({
               Стиль слоя…
             </button>
             <button
-              disabled={!hasStyles(contextual.styles) && !isBlendIfActive(contextual.blendIf)}
+              disabled={
+                !hasStyles(contextual.styles) &&
+                !isBlendIfActive(contextual.blendIf) &&
+                !contextual.knockout
+              }
               onClick={() => {
-                copyStyleToClipboard(contextual.styles || defaultStyles(), contextual.blendIf)
+                copyStyleToClipboard(
+                  contextual.styles || defaultStyles(),
+                  contextual.blendIf,
+                  contextual.knockout,
+                )
                 setContext(null)
               }}
             >
@@ -665,6 +685,7 @@ export function LayersPanel({
                         ? synchronizeStylesToGlobalLight(pasted, editor.document.globalLight)
                         : pasted,
                       blendIf: readStyleClipboardBlendIf(),
+                      knockout: contextual.background ? undefined : readStyleClipboardKnockout(),
                     },
                     'Вставка стиля слоя',
                   )
@@ -677,12 +698,14 @@ export function LayersPanel({
             <button
               disabled={
                 contextual.locked ||
-                (!hasStyles(contextual.styles) && !isBlendIfActive(contextual.blendIf))
+                (!hasStyles(contextual.styles) &&
+                  !isBlendIfActive(contextual.blendIf) &&
+                  !contextual.knockout)
               }
               onClick={() => {
                 editor.patchLayer(
                   context.id,
-                  { styles: undefined, blendIf: undefined },
+                  { styles: undefined, blendIf: undefined, knockout: undefined },
                   'Очистка стиля слоя',
                 )
                 setContext(null)
@@ -691,6 +714,56 @@ export function LayersPanel({
               <Eraser size={14} />
               Очистить стиль
             </button>
+            {contextual.background ? (
+              <button
+                disabled={contextual.locked}
+                onClick={() => {
+                  editor.patchLayer(
+                    context.id,
+                    { background: undefined },
+                    'Background в обычный слой',
+                  )
+                  setContext(null)
+                }}
+              >
+                <Layers size={14} />
+                Background → обычный слой
+              </button>
+            ) : contextual === bottomTopLevel &&
+              contextual.kind === 'image' &&
+              !contextual.smart &&
+              !contextual.mask ? (
+              <button
+                disabled={contextual.locked}
+                onClick={() => {
+                  editor.change(
+                    (d) => ({
+                      ...d,
+                      // Do not silently change pixels outside/through a
+                      // semi-transparent bottom layer by deleting the canvas
+                      // colour. PSD export warns when both are present.
+                      layers: d.layers.map((l) =>
+                        l.id === context.id
+                          ? {
+                              ...l,
+                              background: true,
+                              knockout: undefined,
+                              blendMode: 'source-over',
+                              opacity: 1,
+                              clipping: false,
+                            }
+                          : { ...l, background: undefined },
+                      ),
+                    }),
+                    'Background-слой',
+                  )
+                  setContext(null)
+                }}
+              >
+                <Layers size={14} />
+                Сделать Background (стопор Deep)
+              </button>
+            ) : null}
             <div className="menu-divider" />
             <button
               disabled={contextual.locked}

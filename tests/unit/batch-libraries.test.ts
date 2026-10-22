@@ -12,6 +12,7 @@ import {
   parseGradientLibraryFile,
   parseStyleLibraryFile,
   readStyleClipboard,
+  readStyleClipboardKnockout,
   serializeGradientLibrary,
   serializeStyleLibrary,
 } from '../../src/engine/libraries'
@@ -74,9 +75,12 @@ describe('gradient and style libraries', () => {
   })
 
   it('copies a style through the internal clipboard as an independent clone', () => {
-    copyStyleToClipboard(builtinStylePresets[0].styles)
+    copyStyleToClipboard(builtinStylePresets[0].styles, undefined, 'deep')
     const pasted = readStyleClipboard()!
     pasted.strokes[0].size = 99
     expect(readStyleClipboard()!.strokes[0].size).toBe(2)
+    expect(readStyleClipboardKnockout()).toBe('deep')
+    copyStyleToClipboard(builtinStylePresets[0].styles)
+    expect(readStyleClipboardKnockout()).toBeUndefined()
   })
 })

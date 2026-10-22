@@ -1,7 +1,8 @@
 import { parseGradientDefinition, type GradientDefinition } from './gradientRamp'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
-import type { BlendIfRanges, LayerStyles } from '../types'
+import { parseKnockout } from './knockout'
+import type { BlendIfRanges, KnockoutMode, LayerStyles } from '../types'
 
 export const GRADIENT_LIBRARY_KEY = 'fsh777-gradient-library'
 export const STYLE_LIBRARY_KEY = 'fsh777-style-library'
@@ -108,12 +109,22 @@ export const serializeStyleLibrary = (items: StylePreset[]) =>
 
 let clipboard: LayerStyles | undefined
 let clipboardBlendIf: BlendIfRanges | undefined
+let clipboardKnockout: KnockoutMode | undefined
 let clipboardLoaded = false
-export function copyStyleToClipboard(styles: LayerStyles, blendIf?: BlendIfRanges) {
+export function copyStyleToClipboard(
+  styles: LayerStyles,
+  blendIf?: BlendIfRanges,
+  knockout?: KnockoutMode,
+) {
   clipboard = structuredClone(styles)
   clipboardBlendIf = blendIf ? structuredClone(blendIf) : undefined
+  clipboardKnockout = parseKnockout(knockout)
   clipboardLoaded = true
-  write(STYLE_CLIPBOARD_KEY, { styles: clipboard, blendIf: clipboardBlendIf })
+  write(STYLE_CLIPBOARD_KEY, {
+    styles: clipboard,
+    blendIf: clipboardBlendIf,
+    knockout: clipboardKnockout,
+  })
 }
 function loadStyleClipboard() {
   if (clipboardLoaded) return
@@ -122,10 +133,11 @@ function loadStyleClipboard() {
   // Older payloads stored the bare LayerStyles object; new ones wrap it with Blend If.
   const wrapped =
     raw && typeof raw === 'object' && !Array.isArray(raw) && 'styles' in raw
-      ? (raw as { styles?: unknown; blendIf?: unknown })
+      ? (raw as { styles?: unknown; blendIf?: unknown; knockout?: unknown })
       : undefined
   clipboard = normalizeStyles(wrapped ? wrapped.styles : raw)
   clipboardBlendIf = wrapped ? parseBlendIf(wrapped.blendIf) : undefined
+  clipboardKnockout = wrapped ? parseKnockout(wrapped.knockout) : undefined
 }
 export function readStyleClipboard(): LayerStyles | undefined {
   loadStyleClipboard()
@@ -134,6 +146,10 @@ export function readStyleClipboard(): LayerStyles | undefined {
 export function readStyleClipboardBlendIf(): BlendIfRanges | undefined {
   loadStyleClipboard()
   return clipboardBlendIf ? structuredClone(clipboardBlendIf) : undefined
+}
+export function readStyleClipboardKnockout(): KnockoutMode | undefined {
+  loadStyleClipboard()
+  return clipboardKnockout
 }
 
 /** Built-in presets; every parameter below is rendered and exported to PSD. */

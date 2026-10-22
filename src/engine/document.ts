@@ -9,6 +9,7 @@ import { parseTextFrame } from './textLayout'
 import { homography, invertMatrix, project, validQuad } from './projection'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
+import { parseKnockout } from './knockout'
 import { parseDocumentColorProfile, workingDocumentColorProfile } from './colorProfiles'
 import { parseTextAntiAlias } from './textAntiAlias'
 import { parseGlobalLight, synchronizeStylesToGlobalLight } from './globalLight'
@@ -285,6 +286,9 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       textFrame: l.kind === 'text' ? parseTextFrame(l.textFrame) : undefined,
       styles: l.kind === 'adjustment' ? undefined : normalizeStyles(l.styles),
       blendIf: parseBlendIf(l.blendIf),
+      knockout:
+        l.kind === 'adjustment' || l.background === true ? undefined : parseKnockout(l.knockout),
+      background: l.kind === 'image' && l.background === true ? true : undefined,
       sourceText: typeof l.sourceText === 'string' ? l.sourceText.slice(0, 20000) : undefined,
       color: isColor(l.color) ? l.color : '#ffffff',
       src: typeof l.src === 'string' ? l.src : undefined,
@@ -383,6 +387,14 @@ export function parseProject(input: unknown, depth = 0): EditorDocument {
       }
       parent = p.parentId
     }
+  }
+  // Photoshop has at most one Background layer, and it is the bottom
+  // top-level pixel layer. Drop stale flags elsewhere instead of letting an
+  // ordinary moved/grouped layer silently become a Deep-knockout stopper.
+  const bottomLayer = layers.find((l) => !l.parentId)
+  for (const layer of layers) {
+    if (layer !== bottomLayer || layer.kind !== 'image') layer.background = undefined
+    if (layer.background) layer.knockout = undefined
   }
   return {
     layout: d.layout ? normalizeLayout(d.layout) : undefined,

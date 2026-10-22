@@ -94,6 +94,8 @@ export interface ShapePath {
 }
 /** Photoshop's grayscale type anti-aliasing modes; LCD/platform modes are not faked. */
 export type TextAntiAliasMode = 'none' | 'sharp' | 'crisp' | 'strong' | 'smooth'
+/** Photoshop Knockout depth. Undefined is the default “None”. */
+export type KnockoutMode = 'shallow' | 'deep'
 export interface Layer {
   id: string
   name: string
@@ -144,6 +146,14 @@ export interface Layer {
   strokeWidth?: number
   warp?: Quad
   blendIf?: BlendIfRanges
+  /** Advanced-blending Knockout; undefined means None. Not used by adjustments. */
+  knockout?: KnockoutMode
+  /**
+   * True Photoshop Background-layer identity (a bottom pixel layer with no
+   * transparency channel), as opposed to the document colour in
+   * `EditorDocument.background` or an ordinary opaque bottom layer.
+   */
+  background?: boolean
   textScaleX?: number
   textBaseline?: 'top' | 'alphabetic'
   textFrame?: TextFrame

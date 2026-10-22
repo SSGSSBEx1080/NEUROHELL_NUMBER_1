@@ -24,6 +24,7 @@ import {
   type BlendMode,
   type EffectContourDefinition,
   type GlobalLightSettings,
+  type KnockoutMode,
   type Layer,
   type LayerStyles,
 } from '../types'
@@ -34,6 +35,7 @@ import {
   isBlendIfActive,
   parseBlendIf,
 } from '../engine/blendIf'
+import { parseKnockout } from '../engine/knockout'
 import {
   STYLE_LIMITS,
   defaultGradientOverlayGradient,
@@ -75,6 +77,7 @@ import {
   parseStyleLibraryFile,
   readStyleClipboard,
   readStyleClipboardBlendIf,
+  readStyleClipboardKnockout,
   saveStyleLibrary,
   serializeStyleLibrary,
   type StylePreset,
@@ -153,7 +156,7 @@ const sections: { id: Tab; name: string; note: string }[] = [
   {
     id: 'blendIf',
     name: 'Параметры наложения',
-    note: 'Blend If: показывать пиксели по яркости/каналам этого и нижнего слоя. Разделённые пороги дают плавный переход.',
+    note: 'Advanced Blending: Knockout пробивает промежуточные слои формой этого слоя, а Blend If показывает пиксели по яркости/каналам этого и нижнего стека.',
   },
   {
     id: 'library',
@@ -161,14 +164,19 @@ const sections: { id: Tab; name: string; note: string }[] = [
     note: 'Пресеты, копирование между слоями и масштаб эффектов.',
   },
 ]
-const enabledOf = (styles: LayerStyles, tab: Tab, blendIf?: BlendIfRanges): number => {
+const enabledOf = (
+  styles: LayerStyles,
+  tab: Tab,
+  blendIf?: BlendIfRanges,
+  knockout?: KnockoutMode,
+): number => {
   if (tab === 'glow') return styles.glow.enabled ? 1 : 0
   if (tab === 'innerGlow') return styles.innerGlow.enabled ? 1 : 0
   if (tab === 'satin') return styles.satin.enabled ? 1 : 0
   if (tab === 'pattern') return styles.pattern.enabled ? 1 : 0
   if (tab === 'bevel') return styles.bevel.enabled ? 1 : 0
   if (tab === 'library') return 0
-  if (tab === 'blendIf') return isBlendIfActive(blendIf) ? 1 : 0
+  if (tab === 'blendIf') return isBlendIfActive(blendIf) || knockout ? 1 : 0
   return styles[tab].filter((e) => e.enabled).length
 }
 
@@ -477,7 +485,8 @@ export function LayerStyleDialog({
   onApply: (
     styles: LayerStyles,
     blendIf: BlendIfRanges | undefined,
-    globalLight?: GlobalLightSettings,
+    globalLight: GlobalLightSettings | undefined,
+    knockout: KnockoutMode | undefined,
   ) => void
 }) {
   const [light, setLight] = useState<GlobalLightSettings>(() => normalizeGlobalLight(globalLight))
@@ -490,6 +499,9 @@ export function LayerStyleDialog({
   })
   const [blendIf, setBlendIf] = useState<BlendIfRanges>(
     () => parseBlendIf(layer.blendIf) || defaultBlendIf(),
+  )
+  const [knockout, setKnockout] = useState<'none' | KnockoutMode>(
+    () => parseKnockout(layer.knockout) || 'none',
   )
   const [blendChannel, setBlendChannel] = useState<BlendIfChannelKey>('gray')
   const patchQuad = (side: 'source' | 'under', index: number, value: number) =>
@@ -753,7 +765,7 @@ export function LayerStyleDialog({
       <div className="style-layout">
         <nav className="style-navigation">
           {sections.map((s) => {
-            const count = enabledOf(styles, s.id, blendIf)
+            const count = enabledOf(styles, s.id, blendIf, parseKnockout(knockout))
             return (
               <button
                 key={s.id}
@@ -1485,6 +1497,29 @@ export function LayerStyleDialog({
           )}
           {tab === 'blendIf' && (
             <div data-testid="blend-if-controls">
+              <span className="panel-subtitle">Knockout (выбивание)</span>
+              <Select
+                aria-label="Knockout"
+                disabled={layer.kind === 'adjustment' || layer.background}
+                value={knockout}
+                onChange={(e) => setKnockout(e.target.value as 'none' | KnockoutMode)}
+              >
+                <option value="none">Нет</option>
+                <option value="shallow">Мелкое (Shallow)</option>
+                <option value="deep">Глубокое (Deep)</option>
+              </Select>
+              <p className="panel-note">
+                {layer.background
+                  ? 'Background является стопором и сам не пробивает стек.'
+                  : layer.kind === 'adjustment'
+                    ? 'У корректирующего слоя нет собственной формы, поэтому Knockout недоступен.'
+                    : knockout === 'shallow'
+                      ? 'Shallow останавливается на нижней границе ближайшей группы или clipping-базы; без них — на Background/прозрачности документа.'
+                      : knockout === 'deep'
+                        ? 'Deep проходит pass-through группы до Background/прозрачности; изолированные группы и clipping-стек его останавливают.'
+                        : 'Форма слоя будет пробивать промежуточные слои. Убери Fill или смени режим смешивания, чтобы увидеть отверстие; общая непрозрачность задаёт силу.'}
+              </p>
+              <span className="panel-subtitle">Blend If</span>
               <Select
                 aria-label="Канал Blend If"
                 value={blendChannel}
@@ -1644,7 +1679,7 @@ export function LayerStyleDialog({
                 <button
                   className="compact-button"
                   onClick={() => {
-                    copyStyleToClipboard(styles, parseBlendIf(blendIf))
+                    copyStyleToClipboard(styles, parseBlendIf(blendIf), parseKnockout(knockout))
                     setMessage('Стиль скопирован. Открой стили другого слоя и вставь.')
                   }}
                 >
@@ -1657,6 +1692,7 @@ export function LayerStyleDialog({
                     if (pasted) {
                       setStyles(adoptStyles(pasted))
                       setBlendIf(readStyleClipboardBlendIf() || defaultBlendIf())
+                      setKnockout(readStyleClipboardKnockout() || 'none')
                       setSelected(0)
                       setMessage('Стиль вставлен в предпросмотр.')
                     } else setMessage('Буфер стилей пуст.')
@@ -1727,7 +1763,7 @@ export function LayerStyleDialog({
         <button
           className="text-button"
           onClick={() => {
-            copyStyleToClipboard(styles, parseBlendIf(blendIf))
+            copyStyleToClipboard(styles, parseBlendIf(blendIf), parseKnockout(knockout))
             setMessage('Стиль скопирован.')
           }}
         >
@@ -1741,6 +1777,7 @@ export function LayerStyleDialog({
               normalizeStyles(styles) || styles,
               parseBlendIf(blendIf),
               lightTouched ? normalizeGlobalLight(light) : undefined,
+              layer.kind === 'adjustment' || layer.background ? undefined : parseKnockout(knockout),
             )
           }
         >

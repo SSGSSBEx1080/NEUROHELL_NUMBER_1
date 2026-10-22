@@ -73,7 +73,10 @@ function changeSteps(before: Layer, after: Layer, label: string): ActionStep[] {
       continue
     }
     values[key] =
-      after[key as keyof Layer] ?? (key === 'styles' || key === 'textFrame' ? null : undefined)
+      after[key as keyof Layer] ??
+      (key === 'styles' || key === 'textFrame' || key === 'blendIf' || key === 'knockout'
+        ? null
+        : undefined)
   }
   const properties = parseActionProperties(values)
   if (changed.some((k) => geometry.includes(k)))
