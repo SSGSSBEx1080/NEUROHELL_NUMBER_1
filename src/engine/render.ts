@@ -8,7 +8,7 @@ import { clearTextLayoutCache, textFont } from './textLayout'
 import { isOriginalAppearance, originalSource, prepareSource, sameVisual } from './psdSource'
 import { clearWarpCache, renderWarped } from './warpRenderer'
 import { sourceDimensions, bundledImageSource } from './imageSafety'
-import { clearStyleCache, hasStyles, renderStyled } from './styles'
+import { backdropEffectPlan, clearStyleCache, hasStyles, renderStyled } from './styles'
 import {
   collectPatternDefinitions,
   documentPatternsReady,
@@ -583,6 +583,55 @@ export function renderDocument(
         release(surf)
       }
     }
+    // Exterior Drop Shadow / Outer Glow / Stroke instances with a non-Normal
+    // mode cannot be baked into the layer's isolated styled surface: their
+    // backdrop is whatever has already been painted under this layer in the
+    // current sibling list (document, isolated group or clipping group).
+    // Render each managed effect as a Normal doc-grid component, composite
+    // it here with its real mode, and paint the remaining main layer between
+    // behind-effects and strokes. Blend If keeps the older flattened path
+    // because its This-Layer ranges are defined on the combined result.
+    const paintBackdropEffects = (layer: Layer, target: CanvasRenderingContext2D) => {
+      const plan = backdropEffectPlan(layer.styles)
+      if (!plan) {
+        paint(layer, target)
+        return
+      }
+      const paintComponent = (styles: NonNullable<Layer['styles']>, mode: Layer['blendMode']) => {
+        const surf = surface()
+        try {
+          paint(
+            {
+              ...layer,
+              styles,
+              opacity: 1,
+              blendMode: 'source-over',
+              blendIf: undefined,
+              knockout: undefined,
+            },
+            surf.getContext('2d')!,
+          )
+          compositeSurfaceMode(surf, target, { ...layer, blendMode: mode })
+        } finally {
+          release(surf)
+        }
+      }
+      for (const component of plan.behind) paintComponent(component.styles, component.mode)
+      paint({ ...layer, styles: plan.main }, target)
+      for (const component of plan.strokes) paintComponent(component.styles, component.mode)
+    }
+    const paintWithBackdrop = (layer: Layer, target: CanvasRenderingContext2D) => {
+      if (backdropEffectPlan(layer.styles) && !isBlendIfActive(layer.blendIf))
+        paintBackdropEffects(layer, target)
+      else paint(layer, target)
+    }
+    const paintAdvanced = (layer: Layer, target: CanvasRenderingContext2D) => {
+      if (backdropEffectPlan(layer.styles) && !isBlendIfActive(layer.blendIf))
+        paintBackdropEffects(layer, target)
+      else if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
+        paintBlendIf(layer, target)
+      else paint(layer, target)
+    }
     const boundaryFor = (layer: Layer) =>
       !frame ? undefined : layer.knockout === 'deep' ? frame.deep : frame.shallow
     const punchTarget = (
@@ -638,18 +687,14 @@ export function renderDocument(
       boundary?: HTMLCanvasElement,
     ) => {
       if (!boundary || layer.opacity <= 0 || !parseKnockout(layer.knockout)) {
-        if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
-          paintBlendIf(layer, target)
-        else paint(layer, target)
+        paintAdvanced(layer, target)
         return
       }
       const shape = surface()
       try {
         paintKnockoutShape(layer, shape.getContext('2d')!)
         punchTarget(target, boundary, shape, layer)
-        if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
-          paintBlendIf(layer, target)
-        else paint(layer, target)
+        paintAdvanced(layer, target)
       } finally {
         release(shape)
       }
@@ -673,9 +718,7 @@ export function renderDocument(
         }
         if (end === i + 1) {
           if (parseKnockout(layer.knockout)) paintKnockout(layer, target, boundaryFor(layer))
-          else if (isBlendIfActive(layer.blendIf) || isPixelBlendMode(layer.blendMode))
-            paintBlendIf(layer, target)
-          else paint(layer, target)
+          else paintAdvanced(layer, target)
           // A flagged PSD Background is the document backdrop itself. Refresh
           // the root boundary only after that actual bottom layer has painted;
           // an ordinary opaque bottom layer remains punchable.
@@ -724,7 +767,7 @@ export function renderDocument(
             // normalized base, matching Photoshop's default advanced option.
             if (clipped.kind !== 'adjustment' && parseKnockout(clipped.knockout) && clipBoundary)
               paintKnockout(clipped, x, clipBoundary)
-            else paint(clipped, x)
+            else paintWithBackdrop(clipped, x)
           }
           x.globalCompositeOperation = 'destination-in'
           x.drawImage(base, 0, 0, doc.width, doc.height)

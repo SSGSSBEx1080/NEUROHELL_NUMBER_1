@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyOverlayBlendToPixels } from '../../src/engine/overlayBlend'
-import { normalizeStyles } from '../../src/engine/styles'
+import { backdropEffectPlan, normalizeStyles } from '../../src/engine/styles'
 
 const pixels = (width: number, height: number, values: number[]) => ({
   width,
@@ -100,5 +100,44 @@ describe('overlay effect blend modes', () => {
     expect(legacy.overlays[0].blendMode).toBeUndefined()
     expect(legacy.gradients[0].blendMode).toBeUndefined()
     expect(legacy.pattern.blendMode).toBeUndefined()
+  })
+
+  it('validates Shadow/Glow/Stroke modes and decomposes only non-Normal exterior effects', () => {
+    const parsed = normalizeStyles({
+      strokes: [
+        { enabled: true, blendMode: 'subtract' },
+        { enabled: true, blendMode: 'source-over' },
+      ],
+      shadows: [{ enabled: true }, { enabled: true, blendMode: 'source-over' }],
+      innerShadows: [{ enabled: true, blendMode: 'screen' }],
+      glow: { enabled: true },
+      innerGlow: { enabled: true, blendMode: 'multiply' },
+    })!
+    expect(parsed.strokes[0].blendMode).toBe('subtract')
+    expect(parsed.shadows[0].blendMode).toBeUndefined() // effective Multiply
+    expect(parsed.innerShadows[0].blendMode).toBe('screen')
+    expect(parsed.glow.blendMode).toBeUndefined() // effective Screen
+    expect(parsed.innerGlow.blendMode).toBe('multiply')
+    expect(
+      normalizeStyles({ strokes: [{ enabled: true, blendMode: 'bogus' }] })!.strokes[0].blendMode,
+    ).toBeUndefined()
+
+    const plan = backdropEffectPlan(parsed)!
+    expect(plan.behind.map((component) => component.mode)).toEqual(['multiply', 'screen'])
+    expect(plan.strokes.map((component) => component.mode)).toEqual(['subtract'])
+    expect(plan.main.shadows.map((effect) => effect.enabled)).toEqual([false, true])
+    expect(plan.main.glow.enabled).toBe(false)
+    expect(plan.main.strokes.map((effect) => effect.enabled)).toEqual([false, true])
+    // The plan is identity-cached so styled component surfaces survive frames.
+    expect(backdropEffectPlan(parsed)).toBe(plan)
+    expect(
+      backdropEffectPlan(
+        normalizeStyles({
+          strokes: [{ enabled: true, blendMode: 'source-over' }],
+          shadows: [{ enabled: true, blendMode: 'source-over' }],
+          glow: { enabled: true, blendMode: 'source-over' },
+        }),
+      ),
+    ).toBeUndefined()
   })
 })

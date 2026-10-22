@@ -344,6 +344,8 @@ export interface StrokeEffectStyle {
   gradientDither?: boolean
   position: 'outside' | 'inside' | 'center'
   opacity: number
+  /** Undefined is the legacy/PSD Normal stroke blend. */
+  blendMode?: BlendMode
 }
 export interface EffectContourPoint {
   /** PSD shaping-curve coordinates, 0..255 on both axes. */
@@ -361,6 +363,8 @@ export interface ShadowEffectStyle {
   x: number
   y: number
   opacity: number
+  /** Undefined is Photoshop's default Multiply for drop/inner shadows. */
+  blendMode?: BlendMode
   contour?: EffectContourDefinition
   antialiased?: boolean
   /** Undefined/false is a local offset; true follows the document Global Light angle. */
@@ -371,6 +375,8 @@ export interface GlowEffectStyle {
   color: string
   blur: number
   opacity: number
+  /** Undefined is Photoshop's default Screen for outer/inner glow. */
+  blendMode?: BlendMode
   contour?: EffectContourDefinition
   antialiased?: boolean
   /** Contour domain fraction: 0.5 is the neutral PSD default in this engine. */

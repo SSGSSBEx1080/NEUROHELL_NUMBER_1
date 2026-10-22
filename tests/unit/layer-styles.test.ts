@@ -15,17 +15,48 @@ describe('multi-instance layer styles in native PSD effects', () => {
     const styles = normalizeStyles({
       fillOpacity: 0.35,
       strokes: [
-        { enabled: true, size: 2, color: '#ffffff', position: 'outside', opacity: 1 },
+        {
+          enabled: true,
+          size: 2,
+          color: '#ffffff',
+          position: 'outside',
+          opacity: 1,
+          blendMode: 'subtract',
+        },
         { enabled: true, size: 6, color: '#ff5c39', position: 'outside', opacity: 0.8 },
         { enabled: true, size: 12, color: '#152546', position: 'outside', opacity: 0.6 },
       ],
       shadows: [
-        { enabled: true, color: '#000000', blur: 4, x: 3, y: 5, opacity: 0.7 },
+        {
+          enabled: true,
+          color: '#000000',
+          blur: 4,
+          x: 3,
+          y: 5,
+          opacity: 0.7,
+          blendMode: 'screen',
+        },
         { enabled: true, color: '#2244aa', blur: 12, x: -8, y: 10, opacity: 0.4 },
       ],
-      innerShadows: [{ enabled: true, color: '#000000', blur: 5, x: 0, y: 3, opacity: 0.5 }],
-      glow: { enabled: true, color: '#b6a3ff', blur: 9, opacity: 0.6 },
-      innerGlow: { enabled: true, color: '#ffffff', blur: 7, opacity: 0.5 },
+      innerShadows: [
+        {
+          enabled: true,
+          color: '#000000',
+          blur: 5,
+          x: 0,
+          y: 3,
+          opacity: 0.5,
+          blendMode: 'overlay',
+        },
+      ],
+      glow: { enabled: true, color: '#b6a3ff', blur: 9, opacity: 0.6, blendMode: 'multiply' },
+      innerGlow: {
+        enabled: true,
+        color: '#ffffff',
+        blur: 7,
+        opacity: 0.5,
+        blendMode: 'dissolve',
+      },
       overlays: [{ enabled: true, color: '#123456', opacity: 0.25, blendMode: 'multiply' }],
       gradients: [
         {
@@ -63,8 +94,13 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(layer.effects?.innerShadow).toHaveLength(1)
     expect(layer.effects?.solidFill).toHaveLength(1)
     expect(layer.effects?.solidFill?.[0].blendMode).toBe('multiply')
+    expect(layer.effects?.stroke?.map((s) => s.blendMode)).toEqual(['subtract', 'normal', 'normal'])
+    expect(layer.effects?.dropShadow?.map((s) => s.blendMode)).toEqual(['screen', 'multiply'])
+    expect(layer.effects?.innerShadow?.[0].blendMode).toBe('overlay')
     expect(layer.effects?.outerGlow?.enabled).toBe(true)
+    expect(layer.effects?.outerGlow?.blendMode).toBe('multiply')
     expect(layer.effects?.innerGlow?.enabled).toBe(true)
+    expect(layer.effects?.innerGlow?.blendMode).toBe('dissolve')
     const gradient = layer.effects?.gradientOverlay?.[0]
     expect(gradient?.blendMode).toBe('screen')
     expect(gradient?.reverse).toBe(true)
@@ -81,8 +117,13 @@ describe('multi-instance layer styles in native PSD effects', () => {
     expect(back.shadows).toHaveLength(2)
     expect(back.shadows[0].x).toBeCloseTo(3, 0)
     expect(back.shadows[0].y).toBeCloseTo(5, 0)
+    expect(back.strokes.map((s) => s.blendMode)).toEqual(['subtract', 'source-over', 'source-over'])
+    expect(back.shadows.map((s) => s.blendMode)).toEqual(['screen', 'multiply'])
     expect(back.innerShadows).toHaveLength(1)
+    expect(back.innerShadows[0].blendMode).toBe('overlay')
+    expect(back.glow.blendMode).toBe('multiply')
     expect(back.innerGlow.enabled).toBe(true)
+    expect(back.innerGlow.blendMode).toBe('dissolve')
     expect(back.overlays[0].blendMode).toBe('multiply')
     expect(back.gradients[0].blendMode).toBe('screen')
     expect(back.gradients[0].gradient.stops).toHaveLength(3)

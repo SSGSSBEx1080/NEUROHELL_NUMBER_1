@@ -536,11 +536,12 @@ function importStyles(
             gradientDither: stroke.gradient?.dither === true ? true : undefined,
             position: stroke.position || ('outside' as const),
             opacity: stroke.opacity ?? 1,
+            blendMode: overlayBlendModeFromPsd(stroke.blendMode, 'обводки', warn),
           },
         ]
       })
     if (strokes.length) s.strokes = strokes
-    const shadowFrom = (shadow: NonNullable<typeof f.dropShadow>[number]) => {
+    const shadowFrom = (shadow: NonNullable<typeof f.dropShadow>[number], inner = false) => {
       const useGlobalLight = shadow.useGlobalLight === true
       const storedAngle = Number.isFinite(shadow.angle) ? Number(shadow.angle) : 90
       if (
@@ -559,6 +560,11 @@ function importStyles(
         enabled: true,
         color: hex(shadow.color, '#000000'),
         opacity: shadow.opacity ?? 0.5,
+        blendMode: overlayBlendModeFromPsd(
+          shadow.blendMode,
+          inner ? 'внутренней тени' : 'тени',
+          warn,
+        ),
         blur: Math.min(STYLE_LIMITS.blur, (shadow.size?.value || 0) * scale),
         x: offset.x,
         y: offset.y,
@@ -570,12 +576,12 @@ function importStyles(
     const shadows = (f.dropShadow || [])
       .filter((v) => v.enabled !== false)
       .slice(0, MAX_STYLE_INSTANCES)
-      .map(shadowFrom)
+      .map((shadow) => shadowFrom(shadow))
     if (shadows.length) s.shadows = shadows
     const innerShadows = (f.innerShadow || [])
       .filter((v) => v.enabled !== false)
       .slice(0, MAX_STYLE_INSTANCES)
-      .map(shadowFrom)
+      .map((shadow) => shadowFrom(shadow, true))
     if (innerShadows.length) s.innerShadows = innerShadows
     if (f.outerGlow?.enabled !== false && f.outerGlow)
       s.glow = {
@@ -583,6 +589,7 @@ function importStyles(
         color: hex(f.outerGlow.color),
         blur: Math.min(STYLE_LIMITS.blur, (f.outerGlow.size?.value || 0) * scale),
         opacity: f.outerGlow.opacity ?? 0.5,
+        blendMode: overlayBlendModeFromPsd(f.outerGlow.blendMode, 'внешнего свечения', warn),
         contour: contourFromPsd(f.outerGlow.contour),
         antialiased: f.outerGlow.antialiased === true,
         range: glowRangeFromPsd(f.outerGlow.range),
@@ -593,6 +600,7 @@ function importStyles(
         color: hex(f.innerGlow.color),
         blur: Math.min(STYLE_LIMITS.blur, (f.innerGlow.size?.value || 0) * scale),
         opacity: f.innerGlow.opacity ?? 0.5,
+        blendMode: overlayBlendModeFromPsd(f.innerGlow.blendMode, 'внутреннего свечения', warn),
         contour: contourFromPsd(f.innerGlow.contour),
         antialiased: f.innerGlow.antialiased === true,
         range: glowRangeFromPsd(f.innerGlow.range),
@@ -746,7 +754,7 @@ function exportStyles(
             fillType: 'pattern' as const,
             size: px(stroke.size),
             opacity: stroke.opacity,
-            blendMode: 'normal' as const,
+            blendMode: toPsd[stroke.blendMode || 'source-over'],
             pattern: patternRef(stroke.pattern),
           }
         : stroke.fill === 'gradient' && stroke.gradient
@@ -756,7 +764,7 @@ function exportStyles(
               fillType: 'gradient' as const,
               size: px(stroke.size),
               opacity: stroke.opacity,
-              blendMode: 'normal' as const,
+              blendMode: toPsd[stroke.blendMode || 'source-over'],
               gradient: {
                 ...gradientToPsd(stroke.gradient),
                 style: stroke.gradientShape,
@@ -773,7 +781,7 @@ function exportStyles(
               size: px(stroke.size),
               color: rgb(stroke.color),
               opacity: stroke.opacity,
-              blendMode: 'normal' as const,
+              blendMode: toPsd[stroke.blendMode || 'source-over'],
             },
     )
   const shadowTo = (shadow: LayerStyles['shadows'][number]) => ({
@@ -783,7 +791,7 @@ function exportStyles(
     distance: px(Math.hypot(shadow.x, shadow.y)),
     angle: (Math.atan2(shadow.y, -shadow.x) * 180) / Math.PI,
     opacity: shadow.opacity,
-    blendMode: 'multiply' as const,
+    blendMode: toPsd[shadow.blendMode || 'multiply'],
     useGlobalLight: shadow.useGlobalLight === true,
     antialiased: shadow.antialiased === true,
     contour: contourToPsd(shadow.contour),
@@ -798,7 +806,7 @@ function exportStyles(
       color: rgb(s.glow.color),
       size: px(s.glow.blur),
       opacity: s.glow.opacity,
-      blendMode: 'screen',
+      blendMode: toPsd[s.glow.blendMode || 'screen'],
       antialiased: s.glow.antialiased === true,
       contour: contourToPsd(s.glow.contour),
       range: glowRangeFromPsd(s.glow.range),
@@ -809,7 +817,7 @@ function exportStyles(
       color: rgb(s.innerGlow.color),
       size: px(s.innerGlow.blur),
       opacity: s.innerGlow.opacity,
-      blendMode: 'screen',
+      blendMode: toPsd[s.innerGlow.blendMode || 'screen'],
       source: 'edge',
       antialiased: s.innerGlow.antialiased === true,
       contour: contourToPsd(s.innerGlow.contour),

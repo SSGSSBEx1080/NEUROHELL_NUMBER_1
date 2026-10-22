@@ -888,6 +888,11 @@ export function LayerStyleDialog({
                 <option value="center">По центру</option>
                 <option value="inside">Внутри</option>
               </Select>
+              <EffectBlendModeSelect
+                label="Режим наложения обводки"
+                value={stroke.blendMode}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
+              />
               <Select
                 aria-label="Тип заливки обводки"
                 value={stroke.fill}
@@ -985,6 +990,10 @@ export function LayerStyleDialog({
                 suffix="%"
                 onChange={(v) => patchItem({ opacity: v / 100, enabled: true })}
               />
+              <p className="panel-note">
+                Наружная и центральная обводка смешивается с уже нарисованным стеком документа,
+                внутренняя — с содержимым слоя. На холсте результат виден после применения.
+              </p>
             </>
           )}
           {(tab === 'shadows' || tab === 'innerShadows') && (
@@ -993,6 +1002,15 @@ export function LayerStyleDialog({
                 label="Цвет тени"
                 value={shadow.color}
                 onChange={(color) => patchItem({ color, enabled: true })}
+              />
+              <EffectBlendModeSelect
+                label={
+                  tab === 'innerShadows'
+                    ? 'Режим наложения внутренней тени'
+                    : 'Режим наложения тени'
+                }
+                value={shadow.blendMode || 'multiply'}
+                onChange={(blendMode) => patchItem({ blendMode, enabled: true })}
               />
               <Slider
                 label="Размытие тени"
@@ -1047,7 +1065,10 @@ export function LayerStyleDialog({
               <p className="panel-note">
                 {shadowLinked
                   ? 'Направление задаёт глобальный свет документа: X/Y вычисляются из угла и расстояния. Изменение угла здесь при применении обновит все связанные тени и фаски документа.'
-                  : 'Угол и расстояние — полярная запись тех же сдвигов X/Y только для этой тени. 90° — свет сверху, тень уходит вниз.'}
+                  : 'Угол и расстояние — полярная запись тех же сдвигов X/Y только для этой тени. 90° — свет сверху, тень уходит вниз.'}{' '}
+                {tab === 'innerShadows'
+                  ? 'Внутренняя тень смешивается с содержимым слоя.'
+                  : 'Внешняя тень смешивается с фоном документа под слоем.'}
               </p>
               <Slider
                 label="Непрозрачность тени"
@@ -1072,6 +1093,15 @@ export function LayerStyleDialog({
                 label="Цвет свечения"
                 value={styles[tab].color}
                 onChange={(color) => patchSingle(tab, { color, enabled: true })}
+              />
+              <EffectBlendModeSelect
+                label={
+                  tab === 'innerGlow'
+                    ? 'Режим наложения внутреннего свечения'
+                    : 'Режим наложения свечения'
+                }
+                value={styles[tab].blendMode || 'screen'}
+                onChange={(blendMode) => patchSingle(tab, { blendMode, enabled: true })}
               />
               <Slider
                 label="Радиус свечения"
@@ -1100,7 +1130,10 @@ export function LayerStyleDialog({
               />
               <p className="panel-note">
                 Диапазон ниже 50% делает спад жёстче и шире, выше 50% — короче и мягче. 50% — вся
-                кривая на обычном спаде свечения.
+                кривая на обычном спаде свечения.{' '}
+                {tab === 'innerGlow'
+                  ? 'Внутреннее свечение смешивается с содержимым слоя.'
+                  : 'Внешнее свечение смешивается с фоном документа под слоем.'}
               </p>
             </>
           )}
