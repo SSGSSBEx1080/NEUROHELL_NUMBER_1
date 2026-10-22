@@ -747,3 +747,14 @@ Photoshop и XnConvert по-прежнему не запускались; Electr
     снижалось: те же точные пиксельные ожидания этапов 29–30. Проверки:
     unit 443/443 и целевой браузерный набор
     `effect-blends + knockout + styles-ultra + psd` 28/28.
+
+Итоговые ворота этапов 29–31: TypeScript чист, unit 443/443 (53 файла),
+desktop security 12/12, полный production browser 166/166, независимый
+psd-tools interop — 35 fixture-кейсов, format:check и git diff --check.
+Первый финальный interop-прогон поймал максимальную ошибку 37/255 у
+warped smart-object: декомпозиция этапа 30 передискретизировала тень и
+содержимое по отдельности. Warp-слои возвращены к одной локальной
+styled-поверхности (как их placed-трансформация в PSD), после чего
+повторный полный прогон дал для этого кейса 0,8941/255 на нативных
+слоях psd-tools. Photoshop и XnConvert по-прежнему не запускались;
+Electron smoke остаётся проверкой Windows CI.
