@@ -1,6 +1,7 @@
 import { isOriginalAppearance } from './psdSource'
 import type { EditorDocument } from '../types'
 import { renderDocument } from './render'
+import { parseKnockout } from './knockout'
 /** One pending frame, latest state wins; never draw twice for a single pointer update. */
 export class FrameScheduler {
   private frame = 0
@@ -35,7 +36,17 @@ export class SceneRenderer {
     if (
       index <= 0 ||
       (doc.sourceId && isOriginalAppearance(doc)) ||
-      doc.layers.some((l) => l.parentId || l.kind === 'group' || l.clipping)
+      doc.layers.some(
+        (l) =>
+          l.parentId ||
+          l.kind === 'group' ||
+          l.clipping ||
+          // Knockout is deliberately non-local: a layer in the suffix can
+          // replace pixels that were produced by the cached prefix, and its
+          // boundary is the backdrop before the whole sibling list. A split
+          // render would make that boundary the already-painted prefix.
+          (l.visible && l.kind !== 'adjustment' && l.opacity > 0 && parseKnockout(l.knockout)),
+      )
     ) {
       renderDocument(ctx, doc, overrides)
       return

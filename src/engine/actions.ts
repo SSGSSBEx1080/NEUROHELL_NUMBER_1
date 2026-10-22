@@ -250,7 +250,7 @@ export function runAction(
           ].some((k) => k in c.values)
         )
           throw new Error('Шаг фигуры требует векторный слой')
-        const { styles, textFrame, blendIf, ...values } = c.values
+        const { styles, textFrame, blendIf, knockout, ...values } = c.values
         next = {
           ...next,
           ...values,
@@ -265,6 +265,7 @@ export function runAction(
             : {}),
           ...(textFrame !== undefined ? { textFrame: textFrame || undefined } : {}),
           ...(blendIf !== undefined ? { blendIf: blendIf || undefined } : {}),
+          ...(knockout !== undefined ? { knockout: knockout || undefined } : {}),
         }
         break
       }

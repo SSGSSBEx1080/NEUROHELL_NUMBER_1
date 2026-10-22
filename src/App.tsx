@@ -1047,6 +1047,7 @@ export default function App() {
       locked: false,
       parentId: undefined,
       sourcePath: undefined,
+      background: undefined,
       styles:
         doc.globalLight && clipboardLayer.styles
           ? synchronizeStylesToGlobalLight(clipboardLayer.styles, doc.globalLight)
@@ -3448,7 +3449,7 @@ export default function App() {
             globalLight={effectiveGlobalLight(doc)}
             hasExplicitGlobalLight={!!doc.globalLight}
             onClose={closeModal}
-            onApply={(styles, blendIf, globalLight) => {
+            onApply={(styles, blendIf, globalLight, knockout) => {
               if (globalLight) {
                 const nextLight = normalizeGlobalLight(globalLight)
                 editor.change((current) => {
@@ -3456,12 +3457,12 @@ export default function App() {
                   const withStyle = {
                     ...current,
                     layers: current.layers.map((layer) =>
-                      layer.id === selected.id ? { ...layer, styles, blendIf } : layer,
+                      layer.id === selected.id ? { ...layer, styles, blendIf, knockout } : layer,
                     ),
                   }
                   return synchronizeDocumentGlobalLight(withStyle, nextLight)
                 }, 'Стиль слоя и глобальный свет')
-              } else editor.patchLayer(selected.id, { styles, blendIf }, 'Стиль слоя')
+              } else editor.patchLayer(selected.id, { styles, blendIf, knockout }, 'Стиль слоя')
               closeModal()
             }}
           />

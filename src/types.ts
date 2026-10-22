@@ -94,6 +94,8 @@ export interface ShapePath {
 }
 /** Photoshop's grayscale type anti-aliasing modes; LCD/platform modes are not faked. */
 export type TextAntiAliasMode = 'none' | 'sharp' | 'crisp' | 'strong' | 'smooth'
+/** Photoshop Knockout depth. Undefined is the default “None”. */
+export type KnockoutMode = 'shallow' | 'deep'
 export interface Layer {
   id: string
   name: string
@@ -144,6 +146,14 @@ export interface Layer {
   strokeWidth?: number
   warp?: Quad
   blendIf?: BlendIfRanges
+  /** Advanced-blending Knockout; undefined means None. Not used by adjustments. */
+  knockout?: KnockoutMode
+  /**
+   * True Photoshop Background-layer identity (a bottom pixel layer with no
+   * transparency channel), as opposed to the document colour in
+   * `EditorDocument.background` or an ordinary opaque bottom layer.
+   */
+  background?: boolean
   textScaleX?: number
   textBaseline?: 'top' | 'alphabetic'
   textFrame?: TextFrame
@@ -334,6 +344,8 @@ export interface StrokeEffectStyle {
   gradientDither?: boolean
   position: 'outside' | 'inside' | 'center'
   opacity: number
+  /** Undefined is the legacy/PSD Normal stroke blend. */
+  blendMode?: BlendMode
 }
 export interface EffectContourPoint {
   /** PSD shaping-curve coordinates, 0..255 on both axes. */
@@ -351,6 +363,8 @@ export interface ShadowEffectStyle {
   x: number
   y: number
   opacity: number
+  /** Undefined is Photoshop's default Multiply for drop/inner shadows. */
+  blendMode?: BlendMode
   contour?: EffectContourDefinition
   antialiased?: boolean
   /** Undefined/false is a local offset; true follows the document Global Light angle. */
@@ -361,6 +375,8 @@ export interface GlowEffectStyle {
   color: string
   blur: number
   opacity: number
+  /** Undefined is Photoshop's default Screen for outer/inner glow. */
+  blendMode?: BlendMode
   contour?: EffectContourDefinition
   antialiased?: boolean
   /** Contour domain fraction: 0.5 is the neutral PSD default in this engine. */

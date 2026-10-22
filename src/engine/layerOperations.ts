@@ -25,6 +25,8 @@ export function duplicateLayers(doc: EditorDocument, id: string, offset = 24) {
   const copies = source.map((l) => ({
     ...l,
     id: ids.get(l.id)!,
+    // A duplicate is never the document's Photoshop Background layer.
+    background: undefined,
     parentId: l.parentId ? ids.get(l.parentId) || l.parentId : undefined,
     name: l.id === id ? `${l.name} — копия` : l.name,
     x: l.x + (l.kind === 'adjustment' ? 0 : offset),

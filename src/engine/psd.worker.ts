@@ -10,7 +10,7 @@ self.onmessage = async (
   e: MessageEvent<
     | { operation: 'read'; buffer: ArrayBuffer }
     | { operation: 'read-composite'; buffer: ArrayBuffer }
-    | { operation: 'write'; psd: Psd; psb: boolean; project?: unknown }
+    | { operation: 'write'; psd: Psd; psb: boolean; project?: unknown; noBackground?: boolean }
   >,
 ) => {
   try {
@@ -76,7 +76,7 @@ self.onmessage = async (
       prepareAdjustmentRecords(e.data.psd.children || [])
       const buffer = writePsd(e.data.psd, {
         psb: e.data.psb,
-        noBackground: true,
+        noBackground: e.data.noBackground !== false,
         invalidateTextLayers: false,
         trimImageData: false,
         compress: false,

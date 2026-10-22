@@ -1,5 +1,5 @@
 import { rasterBounds } from './layerGeometry'
-import { PIXEL_BLEND_MODES } from './blendModes'
+import { PIXEL_BLEND_MODES, compositePixelBlend, isPixelBlendMode } from './blendModes'
 import {
   applyGradientStops,
   gradientRgbaCss,
@@ -253,6 +253,7 @@ function parseStroke(input: unknown): StrokeEffectStyle {
         ? v.position
         : d.position,
     opacity: percent(v.opacity, d.opacity),
+    blendMode: optionalBlendMode(v.blendMode),
   }
 }
 function parseShadow(input: unknown, inner = false): ShadowEffectStyle {
@@ -266,6 +267,7 @@ function parseShadow(input: unknown, inner = false): ShadowEffectStyle {
     x: num(v.x, d.x, -STYLE_LIMITS.offset, STYLE_LIMITS.offset),
     y: num(v.y, d.y, -STYLE_LIMITS.offset, STYLE_LIMITS.offset),
     opacity: percent(v.opacity, d.opacity),
+    blendMode: optionalBlendMode(v.blendMode),
     contour: parseEffectContour(v.contour, d.contour),
     antialiased: v.antialiased === true,
     useGlobalLight: v.useGlobalLight === true ? true : undefined,
@@ -280,6 +282,7 @@ function parseGlow(input: unknown, inner = false): GlowEffectStyle {
     color: color(v.color, d.color),
     blur: num(v.blur, d.blur, 0, STYLE_LIMITS.blur),
     opacity: percent(v.opacity, d.opacity),
+    blendMode: optionalBlendMode(v.blendMode),
     contour: parseEffectContour(v.contour, d.contour),
     antialiased: v.antialiased === true,
     range: num(v.range, d.range ?? 0.5, 0.01, 1),
@@ -439,6 +442,123 @@ export const hasStyles = (s?: LayerStyles) =>
     s.bevel.enabled ||
     s.satin.enabled)
 
+/** Effective Photoshop defaults for the optional effect blend fields. */
+export const strokeEffectBlendMode = (effect: StrokeEffectStyle): BlendMode =>
+  effect.blendMode || 'source-over'
+export const shadowEffectBlendMode = (effect: ShadowEffectStyle): BlendMode =>
+  effect.blendMode || 'multiply'
+export const glowEffectBlendMode = (effect: GlowEffectStyle): BlendMode =>
+  effect.blendMode || 'screen'
+
+export interface BackdropEffectComponent {
+  mode: BlendMode
+  styles: LayerStyles
+}
+export interface BackdropEffectPlan {
+  /** Content/interior/Normal exterior effects, with managed effects disabled. */
+  main: LayerStyles
+  /** Drop shadows and outer glow in back-to-front paint order. */
+  behind: BackdropEffectComponent[]
+  /** Non-Normal strokes in back-to-front paint order. */
+  strokes: BackdropEffectComponent[]
+}
+const backdropEffectPlans = new WeakMap<LayerStyles, BackdropEffectPlan | null>()
+const cloneStylesForPlan = (styles: LayerStyles): LayerStyles => ({
+  ...styles,
+  strokes: styles.strokes.map((effect) => ({ ...effect })),
+  shadows: styles.shadows.map((effect) => ({ ...effect })),
+  innerShadows: styles.innerShadows.map((effect) => ({ ...effect })),
+  glow: { ...styles.glow },
+  innerGlow: { ...styles.innerGlow },
+  overlays: styles.overlays.map((effect) => ({ ...effect })),
+  gradients: styles.gradients.map((effect) => ({ ...effect })),
+  pattern: { ...styles.pattern },
+  bevel: { ...styles.bevel },
+  satin: { ...styles.satin },
+})
+function disableAllEffects(styles: LayerStyles): LayerStyles {
+  styles.fillOpacity = 0
+  for (const effect of styles.strokes) effect.enabled = false
+  for (const effect of styles.shadows) effect.enabled = false
+  for (const effect of styles.innerShadows) effect.enabled = false
+  styles.glow.enabled = false
+  styles.innerGlow.enabled = false
+  for (const effect of styles.overlays) effect.enabled = false
+  for (const effect of styles.gradients) effect.enabled = false
+  styles.pattern.enabled = false
+  styles.bevel.enabled = false
+  styles.satin.enabled = false
+  return styles
+}
+/**
+ * Decompose only exterior effects whose own mode is not Normal. The returned
+ * style objects are cached by the identity of the source styles object so
+ * the styled-surface cache can reuse each component across frames. Component
+ * variants force the isolated effect to Normal: renderDocument applies the
+ * real mode when it composites that component over the actual backdrop.
+ */
+export function backdropEffectPlan(styles?: LayerStyles): BackdropEffectPlan | undefined {
+  if (!styles) return undefined
+  const cached = backdropEffectPlans.get(styles)
+  if (cached !== undefined) return cached || undefined
+  const behind: BackdropEffectComponent[] = []
+  const strokes: BackdropEffectComponent[] = []
+  const managedShadow = styles.shadows.map(
+    (effect) => effect.enabled && shadowEffectBlendMode(effect) !== 'source-over',
+  )
+  const managedGlow = styles.glow.enabled && glowEffectBlendMode(styles.glow) !== 'source-over'
+  const managedStroke = styles.strokes.map(
+    (effect) =>
+      effect.enabled &&
+      effect.size > 0 &&
+      effect.opacity > 0 &&
+      strokeEffectBlendMode(effect) !== 'source-over',
+  )
+  if (!managedShadow.some(Boolean) && !managedGlow && !managedStroke.some(Boolean)) {
+    backdropEffectPlans.set(styles, null)
+    return undefined
+  }
+  for (let index = styles.shadows.length - 1; index >= 0; index--) {
+    if (!managedShadow[index]) continue
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
+    variant.shadows[index] = {
+      ...variant.shadows[index],
+      enabled: true,
+      blendMode: 'source-over',
+    }
+    behind.push({ mode: shadowEffectBlendMode(styles.shadows[index]), styles: variant })
+  }
+  if (managedGlow) {
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
+    variant.glow = { ...variant.glow, enabled: true, blendMode: 'source-over' }
+    behind.push({ mode: glowEffectBlendMode(styles.glow), styles: variant })
+  }
+  for (let index = styles.strokes.length - 1; index >= 0; index--) {
+    if (!managedStroke[index]) continue
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
+    variant.strokes[index] = {
+      ...variant.strokes[index],
+      enabled: true,
+      blendMode: 'source-over',
+    }
+    // Stroke Emboss belongs to this ring; other bevel styles stay with main.
+    if (styles.bevel.enabled && styles.bevel.style === 'stroke') variant.bevel.enabled = true
+    strokes.push({ mode: strokeEffectBlendMode(styles.strokes[index]), styles: variant })
+  }
+  const main = cloneStylesForPlan(styles)
+  main.shadows.forEach((effect, index) => {
+    if (managedShadow[index]) effect.enabled = false
+  })
+  if (managedGlow) main.glow.enabled = false
+  main.strokes.forEach((effect, index) => {
+    if (managedStroke[index]) effect.enabled = false
+  })
+  const plan = { main, behind, strokes }
+  backdropEffectPlans.set(styles, plan)
+  return plan
+}
+export const hasBackdropEffectBlend = (styles?: LayerStyles) => !!backdropEffectPlan(styles)
+
 /** Short human summary for the layers panel, e.g. “Обводка ×3 · Тень”. */
 export function styleEffectSummary(s?: LayerStyles): string {
   if (!s) return ''
@@ -501,10 +621,28 @@ export function scaleLayerStyles(styles: LayerStyles, factor: number): LayerStyl
   return clone
 }
 
+// The byte budget is the real memory bound. The entry budget is high enough
+// for many small layers x their backdrop-effect variants; a low entry cap
+// made cyclic access rebuild every styled surface on every frame.
+const STYLE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+const STYLE_CACHE_MAX_ENTRIES = 256
 const cache = new Map<
   string,
   { layer: Layer; image: HTMLCanvasElement; left: number; top: number; scale: number }
 >()
+const styleCacheIds = new WeakMap<LayerStyles, number>()
+let nextStyleCacheId = 1
+const styleCacheKey = (layer: Layer) => {
+  const styles = layer.styles!
+  let id = styleCacheIds.get(styles)
+  if (!id) {
+    id = nextStyleCacheId++
+    styleCacheIds.set(styles, id)
+  }
+  // Backdrop decomposition renders several style variants of one layer;
+  // each variant needs its own cached surface instead of evicting the last.
+  return `${layer.id}:${id}`
+}
 const ignored = new Set([
   'x',
   'y',
@@ -519,14 +657,19 @@ const ignored = new Set([
 ])
 const positionMatters = (layer: Layer) =>
   !!layer.styles?.pattern.enabled && !layer.styles.pattern.align
-const equalContent = (a: Layer, b: Layer) =>
-  Object.keys(a).length === Object.keys(b).length &&
-  (Object.keys(a) as (keyof Layer)[]).every(
-    (k) =>
-      (ignored.has(k) &&
-        !((k === 'x' || k === 'y') && (positionMatters(a) || positionMatters(b)))) ||
-      a[k] === b[k],
+const equalContent = (a: Layer, b: Layer) => {
+  if (a === b) return true
+  const keys = Object.keys(a) as (keyof Layer)[]
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every(
+      (k) =>
+        (ignored.has(k) &&
+          !((k === 'x' || k === 'y') && (positionMatters(a) || positionMatters(b)))) ||
+        a[k] === b[k],
+    )
   )
+}
 const surface = (w: number, h: number) => {
   const c = document.createElement('canvas')
   c.width = w
@@ -693,7 +836,8 @@ export function renderStyled(
   draw: (ctx: CanvasRenderingContext2D) => void,
   volatile = false,
 ) {
-  let entry = cache.get(layer.id)
+  const cacheKey = styleCacheKey(layer)
+  let entry = cache.get(cacheKey)
   if (volatile || !entry || !equalContent(entry.layer, layer)) {
     const s = layer.styles!,
       bounds = rasterBounds(layer, true)
@@ -707,6 +851,21 @@ export function renderStyled(
     draw(b)
     const output = surface(w, h),
       o = output.getContext('2d')!
+    const drawEffect = (source: HTMLCanvasElement, mode: BlendMode, opacity: number) => {
+      if (opacity <= 0) return
+      if (isPixelBlendMode(mode)) {
+        const outputPixels = o.getImageData(0, 0, w, h)
+        const sourcePixels = source.getContext('2d')!.getImageData(0, 0, w, h)
+        compositePixelBlend(outputPixels.data, sourcePixels.data, mode, opacity, w)
+        o.putImageData(outputPixels, 0, 0)
+        return
+      }
+      o.save()
+      o.globalAlpha = opacity
+      o.globalCompositeOperation = mode
+      o.drawImage(source, 0, 0)
+      o.restore()
+    }
     const tint = (source: HTMLCanvasElement, fill: string) => {
       const c = surface(w, h),
         x = c.getContext('2d')!
@@ -716,16 +875,19 @@ export function renderStyled(
       x.fillRect(0, 0, w, h)
       return c
     }
-    const dropShadow = (effect: {
-      color: string
-      blur: number
-      x: number
-      y: number
-      opacity: number
-      contour?: EffectContourDefinition
-      antialiased?: boolean
-      range?: number
-    }) => {
+    const dropShadow = (
+      effect: {
+        color: string
+        blur: number
+        x: number
+        y: number
+        opacity: number
+        contour?: EffectContourDefinition
+        antialiased?: boolean
+        range?: number
+      },
+      mode: BlendMode,
+    ) => {
       const c = surface(w, h),
         x = c.getContext('2d')!
       x.shadowColor = effect.color
@@ -739,12 +901,11 @@ export function renderStyled(
       x.globalCompositeOperation = 'destination-out'
       x.drawImage(base, 0, 0)
       applyContourAlpha(c, effect.contour, effect.antialiased, effect.range)
-      o.globalAlpha = effect.opacity
-      o.drawImage(c, 0, 0)
-      o.globalAlpha = 1
+      drawEffect(c, mode, effect.opacity)
     }
-    for (const effect of [...s.shadows].reverse()) if (effect.enabled) dropShadow(effect)
-    if (s.glow.enabled) dropShadow({ ...s.glow, x: 0, y: 0 })
+    for (const effect of [...s.shadows].reverse())
+      if (effect.enabled) dropShadow(effect, shadowEffectBlendMode(effect))
+    if (s.glow.enabled) dropShadow({ ...s.glow, x: 0, y: 0 }, glowEffectBlendMode(s.glow))
 
     const content = surface(w, h),
       c = content.getContext('2d')!
@@ -834,16 +995,19 @@ export function renderStyled(
       o.putImageData(satinPixels, 0, 0)
     }
 
-    const innerEffect = (effect: {
-      color: string
-      blur: number
-      x: number
-      y: number
-      opacity: number
-      contour?: EffectContourDefinition
-      antialiased?: boolean
-      range?: number
-    }) => {
+    const innerEffect = (
+      effect: {
+        color: string
+        blur: number
+        x: number
+        y: number
+        opacity: number
+        contour?: EffectContourDefinition
+        antialiased?: boolean
+        range?: number
+      },
+      mode: BlendMode,
+    ) => {
       const inverted = surface(w, h),
         ix = inverted.getContext('2d')!
       ix.fillStyle = '#000000'
@@ -861,12 +1025,12 @@ export function renderStyled(
       bx.fillStyle = effect.color
       bx.fillRect(0, 0, w, h)
       applyContourAlpha(blurred, effect.contour, effect.antialiased, effect.range)
-      o.globalAlpha = effect.opacity
-      o.drawImage(blurred, 0, 0)
-      o.globalAlpha = 1
+      drawEffect(blurred, mode, effect.opacity)
     }
-    for (const effect of [...s.innerShadows].reverse()) if (effect.enabled) innerEffect(effect)
-    if (s.innerGlow.enabled) innerEffect({ ...s.innerGlow, x: 0, y: 0 })
+    for (const effect of [...s.innerShadows].reverse())
+      if (effect.enabled) innerEffect(effect, shadowEffectBlendMode(effect))
+    if (s.innerGlow.enabled)
+      innerEffect({ ...s.innerGlow, x: 0, y: 0 }, glowEffectBlendMode(s.innerGlow))
 
     const strokeEmbossRings: { canvas: HTMLCanvasElement; opacity: number }[] = []
     for (const stroke of [...s.strokes].reverse()) {
@@ -935,9 +1099,7 @@ export function renderStyled(
         }
         r.drawImage(inner, 0, 0)
       }
-      o.globalAlpha = stroke.opacity
-      o.drawImage(ring, 0, 0)
-      o.globalAlpha = 1
+      drawEffect(ring, strokeEffectBlendMode(stroke), stroke.opacity)
       if (s.bevel.enabled && s.bevel.style === 'stroke')
         strokeEmbossRings.push({ canvas: ring, opacity: stroke.opacity })
     }
@@ -975,11 +1137,11 @@ export function renderStyled(
       o.putImageData(outputPixels, 0, 0)
     }
     entry = { layer, image: output, left: bounds.x, top: bounds.y, scale }
-    cache.set(layer.id, entry)
+    cache.set(cacheKey, entry)
     let bytes = [...cache.values()].reduce((n, e) => n + e.image.width * e.image.height * 4, 0)
     for (const [key, value] of cache) {
-      if (bytes <= 64 * 1024 * 1024 && cache.size <= 12) break
-      if (key === layer.id) continue
+      if (bytes <= STYLE_CACHE_MAX_BYTES && cache.size <= STYLE_CACHE_MAX_ENTRIES) break
+      if (key === cacheKey) continue
       bytes -= value.image.width * value.image.height * 4
       cache.delete(key)
     }

@@ -78,6 +78,36 @@ describe('Real recording and validated transactional playback', () => {
     expect(target.layers[0].x).toBe(100)
     expect(doc.layers[0].styles).toBeUndefined()
   })
+  it('records Knockout set/removal and refuses an unknown depth instead of guessing', () => {
+    const doc = setup()
+    const set = record(
+      startRecording(doc, doc.layers[0].id, 'Knockout deep'),
+      doc,
+      edit(doc, { knockout: 'deep' }),
+    )
+    expect(set.steps[0].command).toMatchObject({
+      type: 'properties',
+      values: { knockout: 'deep' },
+    })
+    expect(runAction(doc, doc.layers[0].id, action(set)).document.layers[0].knockout).toBe('deep')
+
+    const deepDoc = edit(doc, { knockout: 'deep' })
+    const removed = record(
+      startRecording(deepDoc, deepDoc.layers[0].id, 'Knockout off'),
+      deepDoc,
+      edit(deepDoc, { knockout: undefined }),
+    )
+    expect(removed.steps[0].command).toMatchObject({
+      type: 'properties',
+      values: { knockout: null },
+    })
+    expect(
+      runAction(deepDoc, deepDoc.layers[0].id, action(removed)).document.layers[0].knockout,
+    ).toBeUndefined()
+    expect(() =>
+      parseActionCommand({ type: 'properties', values: { knockout: 'through' } }),
+    ).toThrow()
+  })
   it('records actual duplication and applies following properties to the copy', () => {
     const doc = setup(),
       original = doc.layers[0],

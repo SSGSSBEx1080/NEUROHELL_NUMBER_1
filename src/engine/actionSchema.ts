@@ -3,6 +3,7 @@ import { parseCorrection } from './adjustmentTypes'
 import type { Adjustments, Layer, LayerStyles, TextFrame } from '../types'
 import { normalizeStyles } from './styles'
 import { parseBlendIf } from './blendIf'
+import { parseKnockout } from './knockout'
 import { parseTextFrame } from './textLayout'
 import { TEXT_ANTI_ALIAS_MODES } from './textAntiAlias'
 export type ActionProperties = Partial<
@@ -49,6 +50,7 @@ export type ActionProperties = Partial<
   styles?: LayerStyles | null
   textFrame?: TextFrame | null
   blendIf?: import('../types').BlendIfRanges | null
+  knockout?: import('../types').KnockoutMode | null
 }
 export type ActionCommand =
   | { type: 'adjust'; values: Partial<Adjustments> }
@@ -133,6 +135,8 @@ export function parseActionProperties(input: unknown): ActionProperties {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
     if (key === 'correction') out[key] = parseCorrection(value)
+    else if (key === 'knockout' && (value === null || parseKnockout(value)))
+      out[key] = value === null ? null : parseKnockout(value)
     else if (Object.hasOwn(numeric, key)) out[key] = finite(value, ...numeric[key])
     else if (Object.hasOwn(enums, key) && typeof value === 'string' && enums[key].includes(value))
       out[key] = value
