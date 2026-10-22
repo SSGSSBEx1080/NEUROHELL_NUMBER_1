@@ -463,6 +463,19 @@ export interface BackdropEffectPlan {
   strokes: BackdropEffectComponent[]
 }
 const backdropEffectPlans = new WeakMap<LayerStyles, BackdropEffectPlan | null>()
+const cloneStylesForPlan = (styles: LayerStyles): LayerStyles => ({
+  ...styles,
+  strokes: styles.strokes.map((effect) => ({ ...effect })),
+  shadows: styles.shadows.map((effect) => ({ ...effect })),
+  innerShadows: styles.innerShadows.map((effect) => ({ ...effect })),
+  glow: { ...styles.glow },
+  innerGlow: { ...styles.innerGlow },
+  overlays: styles.overlays.map((effect) => ({ ...effect })),
+  gradients: styles.gradients.map((effect) => ({ ...effect })),
+  pattern: { ...styles.pattern },
+  bevel: { ...styles.bevel },
+  satin: { ...styles.satin },
+})
 function disableAllEffects(styles: LayerStyles): LayerStyles {
   styles.fillOpacity = 0
   for (const effect of styles.strokes) effect.enabled = false
@@ -507,7 +520,7 @@ export function backdropEffectPlan(styles?: LayerStyles): BackdropEffectPlan | u
   }
   for (let index = styles.shadows.length - 1; index >= 0; index--) {
     if (!managedShadow[index]) continue
-    const variant = disableAllEffects(structuredClone(styles))
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
     variant.shadows[index] = {
       ...variant.shadows[index],
       enabled: true,
@@ -516,13 +529,13 @@ export function backdropEffectPlan(styles?: LayerStyles): BackdropEffectPlan | u
     behind.push({ mode: shadowEffectBlendMode(styles.shadows[index]), styles: variant })
   }
   if (managedGlow) {
-    const variant = disableAllEffects(structuredClone(styles))
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
     variant.glow = { ...variant.glow, enabled: true, blendMode: 'source-over' }
     behind.push({ mode: glowEffectBlendMode(styles.glow), styles: variant })
   }
   for (let index = styles.strokes.length - 1; index >= 0; index--) {
     if (!managedStroke[index]) continue
-    const variant = disableAllEffects(structuredClone(styles))
+    const variant = disableAllEffects(cloneStylesForPlan(styles))
     variant.strokes[index] = {
       ...variant.strokes[index],
       enabled: true,
@@ -532,7 +545,7 @@ export function backdropEffectPlan(styles?: LayerStyles): BackdropEffectPlan | u
     if (styles.bevel.enabled && styles.bevel.style === 'stroke') variant.bevel.enabled = true
     strokes.push({ mode: strokeEffectBlendMode(styles.strokes[index]), styles: variant })
   }
-  const main = structuredClone(styles)
+  const main = cloneStylesForPlan(styles)
   main.shadows.forEach((effect, index) => {
     if (managedShadow[index]) effect.enabled = false
   })
@@ -608,6 +621,11 @@ export function scaleLayerStyles(styles: LayerStyles, factor: number): LayerStyl
   return clone
 }
 
+// The byte budget is the real memory bound. The entry budget is high enough
+// for many small layers x their backdrop-effect variants; a low entry cap
+// made cyclic access rebuild every styled surface on every frame.
+const STYLE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+const STYLE_CACHE_MAX_ENTRIES = 256
 const cache = new Map<
   string,
   { layer: Layer; image: HTMLCanvasElement; left: number; top: number; scale: number }
@@ -639,14 +657,19 @@ const ignored = new Set([
 ])
 const positionMatters = (layer: Layer) =>
   !!layer.styles?.pattern.enabled && !layer.styles.pattern.align
-const equalContent = (a: Layer, b: Layer) =>
-  Object.keys(a).length === Object.keys(b).length &&
-  (Object.keys(a) as (keyof Layer)[]).every(
-    (k) =>
-      (ignored.has(k) &&
-        !((k === 'x' || k === 'y') && (positionMatters(a) || positionMatters(b)))) ||
-      a[k] === b[k],
+const equalContent = (a: Layer, b: Layer) => {
+  if (a === b) return true
+  const keys = Object.keys(a) as (keyof Layer)[]
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every(
+      (k) =>
+        (ignored.has(k) &&
+          !((k === 'x' || k === 'y') && (positionMatters(a) || positionMatters(b)))) ||
+        a[k] === b[k],
+    )
   )
+}
 const surface = (w: number, h: number) => {
   const c = document.createElement('canvas')
   c.width = w
@@ -1117,7 +1140,7 @@ export function renderStyled(
     cache.set(cacheKey, entry)
     let bytes = [...cache.values()].reduce((n, e) => n + e.image.width * e.image.height * 4, 0)
     for (const [key, value] of cache) {
-      if (bytes <= 64 * 1024 * 1024 && cache.size <= 48) break
+      if (bytes <= STYLE_CACHE_MAX_BYTES && cache.size <= STYLE_CACHE_MAX_ENTRIES) break
       if (key === cacheKey) continue
       bytes -= value.image.width * value.image.height * 4
       cache.delete(key)

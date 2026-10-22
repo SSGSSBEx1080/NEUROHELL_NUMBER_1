@@ -101,6 +101,8 @@ export function compositePixelBlend(
   mode: PixelBlendMode,
   opacity: number,
   width: number,
+  originX = 0,
+  originY = 0,
 ) {
   if (backdrop.length !== source.length || backdrop.length % 4)
     throw new Error('Некорректные буферы пиксельного наложения')
@@ -115,8 +117,8 @@ export function compositePixelBlend(
     const ab = backdrop[i + 3] / 255
     if (mode === 'dissolve') {
       const p = i / 4,
-        x = p % width,
-        y = Math.floor(p / width)
+        x = originX + (p % width),
+        y = originY + Math.floor(p / width)
       if (dissolveHash(x, y) >= as) continue
       backdrop[i] = source[i]
       backdrop[i + 1] = source[i + 1]

@@ -83,6 +83,49 @@ describe('Photoshop pixel blend modes', () => {
     expect(red / (width * height)).toBeLessThan(0.6)
   })
 
+  it('a cropped blend with a document origin matches the full-frame result', () => {
+    const width = 20,
+      height = 14,
+      crop = { x: 5, y: 4, width: 9, height: 6 },
+      make = () => {
+        const data = new Uint8ClampedArray(width * height * 4)
+        for (let y = 0; y < height; y++)
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4
+            data[i] = (x * 37 + y * 11) % 256
+            data[i + 1] = (x * 17 + y * 53) % 256
+            data[i + 2] = (x * 91 + y * 7) % 256
+            data[i + 3] = 255
+          }
+        return data
+      },
+      sourceOf = () => {
+        const data = new Uint8ClampedArray(width * height * 4)
+        for (let i = 0; i < data.length; i += 4) {
+          data[i] = 240
+          data[i + 1] = 30
+          data[i + 2] = 90
+          data[i + 3] = 160
+        }
+        return data
+      },
+      cropOf = (full: Uint8ClampedArray) => {
+        const out = new Uint8ClampedArray(crop.width * crop.height * 4)
+        for (let y = 0; y < crop.height; y++) {
+          const from = ((crop.y + y) * width + crop.x) * 4
+          out.set(full.subarray(from, from + crop.width * 4), y * crop.width * 4)
+        }
+        return out
+      }
+    for (const mode of ['subtract', 'dissolve'] as const) {
+      const full = make()
+      compositePixelBlend(full, sourceOf(), mode, 1, width)
+      const cropped = cropOf(make())
+      compositePixelBlend(cropped, cropOf(sourceOf()), mode, 1, crop.width, crop.x, crop.y)
+      expect([...cropped]).toEqual([...cropOf(full)])
+    }
+  })
+
   it('mode registry covers exactly the Canvas-inexpressible Photoshop modes', () => {
     expect(PIXEL_BLEND_MODES).toHaveLength(10)
     expect(isPixelBlendMode('vivid-light')).toBe(true)

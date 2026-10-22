@@ -167,6 +167,39 @@ test('exterior Shadow, Glow and Stroke blend with the document backdrop and expo
   await page.screenshot({ path: 'test-results/effect-blends.png' })
 })
 
+test('a backdrop effect spilling in from off-canvas stays aligned', async ({ page }) => {
+  const doc = newDocument(160, 120, 'Effect blend spill', '#ffff00')
+  const shadowStyles: LayerStyles = defaultStyles()
+  shadowStyles.shadows = [
+    {
+      ...shadowStyles.shadows[0],
+      enabled: true,
+      color: '#00ff00',
+      blur: 0,
+      x: 40,
+      y: 0,
+      opacity: 1,
+      blendMode: 'subtract',
+    },
+  ]
+  doc.layers = [
+    rect({
+      name: 'Off canvas shape',
+      color: '#ffffff',
+      x: -30,
+      y: 40,
+      width: 50,
+      height: 40,
+      styles: shadowStyles,
+    }),
+  ]
+  await openProject(page, doc)
+  // Subtract green from the yellow document backdrop leaves red.
+  await expect.poll(async () => sample(page, 40, 60)).toEqual([255, 0, 0, 255])
+  await expect.poll(async () => sample(page, 10, 60)).toEqual([255, 255, 255, 255])
+  await expect.poll(async () => sample(page, 100, 60)).toEqual([255, 255, 0, 255])
+})
+
 test('inner shadow blends locally, while an isolated group supplies the exterior backdrop', async ({
   page,
 }) => {

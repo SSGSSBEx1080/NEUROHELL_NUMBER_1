@@ -1,6 +1,6 @@
 import { renderCorrection, clearAdjustmentCaches } from './adjustmentRenderer'
 import { getTextGeometry, clearTextGeometryCache, textBaselineShiftPx } from './textGeometry'
-import { pixelBounds, rasterBounds, rectPoints } from './layerGeometry'
+import { pixelBounds, rasterBounds, rectPoints, worldBounds } from './layerGeometry'
 import { layerPoint } from './shapeGeometry'
 import { homography, project, validQuad } from './projection'
 import { renderShape } from './shapeRenderer'
@@ -398,19 +398,26 @@ export function renderDocument(
     }
   }
   let allocated = 0
-  const surface = () => {
-    const bytes = width * height * 4
+  const scaleX = width / doc.width,
+    scaleY = height / doc.height
+  type PixelRect = { x: number; y: number; width: number; height: number }
+  const makeSurface = (w: number, h: number, origin?: PixelRect) => {
+    const bytes = w * h * 4
     if (allocated + bytes > 192 * 1024 * 1024)
       throw new Error(
         'Слишком много вложенных групп для этого размера. Уменьши масштаб просмотра или объедини часть групп перед экспортом.',
       )
     allocated += bytes
     const c = document.createElement('canvas')
-    c.width = width
-    c.height = height
-    c.getContext('2d')!.scale(width / doc.width, height / doc.height)
+    c.width = w
+    c.height = h
+    const x = c.getContext('2d')!
+    x.scale(scaleX, scaleY)
+    if (origin) x.translate(-origin.x / scaleX, -origin.y / scaleY)
     return c
   }
+  const surface = () => makeSurface(width, height)
+  const boundedSurface = (rect: PixelRect) => makeSurface(rect.width, rect.height, rect)
   const release = (c: HTMLCanvasElement) => {
     allocated -= c.width * c.height * 4
     c.width = c.height = 1
@@ -542,29 +549,50 @@ export function renderDocument(
       surf: HTMLCanvasElement,
       target: CanvasRenderingContext2D,
       layer: Layer,
+      rect?: PixelRect,
     ) => {
+      const area = rect || { x: 0, y: 0, width, height },
+        destX = area.x / scaleX,
+        destY = area.y / scaleY,
+        destW = area.width / scaleX,
+        destH = area.height / scaleY
       if (!isPixelBlendMode(layer.blendMode)) {
         target.save()
         target.globalAlpha = layer.opacity
         target.globalCompositeOperation = layer.blendMode
-        target.drawImage(surf, 0, 0, doc.width, doc.height)
+        target.drawImage(surf, destX, destY, destW, destH)
         target.restore()
         return
       }
-      const back = surface()
+      const back = rect ? boundedSurface(area) : surface()
       try {
         const bx = back.getContext('2d', { willReadFrequently: true })!
         bx.drawImage(target.canvas, 0, 0, doc.width, doc.height)
-        const under = bx.getImageData(0, 0, width, height),
+        const under = bx.getImageData(0, 0, area.width, area.height),
           image = surf
             .getContext('2d', { willReadFrequently: true })!
-            .getImageData(0, 0, width, height)
-        compositePixelBlend(under.data, image.data, layer.blendMode, layer.opacity, width)
+            .getImageData(0, 0, area.width, area.height)
+        compositePixelBlend(
+          under.data,
+          image.data,
+          layer.blendMode,
+          layer.opacity,
+          area.width,
+          area.x,
+          area.y,
+        )
         bx.putImageData(under, 0, 0)
         target.save()
+        // Porter-Duff 'copy' would otherwise replace the whole clipped
+        // canvas, not just the image rect; confine it to the crop.
+        if (rect) {
+          target.beginPath()
+          target.rect(destX, destY, destW, destH)
+          target.clip()
+        }
         target.globalAlpha = 1
         target.globalCompositeOperation = 'copy'
-        target.drawImage(back, 0, 0, doc.width, doc.height)
+        target.drawImage(back, destX, destY, destW, destH)
         target.restore()
       } finally {
         release(back)
@@ -597,8 +625,32 @@ export function renderDocument(
         paint(layer, target)
         return
       }
+      // A non-group layer's styled pixels cannot leave its raster+effects
+      // world bounds (the same bounds renderStyled builds), so a small layer
+      // on a large canvas composites only that crop. The crop is aligned to
+      // output pixels and expanded by 2 px, keeping the result identical to
+      // the full-document surface; groups keep the full surface because
+      // their pixels are the union of their children.
+      const componentRect = (): PixelRect | null | undefined => {
+        if (layer.kind === 'group' || layer.kind === 'adjustment') return undefined
+        let bounds: Rect
+        try {
+          bounds = worldBounds(layer, true, true)
+        } catch {
+          return undefined
+        }
+        const x = Math.max(0, Math.floor(bounds.x * scaleX) - 2),
+          y = Math.max(0, Math.floor(bounds.y * scaleY) - 2),
+          right = Math.min(width, Math.ceil((bounds.x + bounds.width) * scaleX) + 2),
+          bottom = Math.min(height, Math.ceil((bounds.y + bounds.height) * scaleY) + 2)
+        if (right <= x || bottom <= y) return null
+        const rect = { x, y, width: right - x, height: bottom - y }
+        return rect.width * rect.height < width * height * 0.95 ? rect : undefined
+      }
+      const rect = componentRect()
       const paintComponent = (styles: NonNullable<Layer['styles']>, mode: Layer['blendMode']) => {
-        const surf = surface()
+        if (rect === null) return
+        const surf = rect ? boundedSurface(rect) : surface()
         try {
           paint(
             {
@@ -611,7 +663,7 @@ export function renderDocument(
             },
             surf.getContext('2d')!,
           )
-          compositeSurfaceMode(surf, target, { ...layer, blendMode: mode })
+          compositeSurfaceMode(surf, target, { ...layer, blendMode: mode }, rect)
         } finally {
           release(surf)
         }
